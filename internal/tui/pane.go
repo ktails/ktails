@@ -42,12 +42,6 @@ type Pane struct {
 	maxLines  int  // Max lines to keep in memory
 	following bool // Auto-scroll to bottom
 
-	// Pod list mode
-	podList         []PodItem
-	filteredPodList []PodItem
-	showPodList     bool
-	listSelected    int
-
 	// Search state
 	searchInput textinput.Model
 	searching   bool
@@ -129,7 +123,6 @@ func (p *Pane) StartSearch() {
 	p.searching = true
 	p.searchInput.CursorStart()
 	p.searchInput.Focus()
-	p.applyFilter(p.searchInput.Value())
 }
 
 // EndSearch disables search mode and clears filter
@@ -138,43 +131,6 @@ func (p *Pane) EndSearch() {
 	p.searchInput.Blur()
 	p.filterTerm = ""
 	p.matchCount = 0
-	p.filteredPodList = nil
-}
-
-// applyFilter filters podList based on the term
-func (p *Pane) applyFilter(term string) {
-	p.filterTerm = strings.ToLower(strings.TrimSpace(term))
-	if p.filterTerm == "" {
-		p.filteredPodList = nil
-		p.matchCount = len(p.podList)
-		return
-	}
-	var out []PodItem
-	for _, pod := range p.podList {
-		name := strings.ToLower(pod.Name)
-		ns := strings.ToLower(pod.Namespace)
-		if strings.Contains(name, p.filterTerm) || strings.Contains(ns, p.filterTerm) {
-			out = append(out, pod)
-		}
-	}
-	p.filteredPodList = out
-	p.matchCount = len(out)
-	// Clamp selection within range
-	maxIdx := len(p.getVisibleList()) - 1
-	if p.listSelected > maxIdx {
-		p.listSelected = maxIdx
-	}
-	if p.listSelected < 0 {
-		p.listSelected = 0
-	}
-}
-
-// getVisibleList returns filtered or full list depending on search
-func (p *Pane) getVisibleList() []PodItem {
-	if p.searching && p.filteredPodList != nil {
-		return p.filteredPodList
-	}
-	return p.podList
 }
 
 // Update handles messages for this pane
@@ -183,65 +139,6 @@ func (p *Pane) Update(msg tea.Msg) (*Pane, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// If showing pod list, handle navigation and selection
-		if p.showPodList {
-			// Start search with 'S'
-			if msg.String() == "S" || msg.String() == "s" && !p.searching {
-				p.StartSearch()
-				return p, nil
-			}
-
-			// If searching, first update text input
-			if p.searching {
-				// Exit search on ESC
-				if msg.String() == "esc" {
-					p.EndSearch()
-					return p, nil
-				}
-				p.searchInput, _ = p.searchInput.Update(msg)
-				p.applyFilter(p.searchInput.Value())
-				// Do not return yet; allow navigation keys to also work
-			}
-
-			switch msg.String() {
-			case "up", "k":
-				if p.listSelected > 0 {
-					p.listSelected--
-				}
-				return p, nil
-
-			case "down", "j":
-				visible := p.getVisibleList()
-				if p.listSelected < len(visible)-1 {
-					p.listSelected++
-				}
-				return p, nil
-
-			case "enter":
-				// Select pod and start streaming logs
-				visible := p.getVisibleList()
-				if p.listSelected >= 0 && p.listSelected < len(visible) {
-					sel := visible[p.listSelected]
-					// keep existing context (set when pods were loaded for this pane)
-					p.namespace = sel.Namespace
-					p.podName = sel.Name
-
-					targetPane := p.index
-					if p.index == 0 {
-						targetPane = 1
-					} else {
-						p.showPodList = false
-					}
-
-					return p, tea.Batch(
-						loadPodInfoCmd(p.client, targetPane, p.context, p.namespace, p.podName),
-					)
-				}
-				return p, nil
-			}
-		}
-
-		// Otherwise, handle viewport scrolling
 		p.viewport, cmd = p.viewport.Update(msg)
 		return p, cmd
 	}
@@ -272,18 +169,8 @@ func (p *Pane) View(width, height int, focused bool) string {
 
 	// Render logs viewport or pod list
 	var body string
-	if p.showPodList {
-		body = p.renderPodList(innerWidth)
-		// Prepend search input if searching
-		if p.searching {
-			inputLine := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("170")).
-				Render("Search: " + p.searchInput.View())
-			body = lipgloss.JoinVertical(lipgloss.Left, inputLine, body)
-		}
-	} else {
-		body = p.viewport.View()
-	}
+
+	body = p.viewport.View()
 
 	// Combine header and body
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body)
@@ -421,62 +308,12 @@ func (p *Pane) Clear() {
 	p.updateViewportContent()
 }
 
-// SetPodList populates the pane with a list of pods (for master/detail browsing)
-func (p *Pane) SetPodList(pods []PodItem) {
-	p.podList = pods
-	p.listSelected = 0
-}
-
 // SetPodListWithContext sets pods and remembers their context/namespace
 func (p *Pane) SetPodListWithContext(pods []PodItem, context, namespace string) {
-	p.podList = pods
-	p.filteredPodList = nil
-	p.listSelected = 0
 	p.context = context
 	p.namespace = namespace
-	p.showPodList = true
 	p.lastRefresh = time.Now()
 	// Reapply filter if searching
-	if p.searching {
-		p.applyFilter(p.searchInput.Value())
-	}
-}
-
-// TogglePodList toggles displaying the pod list instead of logs
-func (p *Pane) TogglePodList(show bool) {
-	p.showPodList = show
-}
-
-// renderPodList renders the pod list UI
-func (p *Pane) renderPodList(width int) string {
-	visible := p.getVisibleList()
-	if len(visible) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Italic(true).
-			Render("No pods available in this namespace")
-	}
-
-	var items []string
-	for i, pod := range visible {
-		style := lipgloss.NewStyle().PaddingLeft(2)
-		if i == p.listSelected {
-			style = style.Foreground(lipgloss.Color("170")).Bold(true)
-			items = append(items, style.Render("→ "+pod.Name))
-		} else {
-			style = style.Foreground(lipgloss.Color("250"))
-			items = append(items, style.Render("  "+pod.Name))
-		}
-	}
-
-	content := lipgloss.JoinVertical(lipgloss.Left, items...)
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(1, 2).
-		Width(width - 2)
-
-	return box.Render(content)
 }
 
 // updateViewportContent updates the viewport with current log lines
@@ -505,11 +342,8 @@ func (p *Pane) ClearDummyData() {
 
 // Matches returns the current match count for the pane
 func (p *Pane) Matches() int {
-	if !p.showPodList {
-		return 0
-	}
 	if p.searching {
 		return p.matchCount
 	}
-	return len(p.podList)
+	return 0
 }
