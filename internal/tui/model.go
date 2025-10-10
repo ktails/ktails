@@ -2,8 +2,6 @@
 package tui
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
@@ -13,10 +11,9 @@ import (
 type Mode int
 
 const (
-	ModeContextSelect Mode = iota // NEW: Select initial context
-	ModeSelection                 // Selecting pods
-	ModeViewing                   // Viewing logs
-	ModeHelp                      // Help screen
+	ModeSelection Mode = iota // Selecting pods
+	ModeViewing               // Viewing logs
+	ModeHelp                  // Help screen
 )
 
 // Model is the main Bubble Tea model
@@ -36,21 +33,6 @@ type Model struct {
 	// K8s client (base)
 	k8sClient *k8s.Client
 
-	// Context selection
-	contexts     []string // Available contexts
-	selectedCtx  int      // Currently selected context index
-	contextError string   // Error loading contexts
-
-	// Per-selected context clients and pane mappings
-	selectedContexts map[string]*k8s.Client // contextName -> client bound to that context
-	paneContexts     [2]string              // pane index -> context name
-	contextToPane    map[string]int         // context name -> pane index
-	paneClients      [2]*k8s.Client         // pane index -> client
-
-	// Multi-select state for context selection screen
-	selectedCtxMarked []bool
-	contextNotice     string // transient notice shown on context select screen
-
 	// UI
 	ready bool
 }
@@ -58,25 +40,20 @@ type Model struct {
 // NewModel creates a new main model
 func NewModel(client *k8s.Client) Model {
 	return Model{
-		mode:       ModeContextSelect,
+		mode:       ModeSelection,
 		focusIndex: 0,
 		panes: [2]*Pane{
 			// TODO: use context-specific clients once contexts are selected
 			NewPane(0, client),
 			NewPane(1, client),
 		},
-		selector:          NewSelector(),
-		k8sClient:         client,
-		contexts:          []string{},
-		contextToPane:     make(map[string]int),
-		contextNotice:     "",
-		selectedContexts:  make(map[string]*k8s.Client),
-		selectedCtxMarked: []bool{},
+		selector:  NewSelector(),
+		k8sClient: client,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return loadContextsCmd(m.k8sClient)
+	return nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -89,21 +66,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case " ":
 			// Toggle mark for current highlighted context
-			if len(m.contexts) == 0 {
-				return m, nil
-			}
-			if len(m.selectedCtxMarked) != len(m.contexts) {
-				m.selectedCtxMarked = make([]bool, len(m.contexts))
-			}
-			m.selectedCtxMarked[m.selectedCtx] = !m.selectedCtxMarked[m.selectedCtx]
-			m.contextNotice = "Toggled selection"
 			return m, nil
 
 		case "ctrl+c":
 			return m, tea.Quit
 		case "?":
 			// Toggle help mode (only if not in context selection)
-			if m.mode != ModeContextSelect && m.mode != ModeSelection {
+			if m.mode != ModeSelection {
 				if m.mode == ModeHelp {
 					m.mode = ModeViewing
 				} else {
@@ -117,7 +86,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeSelection
 				m.selector.Reset(m.focusIndex)
 				m.selector.SetSize(m.width, m.height)
-				m.selector.SetContexts(m.contexts, m.k8sClient.GetCurrentContext())
 				return m, nil
 			}
 		case "f":
@@ -132,18 +100,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "n":
 			// Open namespace selector for the focused pane
-			ctxName := m.paneContexts[m.focusIndex]
-			cli := m.paneClients[m.focusIndex]
-			if ctxName == "" || cli == nil {
-				return m, nil
-			}
 			m.mode = ModeSelection
 			m.selector.Reset(m.focusIndex)
 			m.selector.SetSize(m.width, m.height)
-			m.selector.selectedContext = ctxName
 			m.selector.step = SelectNamespace
 			m.selector.SetLoading(true)
-			return m, loadNamespacesForSingleCmd(cli, ctxName)
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -164,18 +126,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ContextsLoadedMsg:
-		if msg.Err != nil {
-			m.contextError = msg.Err.Error()
-		} else {
-			m.contexts = msg.Contexts
-			// Find current context index
-			for i, ctx := range msg.Contexts {
-				if ctx == msg.Current {
-					m.selectedCtx = i
-					break
-				}
-			}
-		}
+
 		return m, nil
 
 	case []NamespacesLoadedMsg:
@@ -199,7 +150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// issue load pods for correct client
-			client := m.selectedContexts[v.Context]
+			client := m.k8sClient
 			defaultNS := m.k8sClient.DefaultNamespace(v.Context)
 			if client != nil {
 				cmds = append(cmds, loadPodsForClientCmd(client, v.Context, defaultNS))
@@ -209,17 +160,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case NamespaceSelectedMsg:
 		// Load pods for the selected namespace in the chosen pane
-		cli := m.selectedContexts[msg.Context]
-		if paneIdx := msg.PaneIndex; paneIdx >= 0 && paneIdx < 2 {
-			if cli == nil {
-				cli = m.paneClients[paneIdx]
-			}
-		}
+
 		m.mode = ModeViewing
-		if cli != nil {
-			return m, loadPodsForClientCmd(cli, msg.Context, msg.Namespace)
-		}
-		return m, nil
+		return m, loadPodsForClientCmd(m.k8sClient, msg.Context, msg.Namespace)
 
 	case PodsLoadedMsg:
 		if msg.Err != nil {
@@ -227,11 +170,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Determine pane by context and populate pod list
-		if m.contextToPane != nil {
-			if paneIdx, ok := m.contextToPane[msg.Context]; ok && paneIdx >= 0 && paneIdx < 2 {
-				m.panes[paneIdx].SetPodListWithContext(msg.Pods, msg.Context, msg.Namespace)
-			}
-		}
+
 		m.mode = ModeViewing
 		return m, nil
 
@@ -256,14 +195,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Info != nil {
 			container = msg.Info.Container
 		}
-		cli := m.paneClients[msg.PaneIndex]
+		cli := m.k8sClient
 		return m, startLogStreamForClientCmd(msg.PaneIndex, cli, m.panes[msg.PaneIndex].namespace, m.panes[msg.PaneIndex].podName, container)
 	}
 
 	// Route to appropriate handler based on mode
 	switch m.mode {
-	case ModeContextSelect:
-		return m.updateContextSelect(msg)
 	case ModeSelection:
 		return m.updateSelection(msg)
 	case ModeViewing:
@@ -281,8 +218,6 @@ func (m Model) View() string {
 	}
 
 	switch m.mode {
-	case ModeContextSelect:
-		return m.viewContextSelect()
 	case ModeSelection:
 		return m.viewSelection()
 	case ModeViewing:
@@ -295,188 +230,6 @@ func (m Model) View() string {
 }
 
 // === Context Selection Mode ===
-
-func (m Model) updateContextSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.contextError != "" {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			if msg.String() == "ctrl+c" || msg.String() == "q" {
-				return m, tea.Quit
-			}
-		}
-		return m, nil
-	}
-
-	// If no contexts loaded yet, wait
-	if len(m.contexts) == 0 {
-		return m, nil
-	}
-
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.selectedCtx > 0 {
-				m.selectedCtx--
-			}
-			return m, nil
-
-		case "down", "j":
-			if m.selectedCtx < len(m.contexts)-1 {
-				m.selectedCtx++
-			}
-			return m, nil
-
-		case "enter":
-			// Proceed only if at least two contexts are marked
-			if len(m.selectedCtxMarked) != len(m.contexts) {
-				m.contextNotice = "Select at least two contexts (Space to toggle)"
-				return m, nil
-			}
-
-			// collect marked contexts (keep order of contexts list)
-			var picks []string
-			for i, marked := range m.selectedCtxMarked {
-				if marked {
-					picks = append(picks, m.contexts[i])
-				}
-			}
-
-			if len(picks) < 2 {
-				m.contextNotice = "Please choose at least two contexts"
-				return m, nil
-			}
-
-			// Create dedicated clients for the first two picks
-			m.selectedContexts = make(map[string]*k8s.Client, 2)
-			m.contextToPane = make(map[string]int, 2)
-			for i := 0; i < 2; i++ {
-				ctxName := picks[i]
-				cli, err := k8s.NewClient("")
-				if err != nil {
-					m.contextError = fmt.Sprintf("failed to init client for %s: %v", ctxName, err)
-					return m, nil
-				}
-				if err := cli.SwitchContext(ctxName); err != nil {
-					m.contextError = fmt.Sprintf("failed to switch to %s: %v", ctxName, err)
-					return m, nil
-				}
-				m.selectedContexts[ctxName] = cli
-				m.paneContexts[i] = ctxName
-				m.paneClients[i] = cli
-				m.contextToPane[ctxName] = i
-			}
-
-			// Enter viewing and trigger namespace + pod loading for both panes
-			m.mode = ModeViewing
-			return m, loadNamespacesCmd(m.selectedContexts)
-
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		}
-	}
-
-	return m, nil
-}
-
-func (m Model) viewContextSelect() string {
-	if m.contextError != "" {
-		// Show error
-		errorBox := lipgloss.NewStyle().
-			Width(m.width-4).
-			Height(m.height-4).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("9")). // Red
-			Padding(1, 2).
-			Render(fmt.Sprintf(`
-Error Loading Contexts
-
-%s
-
-Press Ctrl+C or q to quit
-`, m.contextError))
-
-		return lipgloss.Place(
-			m.width,
-			m.height,
-			lipgloss.Center,
-			lipgloss.Center,
-			errorBox,
-		)
-	}
-
-	if len(m.contexts) == 0 {
-		// Loading state
-		loading := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Render("Loading Kubernetes contexts...")
-
-		return lipgloss.Place(
-			m.width,
-			m.height,
-			lipgloss.Center,
-			lipgloss.Center,
-			loading,
-		)
-	}
-
-	// Title
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("170")).
-		Render("ktails - Select Kubernetes Context")
-
-	// Instructions
-	instructions := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Render("[↑↓ / j/k] Navigate | [Space] Mark | [Enter] Confirm | [Ctrl+C] Quit")
-
-	// Build context list with multi-select markers
-	var contextItems []string
-	for i, ctx := range m.contexts {
-		style := lipgloss.NewStyle().PaddingLeft(2)
-
-		marker := "[ ] "
-		if i < len(m.selectedCtxMarked) && m.selectedCtxMarked[i] {
-			marker = "[x] "
-		}
-
-		if i == m.selectedCtx {
-			style = style.Foreground(lipgloss.Color("170")).Bold(true)
-			contextItems = append(contextItems, style.Render("→ "+marker+ctx))
-		} else {
-			style = style.Foreground(lipgloss.Color("250"))
-			contextItems = append(contextItems, style.Render("  "+marker+ctx))
-		}
-	}
-
-	contextList := lipgloss.JoinVertical(lipgloss.Left, contextItems...)
-
-	// Box around context list
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(1, 2).
-		Width(60)
-
-	contextBox := boxStyle.Render(contextList)
-
-	// Combine everything
-	pieces := []string{"", title, "", contextBox, "", instructions}
-	if m.contextNotice != "" {
-		notice := lipgloss.NewStyle().Foreground(lipgloss.Color("170")).Render(m.contextNotice)
-		pieces = append(pieces, "", notice)
-	}
-	content := lipgloss.JoinVertical(lipgloss.Center, pieces...)
-
-	return lipgloss.Place(
-		m.width,
-		m.height,
-		lipgloss.Center,
-		lipgloss.Center,
-		content,
-	)
-}
 
 // === Selection Mode ===
 
@@ -544,18 +297,12 @@ func (m Model) updateViewing(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "n":
 			// Open namespace selector for the focused pane
-			ctxName := m.paneContexts[m.focusIndex]
-			cli := m.paneClients[m.focusIndex]
-			if ctxName == "" || cli == nil {
-				return m, nil
-			}
 			m.mode = ModeSelection
 			m.selector.Reset(m.focusIndex)
 			m.selector.SetSize(m.width, m.height)
-			m.selector.selectedContext = ctxName
 			m.selector.step = SelectNamespace
 			m.selector.SetLoading(true)
-			return m, loadNamespacesForSingleCmd(cli, ctxName)
+			return m, loadNamespacesForSingleCmd(m.k8sClient, "")
 		}
 
 	case LogLineMsg:
