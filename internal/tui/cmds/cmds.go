@@ -1,6 +1,8 @@
 package cmds
 
 import (
+	"strconv"
+
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
@@ -22,7 +24,7 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 				pod.Name,
 				pod.Namespace,
 				pod.Status,
-				string(pod.Restarts),
+				strconv.FormatInt(int64(pod.Restarts), 10),
 				pod.Age,
 				pod.Image,
 				pod.Container,
