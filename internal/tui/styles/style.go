@@ -1,6 +1,9 @@
-package tbl
+package styles
 
 import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -111,4 +114,184 @@ func HelpBoxStyle() lipgloss.Style {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(p.Mauve).
 		Padding(1, 2)
+}
+
+func CatppuccinMochaListStyles() list.Styles {
+	p := CatppuccinMocha()
+	return list.Styles{
+		Title: lipgloss.NewStyle().
+			Foreground(p.Text).
+			Background(p.Mantle).
+			Padding(0, 1).
+			Bold(true),
+
+		HelpStyle: lipgloss.NewStyle().
+			Foreground(p.Text).
+			Background(p.Mantle).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(p.Mauve).
+			Padding(1, 2),
+	}
+}
+
+// Focus-aware list styles.
+func CatppuccinMochaListStylesFocused(focused bool) list.Styles {
+	p := CatppuccinMocha()
+	accent := p.Blue
+	muted := p.Overlay0
+	border := muted
+	if focused {
+		border = accent
+	}
+	return list.Styles{
+		Title: lipgloss.NewStyle().
+			Foreground(p.Text).
+			Background(p.Surface0).
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(border).
+			BorderBottom(true).
+			Padding(0, 1).
+			Bold(true),
+		PaginationStyle: lipgloss.NewStyle().Foreground(p.Subtext0),
+		HelpStyle:       lipgloss.NewStyle().Foreground(p.Subtext0),
+		FilterPrompt:    lipgloss.NewStyle().Foreground(accent),
+		FilterCursor:    lipgloss.NewStyle().Foreground(p.Text),
+		StatusBar:       lipgloss.NewStyle().Background(p.Surface0).Foreground(p.Subtext0).Padding(0, 1),
+		StatusEmpty:     lipgloss.NewStyle().Foreground(p.Overlay1),
+		NoItems:         lipgloss.NewStyle().Foreground(p.Overlay1),
+	}
+}
+
+// ListPaneStyle provides a bordered container for the contexts list pane.
+func ListPaneStyle() lipgloss.Style {
+	p := CatppuccinMocha()
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(p.Overlay0).
+		Background(p.Mantle).
+		Padding(1, 1, 1, 1)
+}
+
+// PaneStyle returns a focus-aware pane style using the palette.
+func PaneStyle(focused bool) lipgloss.Style {
+	p := CatppuccinMocha()
+	border := p.Overlay0
+	if focused {
+		border = p.Blue
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Background(p.Mantle).
+		Padding(1, 1, 1, 1)
+}
+
+// TableStylesFocused returns focus-aware table styles.
+func TableStylesFocused(focused bool) table.Styles {
+	p := CatppuccinMocha()
+	styles := table.DefaultStyles()
+	border := p.Overlay0
+	accent := p.Blue
+	if focused {
+		border = accent
+	}
+	styles.Header = styles.Header.
+		Background(p.Surface0).
+		Foreground(p.Text).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(border).
+		BorderBottom(true).
+		Bold(true)
+	styles.Cell = styles.Cell.
+		Foreground(p.Subtext1)
+	styles.Selected = styles.Selected.
+		Foreground(p.Base).
+		Background(accent).
+		Bold(true)
+	return styles
+}
+
+// DocStyle is an outer wrapper similar to lipgloss layout example.
+func DocStyle() lipgloss.Style {
+	p := CatppuccinMocha()
+	return lipgloss.NewStyle().
+		Background(p.Crust).
+		Padding(1, 2)
+}
+
+// VerticalDivider renders a subtle vertical rule to separate panes.
+func VerticalDivider() string {
+	p := CatppuccinMocha()
+	return lipgloss.NewStyle().Foreground(p.Surface1).Render("│")
+}
+
+// PaneBodyStyle returns a focus-aware pane style with NO top border (for titled panes).
+func PaneBodyStyle(focused bool) lipgloss.Style {
+	p := CatppuccinMocha()
+	border := p.Overlay0
+	if focused {
+		border = p.Blue
+	}
+	b := lipgloss.RoundedBorder()
+	return lipgloss.NewStyle().
+		BorderStyle(b).
+		BorderLeft(true).BorderRight(true).BorderBottom(true).BorderTop(false).
+		BorderForeground(border).
+		Background(p.Mantle).
+		// No vertical padding so content starts right under the title bar
+		Padding(0, 1)
+}
+
+// TitleBar renders a rounded top border with the title centered between the lines.
+func TitleBar(title string, width int, focused bool) string {
+	if width < 4 {
+		width = 4
+	}
+	p := CatppuccinMocha()
+	accent := p.Overlay0
+	if focused {
+		accent = p.Blue
+	}
+	left := "╭"
+	right := "╮"
+	fill := "─"
+	// add spaces around title
+	titleText := " " + title + " "
+	// compute how many fill chars we can draw
+	inner := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if inner < lipgloss.Width(titleText) {
+		// truncate title if too long
+		over := lipgloss.Width(titleText) - inner
+		if over > 0 {
+			// naive truncation
+			if over+3 < len(title) {
+				title = title[:len(title)-(over+3)] + "..."
+			} else if len(title) > 3 {
+				title = title[:len(title)-3] + "..."
+			}
+			titleText = " " + title + " "
+		}
+	}
+	rem := inner - lipgloss.Width(titleText)
+	if rem < 0 {
+		rem = 0
+	}
+	leftFill := rem / 2
+	rightFill := rem - leftFill
+	line := left + strings.Repeat(fill, leftFill) + titleText + strings.Repeat(fill, rightFill) + right
+	return lipgloss.NewStyle().Foreground(accent).Render(line)
+}
+
+// RenderTitledPane composes TitleBar and PaneBodyStyle into a full titled pane.
+func RenderTitledPane(title string, width, height int, content string, focused bool) string {
+	if width < 4 {
+		width = 4
+	}
+	if height < 3 {
+		height = 3
+	}
+	top := TitleBar(title, width, focused)
+	bodyH := height - 1
+	body := PaneBodyStyle(focused).Width(width).Height(bodyH).Render(content)
+	return lipgloss.JoinVertical(lipgloss.Left, top, body)
 }

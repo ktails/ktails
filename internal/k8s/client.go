@@ -39,7 +39,9 @@ type PodInfo struct {
 }
 
 type ContextsInfo struct {
-	
+	Name             string
+	Cluster          string
+	DefaultNamespace string
 }
 
 // getDefaultKubeconfigPath returns the default kubeconfig path
@@ -122,7 +124,7 @@ func (c *Client) GetCurrentContext() string {
 	return c.currentContext
 }
 
-// DefultNamespace returns the default namespace for the current context
+// DefaultNamespace returns the default namespace for the current context
 func (c *Client) DefaultNamespace(kubeContext string) string {
 	if ctx, exists := c.rawConfig.Contexts[kubeContext]; exists {
 		if ctx.Namespace != "" {
@@ -133,10 +135,15 @@ func (c *Client) DefaultNamespace(kubeContext string) string {
 }
 
 // ListContexts returns available contexts from kubeconfig
-func (c *Client) ListContexts() ([]string, error) {
-	contexts := make([]string, 0, len(c.rawConfig.Contexts))
-	for name := range c.rawConfig.Contexts {
-		contexts = append(contexts, name)
+func (c *Client) ListContexts() ([]ContextsInfo, error) {
+	contexts := make([]ContextsInfo, 0, len(c.rawConfig.Contexts))
+	for name, value := range c.rawConfig.Contexts {
+		ctx := ContextsInfo{
+			Name:             name,
+			Cluster:          value.Cluster,
+			DefaultNamespace: value.Namespace,
+		}
+		contexts = append(contexts, ctx)
 	}
 	return contexts, nil
 }
@@ -182,6 +189,7 @@ func (c *Client) ListPods(kubeContext, namespace string) ([]v1.Pod, error) {
 
 	return pList.Items, nil
 }
+
 // ListPodInfo returns pods in the given namespace with detailed info
 
 func (c *Client) ListPodInfo(kubeContext, namespace string) ([]*PodInfo, error) {
@@ -334,3 +342,4 @@ func (c *Client) SwitchContext(contextName string) error {
 
 	return nil
 }
+
