@@ -115,22 +115,7 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return s, nil
 		case "q", "ctrl+c":
 			return s, tea.Quit
-		case " ":
-			// Let the focused pane handle space; do not replace root model
-			if s.mode == ModeContextPane {
-				cmd = s.layout.ContextPane.Update(msg)
-				return s, cmd
-			}
-			return s, nil
 
-		case "enter":
-			switch s.mode {
-			case ModeContextPane:
-				// future: confirm selection and fetch pods
-				return s, nil
-			case ModePodViewing:
-				return s, nil
-			}
 		case "tab":
 			// Switch focus cycles: 0=contexts, then each table on the right
 			n := len(s.layout.PodListPane)
