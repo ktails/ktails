@@ -38,6 +38,10 @@ type PodInfo struct {
 	Context   string
 }
 
+type ContextsInfo struct {
+	
+}
+
 // getDefaultKubeconfigPath returns the default kubeconfig path
 func getDefaultKubeconfigPath() string {
 	// Check KUBECONFIG env var first
@@ -177,6 +181,33 @@ func (c *Client) ListPods(kubeContext, namespace string) ([]v1.Pod, error) {
 	}
 
 	return pList.Items, nil
+}
+// ListPodInfo returns pods in the given namespace with detailed info
+
+func (c *Client) ListPodInfo(kubeContext, namespace string) ([]*PodInfo, error) {
+	if kubeContext != "" && kubeContext != c.currentContext {
+		if err := c.SwitchContext(kubeContext); err != nil {
+			return nil, fmt.Errorf("failed to switch to context %s: %w", kubeContext, err)
+		}
+	}
+
+	// List Pods
+	pods, err := c.ListPods(kubeContext, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list Pods in the namespace %s using context %s, err: %v", namespace, kubeContext, err)
+	}
+
+	// Get detailed info for each pod
+	var podInfos []*PodInfo
+	for _, pod := range pods {
+		info, err := c.GetPodInfo(kubeContext, namespace, pod.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get info for pod %s: %w", pod.Name, err)
+		}
+		podInfos = append(podInfos, info)
+	}
+
+	return podInfos, nil
 }
 
 // GetPodInfo fetches detailed pod information

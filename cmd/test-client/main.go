@@ -1,19 +1,26 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"io"
-	"log"
 	"os"
-	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
-	v1 "k8s.io/api/core/v1"
+	"github.com/ivyascorp-net/ktails/internal/tui"
 )
 
 func main() {
 	fmt.Println("Testing K8s Client Setup...")
+
+	var dump *os.File
+
+	if _, ok := os.LookupEnv("KTAILS_DEBUG"); ok {
+		var err error
+		dump, err = os.OpenFile("messages.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		if err != nil {
+			os.Exit(1)
+		}
+	}
 
 	// Create client
 	client, err := k8s.NewClient("")
@@ -22,35 +29,29 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("✅ Client created successfully")
+	//  simple tui
+	s := tui.NewSimpleTui(client)
+	s.Dump = dump
 
-	// Get current context
-	currentCtx := client.GetCurrentContext()
-	fmt.Printf("📍 Current context: %s\n", currentCtx)
+	p := tea.NewProgram(
+		s,
+		tea.WithAltScreen(),       // Use alternate screen buffer
+		tea.WithMouseCellMotion(), // Enable mouse support
+	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	// Stream logs from specific container
-	logOpts := &v1.PodLogOptions{
-		Container:  "manager", // Specify container name
-		Follow:     true,
-		Timestamps: true,
-		TailLines:  int64Ptr(50),
+	// Run program
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Error running ktails: %v\n", err)
+		os.Exit(1)
 	}
 
-	stream, err := client.StreamLogs(ctx, "cnpg-system", "cnpg-controller-manager-5c94bc644d-47zsm", logOpts)
-	if err != nil {
-		log.Fatalf("Failed to stream logs: %v", err)
-	}
-	defer stream.Close()
-
-	// Copy logs to stdout
-	if _, err := io.Copy(os.Stdout, stream); err != nil {
-		log.Printf("Error copying logs: %v", err)
-	}
-}
-
-// Helper function
-func int64Ptr(i int64) *int64 {
-	return &i
+	// pods, err := client.ListPodInfo("k3s-master-1", "immich-serverc")
+	// if err != nil {
+	// 	fmt.Printf("❌ Failed to list pods: %v\n", err)
+	// 	os.Exit(1)
+	// }
+	// for _, pod := range pods {
+	// 	fmt.Printf("Pod: %s, Namespace: %s, Status: %s, Restarts: %d, Age: %s, Image: %s, Container: %s, Node: %s, Context: %s\n",
+	// 		pod.Name, pod.Namespace, pod.Status, pod.Restarts, pod.Age, pod.Image, pod.Container, pod.Node, pod.Context)
+	// }
 }
