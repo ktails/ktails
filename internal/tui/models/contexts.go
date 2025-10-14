@@ -70,6 +70,8 @@ func (c *ContextsInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (c *ContextsInfo) View() string {
 	c.list.Styles = styles.CatppuccinMochaListStylesFocused(c.Focused)
+	c.list.SetShowStatusBar(false)
+	c.list.SetShowTitle(false)
 	return styles.RenderTitledPane(c.PaneTitle, c.Width, c.Height, c.list.View(), c.Focused)
 }
 
