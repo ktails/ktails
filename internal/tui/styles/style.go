@@ -277,7 +277,7 @@ func TitleBar(title string, width int, focused bool) string {
 		rem = 0
 	}
 	leftFill := rem / 2
-	rightFill := rem - leftFill
+	rightFill := rem - leftFill + 2
 	line := left + strings.Repeat(fill, leftFill) + titleText + strings.Repeat(fill, rightFill) + right
 	return lipgloss.NewStyle().Foreground(accent).Render(line)
 }

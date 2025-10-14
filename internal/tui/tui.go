@@ -210,8 +210,8 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if availH < 5 {
 			availH = s.height // fallback
 		}
-		dividerW := lipgloss.Width(styles.VerticalDivider())
-		leftW := availW / 3
+		dividerW := 1 // VerticalDivider is a 1-char bar without spacing
+		leftW := (availW - dividerW) / 3
 		rightW := availW - dividerW - leftW
 		if rightW < 0 {
 			rightW = 0
