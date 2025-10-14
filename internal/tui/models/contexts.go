@@ -11,14 +11,24 @@ import (
 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
 )
 
+type listMode int
+
+const (
+	normalMode listMode = iota
+	selectionMode
+)
+
 // Ensure ContextsInfo implements list.Item
 type contextList struct {
 	Name             string
 	Cluster          string
 	DefaultNamespace string
+	Selected         bool
+	IsCurrent        bool
 }
 
 type ContextsInfo struct {
+	mode      listMode
 	Width     int
 	Height    int
 	Client    *k8s.Client
@@ -31,6 +41,7 @@ func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	return &ContextsInfo{
 		Client:    client,
 		PaneTitle: "Kubernetes Contexts",
+		mode:      normalMode,
 	}
 }
 
@@ -40,7 +51,7 @@ func (c *ContextsInfo) Init() tea.Cmd {
 	return nil
 }
 
-func (c *ContextsInfo) Update(msg tea.Msg) (tea.Cmd) {
+func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		if c.Width == 0 {
@@ -61,14 +72,44 @@ func (c *ContextsInfo) Update(msg tea.Msg) (tea.Cmd) {
 		}
 		c.list.SetSize(innerW, innerH)
 		return nil
+	case tea.KeyMsg:
+		switch m.String() {
+		case " ":
+			if c.mode == normalMode {
+				// enter selection mode
+				c.mode = selectionMode
+				return nil
+			}
+			// toggle selection for focused item
+			idx := c.list.Index()
+			items := c.list.Items()
+			if idx >= 0 && idx < len(items) {
+				if it, ok := items[idx].(contextList); ok {
+					it.Selected = !it.Selected
+					c.list.SetItem(idx, it)
+				}
+			}
+			return nil
+		case "enter", "esc":
+			// leave selection mode
+			c.mode = normalMode
+			return nil
+		default:
+			var cmd tea.Cmd
+			c.list, cmd = c.list.Update(msg)
+			return cmd
+
+		}
 	default:
 		var cmd tea.Cmd
 		c.list, cmd = c.list.Update(msg)
 		return cmd
 	}
+
 }
 
 func (c *ContextsInfo) View() string {
+	// append item with "[]" in normal mode, "[x]" in selection mode
 	c.list.Styles = styles.CatppuccinMochaListStylesFocused(c.Focused)
 	c.list.SetShowStatusBar(false)
 	c.list.SetShowTitle(false)
@@ -83,11 +124,17 @@ func (c *ContextsInfo) initContextPane() {
 	}
 	itemList := make([]list.Item, 0, len(rawContextsList))
 	for _, ctxInfo := range rawContextsList {
-		itemList = append(itemList, contextList{
+		ctx := contextList{
 			ctxInfo.Name,
 			ctxInfo.Cluster,
 			ctxInfo.DefaultNamespace,
-		})
+			false,
+			false,
+		}
+		if ctxInfo.Name == c.Client.GetCurrentContext() {
+			ctx.IsCurrent = true
+		}
+		itemList = append(itemList, ctx)
 	}
 	delegate := list.NewDefaultDelegate()
 	c.list = list.New(itemList, delegate, 0, 0)
@@ -96,8 +143,16 @@ func (c *ContextsInfo) initContextPane() {
 }
 
 func (cl contextList) Title() string {
-	// Prefix with selection marker and current-context star
-	return cl.Name
+	// Prefix with checkbox and current-context star
+	checkbox := "[ ]"
+	if cl.Selected {
+		checkbox = "[x]"
+	}
+	star := ""
+	if cl.IsCurrent {
+		star = " ★"
+	}
+	return fmt.Sprintf("%s %s%s", checkbox, cl.Name, star)
 }
 
 func (cl contextList) Description() string {
