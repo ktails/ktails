@@ -6,3 +6,6 @@ type PodTableMsg struct {
 	Context string
 	Rows    []table.Row
 }
+type ContextsSelectedMsg struct {
+	Contexts []string
+}

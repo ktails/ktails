@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
+	"github.com/ivyascorp-net/ktails/internal/tui/cmds"
 	"github.com/ivyascorp-net/ktails/internal/tui/models"
 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
@@ -247,6 +248,8 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.mode = ModeContextPane
 		s.layout.ContextPane.SetFocused(true)
 		return s, nil
+	case msgs.ContextsSelectedMsg:
+		return s.handleContextsSelected(msg)
 	default:
 		// unhandled
 	}
@@ -312,4 +315,28 @@ func (s *SimpleTui) viewHelp() string {
 		lipgloss.Center,
 		helpText,
 	)
+}
+
+// === Handle ContextsSelectedMsg ===
+func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Model, tea.Cmd) {
+	if len(msg.Contexts) == 0 {
+		return s, nil
+	}
+
+	var localCmds []tea.Cmd
+	for _, ctxName := range msg.Contexts {
+		namespace := s.client.DefaultNamespace(ctxName)
+		localCmds = append(localCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
+	}
+
+	s.mode = ModePodViewing
+	s.layout.ContextPane.SetFocused(false)
+	if len(s.layout.PodListPane) > 0 {
+		s.mainTabs = 1
+		s.podPaneIdx = 0
+		s.layout.PodListPane[0].Focus()
+		s.layout.PodListPane[0].SetStyles(styles.TableStylesFocused(true))
+	}
+
+	return s, tea.Batch(localCmds...)
 }
