@@ -117,7 +117,7 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case " ":
 			// Let the focused pane handle space; do not replace root model
 			if s.mode == ModeContextPane {
-				_, cmd = s.layout.ContextPane.Update(msg)
+				cmd = s.layout.ContextPane.Update(msg)
 				return s, cmd
 			}
 			return s, nil
@@ -219,7 +219,7 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// set left pane bounds and forward msg so it can size inner list
 		s.layout.ContextPane.Width = leftW
 		s.layout.ContextPane.Height = availH
-		_, cmd = s.layout.ContextPane.Update(msg)
+		cmd = s.layout.ContextPane.Update(msg)
 		// divide right area across tables vertically
 		n := len(s.layout.PodListPane)
 		if n > 0 {
@@ -253,7 +253,7 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch s.mode {
 	case ModeContextPane:
 		// forward to context pane but keep root model
-		_, cmd = s.layout.ContextPane.Update(msg)
+		cmd = s.layout.ContextPane.Update(msg)
 		return s, cmd
 	case ModePodViewing:
 		// forward key events to the focused right table if any

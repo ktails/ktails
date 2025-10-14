@@ -40,7 +40,7 @@ func (c *ContextsInfo) Init() tea.Cmd {
 	return nil
 }
 
-func (c *ContextsInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (c *ContextsInfo) Update(msg tea.Msg) (tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		if c.Width == 0 {
@@ -60,11 +60,11 @@ func (c *ContextsInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			innerH = 5
 		}
 		c.list.SetSize(innerW, innerH)
-		return c, nil
+		return nil
 	default:
 		var cmd tea.Cmd
 		c.list, cmd = c.list.Update(msg)
-		return c, cmd
+		return cmd
 	}
 }
 
