@@ -3,23 +3,25 @@ package tui
 import (
 	"io"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
 	"github.com/ivyascorp-net/ktails/internal/tui/cmds"
+	"github.com/ivyascorp-net/ktails/internal/tui/models"
 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
-	"github.com/ivyascorp-net/ktails/internal/tui/tbl"
+	tbl "github.com/ivyascorp-net/ktails/internal/tui/styles"
+	"github.com/ivyascorp-net/ktails/internal/tui/views"
 )
 
 type Mode int
 
 const (
-	ModeListContexts Mode = iota // Loading initial table
-	ModeViewing                  // Viewing table
-	ModePodViewing               // Viewing pod table
-	ModeHelp                     // Help screen
+	ModeContextPane Mode = iota // Viewing context pane
+	ModePodViewing              // Viewing pod table
+	ModeHelp                    // Help screen
 )
 
 type SimpleTui struct {
@@ -31,8 +33,11 @@ type SimpleTui struct {
 	height     int
 	// k8s client
 	client *k8s.Client
-	// table Model
-	table table.Model
+	// Contexts Info List
+	contextInfo []models.ContextsInfo
+	// MasterLayout
+	layout views.MasterLayout
+
 	// dump debug msgs
 	Dump io.Writer
 }
@@ -44,74 +49,70 @@ func NewSimpleTui(client *k8s.Client) *SimpleTui {
 	return &SimpleTui{
 		// start in loading mode so we can initialize the table after we learn the
 		// terminal size (WindowSizeMsg) and populate rows from the k8s client
-		mode:       ModeListContexts,
-		focusIndex: 0,
-		width:      0,
-		height:     0,
-		client:     client,
-		table:      table.Model{},
+		mode:        ModeContextPane,
+		focusIndex:  0,
+		width:       0,
+		height:      0,
+		client:      client,
+		contextInfo: []models.ContextsInfo{},
+		layout:      views.NewLayout(),
 	}
 }
 
-// initContextTable builds the contexts table (columns, rows, size, styles)
-func (s *SimpleTui) initContextTable() {
+// initContextPane
+func (s *SimpleTui) initContextPane() {
 	// build rows
-	rows := []table.Row{}
 	if s.client != nil {
-		if contexts, err := s.client.ListContexts(); err == nil {
-			rows = make([]table.Row, 0, len(contexts))
-			current := s.client.GetCurrentContext()
-			for _, ctx := range contexts {
-				currentMarker := ""
-				if ctx == current {
-					currentMarker = "*"
-				}
-				// Columns: Context Name, Current, Cluster, Auth Info, Namespace, Extensions, Cluster Endpoint
-				ns := ""
-				if s.client != nil {
-					ns = s.client.DefaultNamespace(ctx)
-				}
-				rows = append(rows, table.Row{ctx, currentMarker, "", "", ns, "", ""})
+
+		ctxs, _ := s.client.ListContexts()
+
+		for _, v := range ctxs {
+			s.contextInfo = append(s.contextInfo, models.ContextsInfo{
+				Name:      v,
+				Namespace: s.client.DefaultNamespace(v),
+				IsCurrent: v == s.client.GetCurrentContext(),
+			})
+		}
+
+		s.layout.ContextPane.Title = "Kubernetes Contexts"
+		// convert to []list.Item
+		items := make([]list.Item, 0, len(s.contextInfo))
+		for i := range s.contextInfo {
+			items = append(items, s.contextInfo[i])
+		}
+		s.layout.ContextPane.SetItems(items)
+		s.layout.ContextPane.SetShowStatusBar(false)
+		s.layout.ContextPane.SetFilteringEnabled(false)
+		s.layout.ContextPane.SetShowHelp(false)
+		s.layout.ContextPane.SetShowPagination(false)
+		s.layout.ContextPane.SetWidth(s.width / 3)
+		s.layout.ContextPane.SetHeight(s.height)
+		// set the current context with a star
+		currentCtx := s.client.GetCurrentContext()
+		its := s.layout.ContextPane.Items()
+		for i := range its {
+			if its[i].FilterValue() == currentCtx {
+				s.layout.ContextPane.Select(i)
+				break
 			}
 		}
 	}
+}
 
-	// compute size with sane defaults before first resize
-	tableHeight := s.height - 4
-	if tableHeight < 3 {
-		tableHeight = 10
-	}
-	tableWidth := s.width - 4
-	if tableWidth < 20 {
-		tableWidth = 80
-	}
-
-	// create table
-	s.table = table.New(
-		table.WithColumns(tbl.ContextTableColumns()),
-		table.WithRows(rows),
-		table.WithHeight(tableHeight),
-		table.WithWidth(tableWidth),
-		table.WithFocused(true),
-		table.WithStyles(tbl.CatppuccinTableStyles()),
-	)
-
-	// position cursor at current context row if possible
-	current := ""
-	if s.client != nil {
-		current = s.client.GetCurrentContext()
-	}
-	for i, r := range s.table.Rows() {
-		if len(r) > 0 && r[0] == current {
-			s.table.SetCursor(i)
-			break
-		}
-	}
+func (s *SimpleTui) initPodListPane() {
+	s.layout.PodListPane.SetColumns(views.PodTableColumns())
+	// ensure header shows by setting empty rows
+	s.layout.PodListPane.SetRows([]table.Row{})
+	// style to ensure visibility
+	s.layout.PodListPane.SetStyles(tbl.CatppuccinTableStyles())
 }
 
 func (s *SimpleTui) Init() tea.Cmd {
 	// initialize the contexts table once at startup
-	s.initContextTable()
+	s.initContextPane()
+	s.initPodListPane()
+	// start directly in context pane so Enter works immediately
+	s.mode = ModeContextPane
 	return nil
 }
 
@@ -139,43 +140,42 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return s, tea.Quit
 		case "enter":
 			switch s.mode {
-			case ModeViewing:
-				// Select current row: mark it as current and optionally switch context
-				row := s.table.SelectedRow()
-				if len(row) > 0 {
-					selectedCtx := row[0]
-					// update star in Current column for all rows
-					rows := s.table.Rows()
-					for i := range rows {
-						if len(rows[i]) > 1 {
-							if rows[i][0] == selectedCtx {
-								rows[i][1] = "*"
-							} else {
-								rows[i][1] = ""
-							}
-						}
-					}
-					s.table.SetRows(rows)
-					// Switch k8s client context to keep in sync (best-effort)
-					if s.client != nil {
-						_ = s.client.SwitchContext(selectedCtx)
-					}
-					return s, cmds.LoadPodInfoCmd(s.client, selectedCtx, s.client.DefaultNamespace(selectedCtx))
+			case ModeContextPane:
+				// In context pane, enter selects the context and switches to pod viewing
+				i := s.layout.ContextPane.Index()
+				if i < 0 || i >= len(s.contextInfo) {
+					// invalid index, ignore
+					return s, nil
 				}
+				ctx := s.contextInfo[i]
+				// Update k8s client current context
+				if s.client != nil {
+					s.client.SwitchContext(ctx.Name)
+				}
+				// choose a namespace (prefer context’s namespace, else default)
+				ns := ctx.Namespace
+				if ns == "" && s.client != nil {
+					ns = s.client.DefaultNamespace(ctx.Name)
+				}
+				return s, cmds.LoadPodInfoCmd(s.client, ctx.Name, ns)
 
 			case ModePodViewing:
 				return s, nil
 			}
-
-		case "esc":
-			if s.mode == ModePodViewing {
-				// Go back to context viewing mode
-				s.mode = ModeViewing
-				// Reinitialize table to show contexts again
-				s.table = table.Model{}
-				s.mode = ModeListContexts // will trigger re-initialization below
-				return s, func() tea.Msg { return initialLoadMsg{} }
+		case "tab":
+			// Switch focus between left and right panes
+			s.focusIndex = (s.focusIndex + 1) % 2
+			if s.focusIndex == 0 {
+				// focus left (contexts)
+				s.mode = ModeContextPane
+				s.layout.PodListPane.Blur()
+			} else {
+				// focus right (pods)
+				s.mode = ModePodViewing
+				s.layout.PodListPane.Focus()
 			}
+			return s, nil
+
 		default:
 			// unhandled keys will be processed by the table in the mode switch below
 		}
@@ -184,43 +184,34 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// capture window size so views (help, table) can use the dimensions
 		s.width = msg.Width
 		s.height = msg.Height
-		// update table size to current window (full height for table view)
-		tableHeight := s.height - 4
-		if tableHeight < 3 {
-			tableHeight = 10
-		}
-		s.table.SetHeight(tableHeight)
-		s.table.SetWidth(s.width - 4)
-		// let the table also process the window size (discard any cmd here)
-		// so we can continue to the mode initialization below
-		s.table.UpdateViewport()
-		return s, func() tea.Msg { return initialLoadMsg{} }
+		s.layout.ContextPane.SetWidth(s.width / 3)
+		s.layout.ContextPane.SetHeight(s.height)
+		s.layout.PodListPane.SetWidth(s.width * 2 / 3)
+		s.layout.PodListPane.SetHeight(s.height)
+		// important: update viewport after resize so table computes layout
+		s.layout.PodListPane.UpdateViewport()
+		return s, nil
 	case msgs.PodTableMsg:
-		s.table.SetColumns(tbl.PodTableColumns())
-		s.table.SetRows(msg.Rows)
-		// ensure size is sensible after switching columns/rows
-		s.table.SetWidth(s.width - 4)
-		// height already set on resize; keep as-is
-		s.table.UpdateViewport()
+		// Update pod table with new rows and switch to pod viewing mode
+		s.layout.PodListPane.SetRows(msg.Rows)
+		// ensure the pod table is focused to receive key events
+		s.layout.PodListPane.Focus()
+		s.focusIndex = 1
 		s.mode = ModePodViewing
 		return s, nil
 	case initialLoadMsg:
 		// (re)initialize the contexts table when requested
-		s.initContextTable()
-		s.mode = ModeViewing
+		s.initContextPane()
+		s.mode = ModeContextPane
 		return s, nil
 	}
 
 	switch s.mode {
-	case ModeListContexts:
-
-		s.mode = ModeViewing
-		return s, nil
-	case ModeViewing:
-		s.table, cmd = s.table.Update(msg)
+	case ModeContextPane:
+		s.layout.ContextPane, cmd = s.layout.ContextPane.Update(msg)
 		return s, cmd
 	case ModePodViewing:
-		s.table, cmd = s.table.Update(msg)
+		s.layout.PodListPane, cmd = s.layout.PodListPane.Update(msg)
 		return s, cmd
 	case ModeHelp:
 		// handle help mode key presses (handled above), no table updates here
@@ -233,9 +224,11 @@ func (s *SimpleTui) View() string {
 	if s.mode == ModeHelp {
 		return s.viewHelp()
 	}
-	// Show only the table for all non-help modes (contexts and pods)
-	body := s.table.View() + "\n"
-	return body
+	// Show both panes side by side without extra newline
+	left := s.layout.ContextPane.View()
+	right := s.layout.PodListPane.View()
+	v := lipgloss.JoinHorizontal(lipgloss.Left, left, right)
+	return v
 }
 
 // === Help Mode ===
@@ -243,22 +236,11 @@ func (s *SimpleTui) View() string {
 func (s *SimpleTui) viewHelp() string {
 	// Guard against zero sizes before first WindowSizeMsg
 	w, h := s.width, s.height
-
-	tableHelp := s.table.HelpView()
-	if tableHelp == "" {
-		tableHelp = "No help available"
-	}
-
-	helpText := tbl.HelpBoxStyle().
-		Width(w - 4).
-		Height(h - 4).
-		Render(tableHelp)
-
 	return lipgloss.Place(
 		w,
 		h,
 		lipgloss.Center,
 		lipgloss.Center,
-		helpText,
+		s.layout.ContextPane.Help.FullHelpView(s.layout.ContextPane.FullHelp()),
 	)
 }

@@ -1,4 +1,4 @@
-package tbl
+package views
 
 import "github.com/charmbracelet/bubbles/table"
 
