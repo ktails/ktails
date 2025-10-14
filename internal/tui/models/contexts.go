@@ -11,13 +11,20 @@ type ContextsInfo struct {
 	AuthInfo  string
 	Namespace string
 	IsCurrent bool
+	Selected  bool
 }
 
 func (c ContextsInfo) Title() string {
-	if c.IsCurrent {
-		return "* " + c.Name
+	// Prefix with selection marker and current-context star
+	sel := "[ ] "
+	if c.Selected {
+		sel = "[x] "
 	}
-	return c.Name
+	star := ""
+	if c.IsCurrent {
+		star = "* "
+	}
+	return sel + star + c.Name
 }
 
 func (c ContextsInfo) Description() string {

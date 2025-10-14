@@ -11,7 +11,7 @@ import (
 
 func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 	return func() tea.Msg {
-		// Fetch pods from all contexts
+		// Fetch pods for the context
 		pods, err := client.ListPodInfo(kubeContext, namespace)
 		if err != nil {
 			return nil
@@ -32,7 +32,7 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 				pod.Context,
 			}
 		}
-		pt := msgs.PodTableMsg{Rows: rows}
+		pt := msgs.PodTableMsg{Context: kubeContext, Rows: rows}
 		return pt
 	}
 }

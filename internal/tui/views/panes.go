@@ -8,7 +8,7 @@ import (
 
 type MasterLayout struct {
 	ContextPane list.Model
-	PodListPane table.Model
+	PodListPane []table.Model
 }
 
 func NewLayout() MasterLayout {
@@ -25,6 +25,6 @@ func NewLayout() MasterLayout {
 	t.SetHeight(10)
 	return MasterLayout{
 		ContextPane: l,
-		PodListPane: t,
+		PodListPane: []table.Model{t},
 	}
 }
