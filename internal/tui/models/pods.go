@@ -107,11 +107,12 @@ func (p *Pods) View() string {
 }
 
 func (p *Pods) SetFocused(f bool) {
-	p.Focused = f
-	p.table.Focus()
-	if !f {
-		p.table.Blur()
-	}
+    p.Focused = f
+    if f {
+        p.table.Focus()
+    } else {
+        p.table.Blur()
+    }
 }
 
 // GetSelectedPod returns the currently selected pod name, or empty string if none

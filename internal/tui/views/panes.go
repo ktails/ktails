@@ -8,13 +8,13 @@ import (
 
 type MasterLayout struct {
 	ContextPane *models.ContextsInfo
-	PodListPane map[string]*models.Pods
+	PodListPane []*models.Pods
 }
 
 func NewLayout(client *k8s.Client) MasterLayout {
 	ctxPane := models.NewContextInfo(client)
 	return MasterLayout{
 		ContextPane: ctxPane,
-		PodListPane: make(map[string]*models.Pods),
+		PodListPane: []*models.Pods{},
 	}
 }
