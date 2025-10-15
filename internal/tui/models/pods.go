@@ -70,12 +70,12 @@ func (p *Pods) Update(msg tea.Msg) tea.Cmd {
 		p.table.SetWidth(innerW)
 		p.table.SetHeight(innerH)
 		return nil
-		
+
 	case []table.Row:
 		// Update rows when PodTableMsg is received
 		p.table.SetRows(msg)
 		return nil
-		
+
 	case tea.KeyMsg:
 		// Forward key messages to the table when focused
 		if p.Focused {
@@ -84,7 +84,7 @@ func (p *Pods) Update(msg tea.Msg) tea.Cmd {
 			return cmd
 		}
 		return nil
-		
+
 	default:
 		var cmd tea.Cmd
 		p.table, cmd = p.table.Update(msg)
@@ -95,7 +95,7 @@ func (p *Pods) Update(msg tea.Msg) tea.Cmd {
 func (p *Pods) View() string {
 	// Update table styles based on focus state
 	p.table.SetStyles(styles.TableStylesFocused(p.Focused))
-	
+
 	// Render the table with a titled pane
 	return styles.RenderTitledPane(
 		p.PaneTitle,
@@ -108,8 +108,9 @@ func (p *Pods) View() string {
 
 func (p *Pods) SetFocused(f bool) {
 	p.Focused = f
-	p.table.Focus()
-	if !f {
+	if f {
+		p.table.Focus()
+	} else {
 		p.table.Blur()
 	}
 }

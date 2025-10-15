@@ -140,13 +140,6 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					s.layout.PodListPane[s.podPaneIdx].SetFocused(true)
 				}
 			}
-
-			// Focus appropriate pane
-			if s.mainTabs == 0 {
-				s.layout.ContextPane.SetFocused(true)
-			} else {
-				s.layout.PodListPane[s.podPaneIdx].SetFocused(true)
-			}
 			return s, nil
 		}
 

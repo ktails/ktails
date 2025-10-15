@@ -342,4 +342,3 @@ func (c *Client) SwitchContext(contextName string) error {
 
 	return nil
 }
-
