@@ -156,12 +156,23 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Calculate layout dimensions once
 		dims := s.calculateLayoutDimensions()
 
-		// Apply to context pane
-		s.layout.ContextPane.SetDimensions(dims.leftPane)
+		// Apply to context pane (always full available height)
+		s.layout.ContextPane.SetDimensions(models.NewDimensions(dims.leftPane.Width, dims.leftPane.Height))
 
-		// Apply to all pod panes
-		for _, pane := range s.layout.PodListPane {
-			pane.SetDimensions(dims.rightPane)
+		// Apply to all pod panes, dividing remaining height evenly with minimum row height
+		n := len(s.layout.PodListPane)
+		if n > 0 {
+			minRow := 2 // title + 1 body line
+			rowH := max((dims.rightPane.Height)/n, minRow)
+			// Distribute any remainder to the last pane to account for integer division
+			remainder := dims.rightPane.Height - rowH*(n-1)
+			for i, pane := range s.layout.PodListPane {
+				ph := rowH
+				if i == n-1 {
+					ph = max(remainder, minRow)
+				}
+				pane.SetDimensions(models.NewDimensions(dims.rightPane.Width, ph))
+			}
 		}
 
 		return s, nil
@@ -257,9 +268,12 @@ func (s *SimpleTui) View() string {
 	}
 	right := lipgloss.JoinVertical(lipgloss.Left, rights...)
 	left := s.layout.ContextPane.View()
-	debug := s.debugDimensions()
 	content := lipgloss.JoinHorizontal(lipgloss.Left, left, styles.VerticalDivider(), right)
-	content = lipgloss.JoinVertical(lipgloss.Left, debug, content)
+	// Only render debug line when debugging is enabled
+	if s.Dump != nil {
+		debug := s.debugDimensions()
+		content = lipgloss.JoinVertical(lipgloss.Left, debug, content)
+	}
 	return styles.DocStyle().Render(content)
 }
 
@@ -367,7 +381,7 @@ func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 
 	// Calculate available space
 	availW := max(s.width-docFW, 10)
-	availH := max(s.height-docFH, 5)
+	availH := max(s.height-docFH, 2)
 
 	// Account for divider (1 char)
 	dividerW := 1
@@ -376,16 +390,9 @@ func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 	leftW := (availW - dividerW) / 3
 	rightW := availW - dividerW - leftW
 
-	// Right pane height divided by number of panes
-	n := len(s.layout.PodListPane)
-	rightH := availH
-	if n > 0 {
-		rightH = availH / n
-	}
-
 	return layoutDimensions{
 		leftPane:  models.NewDimensions(leftW, availH),
-		rightPane: models.NewDimensions(rightW, rightH),
+		rightPane: models.NewDimensions(rightW, availH),
 	}
 }
 

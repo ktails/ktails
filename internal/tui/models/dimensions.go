@@ -1,6 +1,5 @@
 package models
 
-
 // Dimensions represents width and height for a pane
 type Dimensions struct {
 	Width  int
@@ -11,7 +10,7 @@ type Dimensions struct {
 func NewDimensions(width, height int) Dimensions {
 	return Dimensions{
 		Width:  max(width, 10),
-		Height: max(height, 5),
+		Height: max(height, 3), // titled pane requires at least 1 for title + 2 for body/border
 	}
 }
 
@@ -19,7 +18,7 @@ func NewDimensions(width, height int) Dimensions {
 func (d Dimensions) GetInnerDimensions(frameWidth, frameHeight int) Dimensions {
 	return Dimensions{
 		Width:  max(d.Width-frameWidth, 10),
-		Height: max(d.Height-frameHeight-1, 5), // -1 for title bar
+		Height: max(d.Height-frameHeight, 1), // inner body can be at least one row
 	}
 }
 

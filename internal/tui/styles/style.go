@@ -277,7 +277,7 @@ func TitleBar(title string, width int, focused bool) string {
 		rem = 0
 	}
 	leftFill := rem / 2
-	rightFill := rem - leftFill + 2
+	rightFill := rem - leftFill // ensure total equals inner, no overflow
 	line := left + strings.Repeat(fill, leftFill) + titleText + strings.Repeat(fill, rightFill) + right
 	return lipgloss.NewStyle().Foreground(accent).Render(line)
 }
@@ -287,11 +287,14 @@ func RenderTitledPane(title string, width, height int, content string, focused b
 	if width < 4 {
 		width = 4
 	}
-	if height < 3 {
-		height = 3
+	if height < 2 {
+		height = 2 // title (1) + body (1)
 	}
 	top := TitleBar(title, width, focused)
 	bodyH := height - 1
+	if bodyH < 1 {
+		bodyH = 1
+	}
 	body := PaneBodyStyle(focused).Width(width).Height(bodyH).Render(content)
 	return lipgloss.JoinVertical(lipgloss.Left, top, body)
 }
