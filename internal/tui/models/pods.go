@@ -31,11 +31,16 @@ func (p *Pods) GetDimensions() Dimensions {
 	return p.dimensions
 }
 func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
+	title := contextName + " - " + namespace
+	if contextName == "" {
+		title = "Pod List" // Better placeholder title
+	}
+
 	p := &Pods{
 		ContextName: contextName,
 		Namespace:   namespace,
 		Client:      client,
-		PaneTitle:   contextName + " - " + namespace,
+		PaneTitle:   title,
 		table:       table.New(),
 		dimensions:  Dimensions{Width: 60, Height: 10}, // Default dimensions
 	}

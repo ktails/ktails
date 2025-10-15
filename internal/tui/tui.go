@@ -2,7 +2,6 @@
 package tui
 
 import (
-	"fmt"
 	"io"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -160,35 +159,21 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.width = msg.Width
 		s.height = msg.Height
 
+		// Check minimum terminal size
+		if s.width < 80 || s.height < 24 {
+			s.tooSmall = true
+			return s, nil
+		}
+		s.tooSmall = false
+
 		// Calculate layout dimensions once
 		dims := s.calculateLayoutDimensions()
 
 		// Apply to context pane (always full available height)
 		s.layout.ContextPane.SetDimensions(models.NewDimensions(dims.leftPane.Width, dims.leftPane.Height))
 
-		// Apply to pod panes
-		n := len(s.layout.PodListPane)
-		if n > 0 {
-			if n == 1 {
-				// Initial state: single pane gets full right side height
-				s.layout.PodListPane[0].SetDimensions(models.NewDimensions(dims.rightPane.Width, dims.rightPane.Height))
-			} else {
-				// Multiple panes: distribute height evenly
-				baseH := dims.rightPane.Height / n
-				remainder := dims.rightPane.Height % n
-
-				for i, pane := range s.layout.PodListPane {
-					h := baseH
-					if i < remainder {
-						h++
-					}
-					if h < 3 {
-						h = 3
-					}
-					pane.SetDimensions(models.NewDimensions(dims.rightPane.Width, h))
-				}
-			}
-		}
+		// Apply to all pod panes using helper
+		s.applyPodPaneDimensions()
 
 		return s, nil
 
@@ -248,11 +233,6 @@ func (s *SimpleTui) View() string {
 	right := lipgloss.JoinVertical(lipgloss.Left, rights...)
 	left := s.layout.ContextPane.View()
 	content := lipgloss.JoinHorizontal(lipgloss.Left, left, styles.VerticalDivider(), right)
-	// Only render debug line when debugging is enabled
-	if s.Dump != nil {
-		debug := s.debugDimensions()
-		content = lipgloss.JoinVertical(lipgloss.Left, debug, content)
-	}
 	return styles.DocStyle().Render(content)
 }
 
@@ -318,6 +298,9 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 		s.layout.PodListPane = []*models.Pods{}
 	}
 
+	// Track which panes are newly created
+	newPanes := make([]*models.Pods, 0)
+
 	for _, ctxName := range msg.Contexts {
 		// Check if context already exists
 		exists := false
@@ -331,39 +314,26 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 		if !exists {
 			namespace := s.client.DefaultNamespace(ctxName)
 			p := models.NewPodsModel(s.client, ctxName, namespace)
+
+			// Apply dimensions IMMEDIATELY before adding to layout
+			if s.width > 0 && s.height > 0 {
+				dims := s.calculateLayoutDimensions()
+				// Temporarily give it full right pane dimensions
+				// We'll redistribute after all panes are created
+				p.SetDimensions(models.NewDimensions(dims.rightPane.Width, dims.rightPane.Height))
+			}
+
 			s.layout.PodListPane = append(s.layout.PodListPane, p)
+			newPanes = append(newPanes, p)
 		}
 
 		namespace := s.client.DefaultNamespace(ctxName)
 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
 	}
 
-	// Apply dimensions if terminal size is known
+	// Now redistribute dimensions across ALL panes if terminal size is known
 	if s.width > 0 && s.height > 0 {
-		dims := s.calculateLayoutDimensions()
-
-		n := len(s.layout.PodListPane)
-		if n > 0 {
-			if n == 1 {
-				// Single pane gets full height
-				s.layout.PodListPane[0].SetDimensions(models.NewDimensions(dims.rightPane.Width, dims.rightPane.Height))
-			} else {
-				// Multiple panes: distribute height
-				baseH := dims.rightPane.Height / n
-				remainder := dims.rightPane.Height % n
-
-				for i, pane := range s.layout.PodListPane {
-					h := baseH
-					if i < remainder {
-						h++
-					}
-					if h < 3 {
-						h = 3
-					}
-					pane.SetDimensions(models.NewDimensions(dims.rightPane.Width, h))
-				}
-			}
-		}
+		s.applyPodPaneDimensions()
 	}
 
 	// Switch mode and focus
@@ -383,18 +353,36 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 	return s, tea.Batch(batchCmds...)
 }
 
-// ============================================
-// DEBUGGING HELPER
-// ============================================
-// Add this to your tui.go to debug dimension calculations
+// applyPodPaneDimensions applies dimensions to all pod panes
+func (s *SimpleTui) applyPodPaneDimensions() {
+	if s.width == 0 || s.height == 0 {
+		return // Can't calculate dimensions yet
+	}
 
-func (s *SimpleTui) debugDimensions() string {
 	dims := s.calculateLayoutDimensions()
-	return fmt.Sprintf(
-		"Terminal: %dx%d | Left: %dx%d | Right: %dx%d | Panes: %d",
-		s.width, s.height,
-		dims.leftPane.Width, dims.leftPane.Height,
-		dims.rightPane.Width, dims.rightPane.Height,
-		len(s.layout.PodListPane),
-	)
+	n := len(s.layout.PodListPane)
+
+	if n == 0 {
+		return
+	}
+
+	if n == 1 {
+		// Single pane gets full height
+		s.layout.PodListPane[0].SetDimensions(models.NewDimensions(dims.rightPane.Width, dims.rightPane.Height))
+	} else {
+		// Multiple panes: distribute height evenly with remainder
+		baseH := dims.rightPane.Height / n
+		remainder := dims.rightPane.Height % n
+
+		for i, pane := range s.layout.PodListPane {
+			h := baseH
+			if i < remainder {
+				h++
+			}
+			if h < 3 {
+				h = 3
+			}
+			pane.SetDimensions(models.NewDimensions(dims.rightPane.Width, h))
+		}
+	}
 }
