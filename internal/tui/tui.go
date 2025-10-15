@@ -4,13 +4,11 @@ package tui
 import (
 	"io"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
 	"github.com/ivyascorp-net/ktails/internal/tui/cmds"
-	"github.com/ivyascorp-net/ktails/internal/tui/models"
 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
 	"github.com/ivyascorp-net/ktails/internal/tui/views"
@@ -26,16 +24,16 @@ const (
 
 type SimpleTui struct {
 	// App state
-	mode       Mode
-	prevMode   Mode
-	mainTabs   int // 0 = left pane, 1..n = right tables
-	podPaneIdx int
-	width      int
-	height     int
+	mode          Mode
+	prevMode      Mode
+	mainTabs      int            // 0 = left pane, 1..n = right tables
+	podPaneIdxMap map[string]int // map context name to pod pane index
+	podPaneIdx    int            // current pod pane index when in pod viewing mode
+	// terminal size
+	width  int
+	height int
 	// k8s client
 	client *k8s.Client
-	// Contexts Info List
-	contextInfo []models.ContextsInfo
 	// MasterLayout
 	layout views.MasterLayout
 
@@ -50,41 +48,16 @@ func NewSimpleTui(client *k8s.Client) *SimpleTui {
 	return &SimpleTui{
 		// start in loading mode so we can initialize the table after we learn the
 		// terminal size (WindowSizeMsg) and populate rows from the k8s client
-		mode:        ModeContextPane,
-		mainTabs:    0,
-		width:       0,
-		height:      0,
-		client:      client,
-		contextInfo: []models.ContextsInfo{},
-		layout:      views.NewLayout(client),
-	}
-}
-
-// initContextPane
-
-func (s *SimpleTui) initPodListPane() {
-	// leave any default panes created by the layout; ensure at least one table exists
-	if len(s.layout.PodListPane) == 0 {
-		// start with an empty table with sensible defaults
-		t := table.New(
-			table.WithColumns(views.PodTableColumns()),
-			table.WithRows([]table.Row{}),
-		)
-		t.SetWidth(60)
-		t.SetHeight(10)
-		t.SetStyles(styles.TableStylesFocused(false))
-		s.layout.PodListPane = []table.Model{t}
-	} else {
-		// apply default blurred styles
-		for i := range s.layout.PodListPane {
-			s.layout.PodListPane[i].SetStyles(styles.TableStylesFocused(false))
-		}
+		mode:     ModeContextPane,
+		mainTabs: 0,
+		width:    0,
+		height:   0,
+		client:   client,
+		layout:   views.NewLayout(client),
 	}
 }
 
 func (s *SimpleTui) Init() tea.Cmd {
-	// initialize panes
-	s.initPodListPane()
 	// initialize the context list model so it has data
 	s.layout.ContextPane.Init()
 	// start directly in context pane
@@ -98,7 +71,7 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if s.Dump != nil {
 		spew.Fdump(s.Dump, msg)
 	}
-	var cmd tea.Cmd
+	// var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Global key handling
@@ -125,8 +98,7 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.mode = ModeContextPane
 				s.layout.ContextPane.SetFocused(true)
 				for i := range s.layout.PodListPane {
-					s.layout.PodListPane[i].Blur()
-					s.layout.PodListPane[i].SetStyles(styles.TableStylesFocused(false))
+					s.layout.PodListPane[i].SetFocused(false)
 				}
 				return s, nil
 			}
@@ -135,12 +107,12 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.layout.ContextPane.SetFocused(false)
 			s.podPaneIdx = s.mainTabs - 1
 			for i := range s.layout.PodListPane {
-				if i == s.podPaneIdx {
-					s.layout.PodListPane[i].Focus()
-					s.layout.PodListPane[i].SetStyles(styles.TableStylesFocused(true))
+				if s.podPaneIdxMap[i] == s.podPaneIdx {
+					s.layout.PodListPane[i].SetFocused(true)
+
 				} else {
-					s.layout.PodListPane[i].Blur()
-					s.layout.PodListPane[i].SetStyles(styles.TableStylesFocused(false))
+					s.layout.PodListPane[i].SetFocused(false)
+
 				}
 			}
 			return s, nil
@@ -171,12 +143,10 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.podPaneIdx = s.mainTabs - 1
 			}
 			for i := range s.layout.PodListPane {
-				if i == s.podPaneIdx {
-					s.layout.PodListPane[i].Focus()
-					s.layout.PodListPane[i].SetStyles(styles.TableStylesFocused(true))
+				if s.podPaneIdxMap[i] == s.podPaneIdx {
+					s.layout.PodListPane[i].SetFocused(true)
 				} else {
-					s.layout.PodListPane[i].Blur()
-					s.layout.PodListPane[i].SetStyles(styles.TableStylesFocused(false))
+					s.layout.PodListPane[i].SetFocused(false)
 				}
 			}
 			return s, nil
@@ -205,7 +175,8 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// set left pane bounds and forward msg so it can size inner list
 		s.layout.ContextPane.Width = leftW
 		s.layout.ContextPane.Height = availH
-		cmd = s.layout.ContextPane.Update(msg)
+		batchCmds := []tea.Cmd{}
+		ctxPaneCmd := s.layout.ContextPane.Update(msg)
 		// divide right area across tables vertically
 		n := len(s.layout.PodListPane)
 		if n > 0 {
@@ -213,18 +184,17 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if rowH < 3 {
 				rowH = 3
 			}
+
 			for i := range s.layout.PodListPane {
-				s.layout.PodListPane[i].SetWidth(rightW)
-				s.layout.PodListPane[i].SetHeight(rowH)
-				s.layout.PodListPane[i].UpdateViewport()
+				s.layout.PodListPane[i].Width = rightW
+				s.layout.PodListPane[i].Height = rowH
+				batchCmds = append(batchCmds, s.layout.PodListPane[i].Update(msg))
 			}
 		}
-		return s, cmd
+		return s, tea.Batch(append(batchCmds, ctxPaneCmd)...)
 	case msgs.PodTableMsg:
 		// route rows to all current tables (TODO: map by context)
-		for i := range s.layout.PodListPane {
-			s.layout.PodListPane[i].SetRows(msg.Rows)
-		}
+		s.layout.PodListPane[msg.Context].Update(msg.Rows)
 		s.mode = ModePodViewing
 		s.layout.ContextPane.SetFocused(false)
 		return s, nil
@@ -241,19 +211,20 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch s.mode {
 	case ModeContextPane:
 		// forward to context pane but keep root model
-		cmd = s.layout.ContextPane.Update(msg)
+		cmd := s.layout.ContextPane.Update(msg)
 		return s, cmd
 	case ModePodViewing:
 		// forward key events to the focused right table if any
-		n := len(s.layout.PodListPane)
-		if n > 0 && s.mainTabs > 0 {
-			idx := s.mainTabs - 1
-			if idx >= 0 && idx < n {
-				s.layout.PodListPane[idx], cmd = s.layout.PodListPane[idx].Update(msg)
-				return s, cmd
+		if s.podPaneIdx < 0 || s.podPaneIdx >= len(s.layout.PodListPane) {
+			return s, nil
+		}
+		var cmd tea.Cmd
+		for i := range s.layout.PodListPane {
+			if s.podPaneIdxMap[i] == s.podPaneIdx {
+				cmd = s.layout.PodListPane[i].Update(msg)
 			}
 		}
-		return s, nil
+		return s, cmd
 	case ModeHelp:
 		// handle help mode key presses (handled above), no table updates here
 		return s, nil
@@ -319,8 +290,13 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 	if len(s.layout.PodListPane) > 0 {
 		s.mainTabs = 1
 		s.podPaneIdx = 0
-		s.layout.PodListPane[0].Focus()
-		s.layout.PodListPane[0].SetStyles(styles.TableStylesFocused(true))
+		for i := range s.layout.PodListPane {
+			if s.podPaneIdxMap[i] == s.podPaneIdx {
+				s.layout.PodListPane[i].SetFocused(true)
+			} else {
+				s.layout.PodListPane[i].SetFocused(false)
+			}
+		}			
 	}
 
 	return s, tea.Batch(localCmds...)

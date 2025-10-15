@@ -2,28 +2,19 @@
 package views
 
 import (
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
 	"github.com/ivyascorp-net/ktails/internal/tui/models"
 )
 
 type MasterLayout struct {
 	ContextPane *models.ContextsInfo
-	PodListPane []table.Model
+	PodListPane map[string]*models.Pods
 }
 
 func NewLayout(client *k8s.Client) MasterLayout {
-	// Initialize table so it has non-nil internals and a header
-	t := table.New(
-		table.WithColumns(PodTableColumns()),
-		table.WithRows([]table.Row{}),
-	)
-	// Provide sane defaults so it renders before first WindowSizeMsg
-	t.SetWidth(60)
-	t.SetHeight(10)
 	ctxPane := models.NewContextInfo(client)
 	return MasterLayout{
 		ContextPane: ctxPane,
-		PodListPane: []table.Model{t},
+		PodListPane: map[string]*models.Pods{"All Namespaces": models.NewPodsModel(client)},
 	}
 }
