@@ -15,6 +15,6 @@ func NewLayout(client *k8s.Client) MasterLayout {
 	ctxPane := models.NewContextInfo(client)
 	return MasterLayout{
 		ContextPane: ctxPane,
-		PodListPane: map[string]*models.Pods{"All Namespaces": models.NewPodsModel(client)},
+		PodListPane: make(map[string]*models.Pods),
 	}
 }

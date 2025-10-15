@@ -193,10 +193,10 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return s, tea.Batch(append(batchCmds, ctxPaneCmd)...)
 	case msgs.PodTableMsg:
-		// route rows to all current tables (TODO: map by context)
-		s.layout.PodListPane[msg.Context].Update(msg.Rows)
-		s.mode = ModePodViewing
-		s.layout.ContextPane.SetFocused(false)
+		// Update the specific pod pane for this context
+		if pane, exists := s.layout.PodListPane[msg.Context]; exists {
+			pane.UpdateRows(msg.Rows)
+		}
 		return s, nil
 	case initialLoadMsg:
 		// (re)initialize the contexts table when requested
@@ -296,7 +296,7 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 			} else {
 				s.layout.PodListPane[i].SetFocused(false)
 			}
-		}			
+		}
 	}
 
 	return s, tea.Batch(localCmds...)
