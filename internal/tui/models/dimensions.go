@@ -1,5 +1,11 @@
 package models
 
+const (
+	TitleBarHeight            = 1
+	PaneBodyVerticalPadding   = 0 // from Padding(0, 1)
+	PaneBodyHorizontalPadding = 2 // left + right
+)
+
 // Dimensions represents width and height for a pane
 type Dimensions struct {
 	Width  int
@@ -15,10 +21,14 @@ func NewDimensions(width, height int) Dimensions {
 }
 
 // GetInnerDimensions returns dimensions accounting for frame size
-func (d Dimensions) GetInnerDimensions(frameWidth, frameHeight int) Dimensions {
+func (d Dimensions) GetInnerDimensions(frameWidth, frameHeight int, hasTitle bool) Dimensions {
+	h := d.Height - frameHeight
+	if hasTitle {
+		h -= TitleBarHeight
+	}
 	return Dimensions{
 		Width:  max(d.Width-frameWidth, 10),
-		Height: max(d.Height-frameHeight, 1), // inner body can be at least one row
+		Height: max(h, 1),
 	}
 }
 

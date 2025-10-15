@@ -31,7 +31,7 @@ type ContextsInfo struct {
 func (c *ContextsInfo) SetDimensions(d Dimensions) {
 	c.dimensions = d
 	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
-	inner := d.GetInnerDimensions(frameW, frameH)
+	inner := d.GetInnerDimensions(frameW, frameH, true)
 	c.list.SetSize(inner.Width, inner.Height)
 }
 

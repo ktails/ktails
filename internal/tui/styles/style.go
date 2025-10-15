@@ -298,3 +298,30 @@ func RenderTitledPane(title string, width, height int, content string, focused b
 	body := PaneBodyStyle(focused).Width(width).Height(bodyH).Render(content)
 	return lipgloss.JoinVertical(lipgloss.Left, top, body)
 }
+
+// PlaceholderMessage renders a centered help message for empty panes
+func PlaceholderMessage(title, subtitle string, width, height int) string {
+	p := CatppuccinMocha()
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(p.Subtext0).
+		Bold(true)
+
+	subtitleStyle := lipgloss.NewStyle().
+		Foreground(p.Overlay1)
+
+	message := lipgloss.JoinVertical(
+		lipgloss.Center,
+		titleStyle.Render(title),
+		"",
+		subtitleStyle.Render(subtitle),
+	)
+
+	return lipgloss.Place(
+		width,
+		height,
+		lipgloss.Center,
+		lipgloss.Center,
+		message,
+	)
+}

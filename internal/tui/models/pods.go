@@ -22,7 +22,7 @@ type Pods struct {
 func (p *Pods) SetDimensions(d Dimensions) {
 	p.dimensions = d
 	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
-	inner := d.GetInnerDimensions(frameW, frameH)
+	inner := d.GetInnerDimensions(frameW, frameH, true)
 	p.table.SetWidth(inner.Width)
 	p.table.SetHeight(inner.Height)
 }
@@ -37,7 +37,7 @@ func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
 		Client:      client,
 		PaneTitle:   contextName + " - " + namespace,
 		table:       table.New(),
-		dimensions: Dimensions{Width: 60, Height: 10}, // Default dimensions
+		dimensions:  Dimensions{Width: 60, Height: 10}, // Default dimensions
 	}
 	p.initPodListPane()
 	return p
@@ -62,24 +62,6 @@ func (p *Pods) Init() tea.Cmd {
 func (p *Pods) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// if p.Width == 0 {
-		// 	p.Width = msg.Width
-		// }
-		// if p.Height == 0 {
-		// 	p.Height = msg.Height
-		// }
-		// // Account for pane borders and padding
-		// frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
-		// innerW := p.Width - frameW
-		// if innerW < 10 {
-		// 	innerW = 10
-		// }
-		// innerH := p.Height - (frameH + 1) // +1 for title bar
-		// if innerH < 5 {
-		// 	innerH = 5
-		// }
-		// p.table.SetWidth(innerW)
-		// p.table.SetHeight(innerH)
 		return nil
 
 	case []table.Row:
@@ -107,12 +89,24 @@ func (p *Pods) View() string {
 	// Update table styles based on focus state
 	p.table.SetStyles(styles.TableStylesFocused(p.Focused))
 
+	content := p.table.View()
+
+	// Show helpful message if this is the placeholder pane (empty context)
+	if p.ContextName == "" && len(p.table.Rows()) == 0 {
+		content = styles.PlaceholderMessage(
+			"No context selected",
+			"Press Enter on a context to view pods",
+			p.dimensions.Width,
+			p.dimensions.Height-3, // account for title and borders
+		)
+	}
+
 	// Render the table with a titled pane
 	return styles.RenderTitledPane(
 		p.PaneTitle,
 		p.dimensions.Width,
 		p.dimensions.Height,
-		p.table.View(),
+		content,
 		p.Focused,
 	)
 }
