@@ -35,8 +35,8 @@ func main() {
 
 	p := tea.NewProgram(
 		s,
-		// tea.WithAltScreen(),       // Use alternate screen buffer
-		// tea.WithMouseCellMotion(), // Enable mouse support
+		tea.WithAltScreen(),       // Use alternate screen buffer
+		tea.WithMouseCellMotion(), // Enable mouse support
 	)
 
 	// Run program

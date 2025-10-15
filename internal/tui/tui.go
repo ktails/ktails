@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"fmt"
 	"io"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -256,7 +257,9 @@ func (s *SimpleTui) View() string {
 	}
 	right := lipgloss.JoinVertical(lipgloss.Left, rights...)
 	left := s.layout.ContextPane.View()
+	debug := s.debugDimensions()
 	content := lipgloss.JoinHorizontal(lipgloss.Left, left, styles.VerticalDivider(), right)
+	content = lipgloss.JoinVertical(lipgloss.Left, debug, content)
 	return styles.DocStyle().Render(content)
 }
 
@@ -438,4 +441,20 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 	}
 
 	return s, tea.Batch(batchCmds...)
+}
+
+// ============================================
+// DEBUGGING HELPER
+// ============================================
+// Add this to your tui.go to debug dimension calculations
+
+func (s *SimpleTui) debugDimensions() string {
+	dims := s.calculateLayoutDimensions()
+	return fmt.Sprintf(
+		"Terminal: %dx%d | Left: %dx%d | Right: %dx%d | Panes: %d",
+		s.width, s.height,
+		dims.leftPane.Width, dims.leftPane.Height,
+		dims.rightPane.Width, dims.rightPane.Height,
+		len(s.layout.PodListPane),
+	)
 }
