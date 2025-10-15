@@ -1,145 +1,248 @@
-# ktails
+# KTails
 
-Multi-context Kubernetes log viewer
+A beautiful, terminal-based Kubernetes pod log viewer built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
-Tail logs from multiple pods across different contexts, side by side.
+## Features
 
-## The Problem
+### Currently Implemented ✅
 
-When managing multi-tenant Kubernetes clusters (namespace-per-tenant),
-operators need to constantly switch contexts to compare logs between tenants.
-This is slow, breaks flow, and makes debugging painful.
+- **Multi-Context Support** - View pods from multiple Kubernetes contexts simultaneously
+- **Interactive TUI** - Clean, keyboard-driven interface with focus management
+- **Context Switching** - Easy selection and switching between Kubernetes contexts
+- **Pod Listing** - View detailed pod information (name, namespace, status, restarts, age, image, container, node)
+- **Multi-Selection** - Select multiple contexts to view their pods side-by-side
+- **Beautiful Theming** - Catppuccin Mocha color scheme with focus-aware styling
+- **Tab Navigation** - Cycle through contexts and pod panes with Tab/Shift+Tab
+- **Help Mode** - Press `?` for keyboard shortcuts and help
 
-## The Solution
+### In Development 🚧
 
-`ktails` lets you view logs from multiple pods/namespaces/contexts
-simultaneously in a split-pane TUI.
+See [TODO.md](./todo.md) for planned features.
 
-## MVP Features (v0.1)
+## Installation
 
-- [ ] Interactive pod selection (context → namespace → pod)
-- [ ] Split-pane view (2 panes side-by-side)
-- [ ] Real-time log streaming
-- [ ] Pod info header (status, restarts, age)
-- [ ] Independent scrolling per pane
-- [ ] Focus switching (Tab key)
-- [ ] Follow mode (auto-scroll)
+### Prerequisites
 
----
+- Go 1.21 or later
+- kubectl configured with access to your Kubernetes clusters
+- Valid kubeconfig file (default: `~/.kube/config`)
 
-## **Step 6: Task Breakdown**
+### Build from Source
 
-## Phase 1: Bubble Tea Fundamentals (Week 1)
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/ktails.git
+cd ktails
 
-### Day 1-2: Split Pane Static Viewer
+# Build the binary
+go build -o ktails cmd/test-client/main.go
 
-- [ ] Create basic split pane layout (2 columns)
-- [ ] Show static text in each pane
-- [ ] Tab key switches focus
-- [ ] Visual focus indicator (border color)
-- [ ] Arrow keys scroll focused pane
+# Run
+./ktails
+```
 
-**Success criteria:** Can navigate between two panes showing different text
+### Debug Mode
 
-### Day 3-4: Async Updates
+Enable debug logging to troubleshoot issues:
 
-- [ ] Background goroutine sends messages every 1s
-- [ ] Messages update specific pane
-- [ ] Text appears to "stream" into viewport
-- [ ] Auto-scroll to bottom in follow mode
-- [ ] 'f' key toggles follow mode
+```bash
+KTAILS_DEBUG=1 ./ktails
+# Logs will be written to messages.log
+```
 
-**Success criteria:** Text streams into panes from background process
+## Usage
 
-### Day 5-7: Selection UI
+### Basic Usage
 
-- [ ] Create list component with sample data
-- [ ] Arrow keys navigate list
-- [ ] Enter selects item
-- [ ] Show selection result
-- [ ] Esc cancels selection
+```bash
+# Start ktails
+./ktails
 
-**Success criteria:** Can select from a list and see the result
+# It will automatically use your default kubeconfig
+# Or specify a custom kubeconfig path (future feature)
+```
 
----
+### Keyboard Shortcuts
 
-## Phase 2: K8s Integration (Week 2)
+#### Global
 
-### Day 1-2: K8s Client Setup
+- `q` or `Ctrl+C` - Quit the application
+- `?` - Toggle help screen
+- `Tab` - Cycle forward through panes
+- `Shift+Tab` - Cycle backward through panes
 
-- [ ] Load kubeconfig
-- [ ] List available contexts
-- [ ] Switch context programmatically
-- [ ] Handle missing kubeconfig gracefully
+#### Context Pane (Left)
 
-### Day 3-4: Pod Operations
+- `↑/↓` - Navigate through contexts
+- `Space` - Toggle selection (select multiple contexts)
+- `Enter` - Load pods for selected context(s)
+- `Esc` - Clear all selections
+- `/` - Filter contexts (builtin list filter)
 
-- [ ] List pods in namespace
-- [ ] Get pod details (status, restarts, age)
-- [ ] Handle pod not found
-- [ ] Handle context not available
+#### Pod Pane (Right)
 
-### Day 5-7: Log Streaming
+- `↑/↓` - Navigate through pod list
+- `j/k` - Vim-style navigation (alternative to arrows)
 
-- [ ] Stream logs from pod
-- [ ] Parse log lines
-- [ ] Handle log stream errors
-- [ ] Reconnect on failure
-- [ ] Tail last N lines
+## Project Structure
 
-**Success criteria:** CLI tool that tails logs from any pod
+```
+ktails/
+├── cmd/
+│   └── test-client/
+│       └── main.go          # Entry point
+├── internal/
+│   ├── config/
+│   │   └── config.go        # Configuration management
+│   ├── k8s/
+│   │   └── client.go        # Kubernetes client wrapper
+│   └── tui/
+│       ├── tui.go           # Main TUI orchestration
+│       ├── cmds/
+│       │   └── cmds.go      # Bubble Tea commands
+│       ├── models/
+│       │   ├── contexts.go  # Context list model
+│       │   ├── pods.go      # Pod table model
+│       │   └── table.go     # Table column definitions
+│       ├── msgs/
+│       │   └── msgs.go      # Bubble Tea messages
+│       ├── styles/
+│       │   └── style.go     # Catppuccin theme and styles
+│       └── views/
+│           └── panes.go     # Layout management
+└── README.md
+```
 
----
+## Architecture
 
-## Phase 3: Single Pane TUI (Week 3)
+KTails follows the [Elm Architecture](https://guide.elm-lang.org/architecture/) via Bubble Tea:
 
-### Integration
+1. **Model** - Application state (contexts, pods, focus, dimensions)
+2. **Update** - State transitions based on messages (keyboard, data loading)
+3. **View** - Render the current state to the terminal
 
-- [ ] Connect selection UI → K8s client
-- [ ] Show real contexts/namespaces/pods
-- [ ] Stream real logs into viewport
-- [ ] Display real pod info
+### Key Components
 
-### Features
+- **SimpleTui** - Root model managing mode, focus, and layout
+- **ContextsInfo** - Context list with multi-select capability
+- **Pods** - Pod table with filtering and navigation
+- **K8s Client** - Wraps kubectl operations for context switching and pod listing
 
-- [ ] Search logs (/ key)
-- [ ] Copy log line (y key)
-- [ ] Refresh pod info (r key)
-- [ ] Toggle timestamps
-- [ ] Color-coded log levels
+## Configuration
 
-**Success criteria:** Usable single-pane log viewer
+Configuration is managed via `internal/config/config.go`. Future features will include:
 
----
+- Themes (dark/light)
+- Auto-follow logs
+- Max log lines
+- Refresh intervals
+- Recent pod history
 
-## Phase 4: Split Pane (Week 4)
+## Development
 
-### Core
+### Running Tests
 
-- [ ] Duplicate single pane logic
-- [ ] Route messages to correct pane
-- [ ] Independent streaming per pane
-- [ ] Tab switches focus
+```bash
+go test ./...
+```
 
-### UX
+### Code Formatting
 
-- [ ] 's' key opens pod selector for second pane
-- [ ] Clear visual distinction between panes
-- [ ] Sync scroll option (= key)
-- [ ] Compare mode (highlight differences)
+```bash
+# Format all Go files
+go fmt ./...
 
-**Success criteria:** Can view two pod logs side-by-side
+# Or use gofmt directly
+gofmt -w .
+```
 
----
+### Adding a New Feature
 
-## Phase 5: Polish (Week 5)
+1. Define the message type in `internal/tui/msgs/`
+2. Add command in `internal/tui/cmds/`
+3. Update model in appropriate `internal/tui/models/` file
+4. Handle message in `internal/tui/tui.go` Update()
+5. Update view rendering if needed
 
-- [ ] Syntax highlighting for log levels
-- [ ] Better error messages
-- [ ] Loading spinners
-- [ ] Keyboard shortcuts help (?)
-- [ ] Config file support
-- [ ] Recent pods history
-- [ ] Save/load sessions
+## Dependencies
 
-**Success criteria:** Tool feels polished and professional
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
+- [Bubbles](https://github.com/charmbracelet/bubbles) - TUI components (table, list)
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss) - Styling and layout
+- [client-go](https://github.com/kubernetes/client-go) - Kubernetes client library
+
+## Roadmap
+
+See [TODO.md](./todo.md) for detailed roadmap and planned features.
+
+### Short Term (v0.1.0)
+
+- [ ] Status bar with context/namespace info
+- [ ] Manual refresh (r key)
+- [ ] Error display panel
+- [ ] Basic log viewing
+
+### Medium Term (v0.2.0)
+
+- [ ] Search mode (S key)
+- [ ] Auto-refresh with interval
+- [ ] Sort pods by name/status/restarts
+- [ ] Log filtering and search
+
+### Long Term (v1.0.0)
+
+- [ ] Log export
+- [ ] Multiple log panes
+- [ ] Metrics integration
+- [ ] Configuration file support
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Guidelines
+
+1. Follow Go best practices and idioms
+2. Run `go fmt` before committing
+3. Add tests for new features
+4. Update documentation as needed
+5. Keep commits atomic and well-described
+
+## License
+
+ GNU GENERAL PUBLIC LICENSE V3
+
+## Acknowledgments
+
+- Inspired by [k9s](https://k9scli.io/) and similar Kubernetes TUI tools
+- Built with the amazing [Charm](https://charm.sh/) TUI libraries
+- Uses the [Catppuccin](https://github.com/catppuccin/catppuccin) color scheme
+
+## Screenshots
+
+_Coming soon - Add screenshots of the TUI in action_
+
+## Troubleshooting
+
+### No contexts showing up
+
+- Verify your kubeconfig is valid: `kubectl config view`
+- Check context access: `kubectl config get-contexts`
+- Enable debug mode: `KTAILS_DEBUG=1 ./ktails`
+
+### Connection errors
+
+- Ensure you can connect to your clusters: `kubectl cluster-info`
+- Check your kubeconfig file permissions
+- Verify network connectivity to Kubernetes API servers
+
+### Application crashes
+
+- Enable debug mode to see detailed logs
+- Check `messages.log` for error details
+- Report issues on GitHub with log output
+
+## Support
+
+- GitHub Issues: [Report bugs or request features](https://github.com/yourusername/ktails/issues)
+- Discussions: [Ask questions and share ideas](https://github.com/yourusername/ktails/discussions)
