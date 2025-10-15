@@ -21,9 +21,5 @@ func PodTableColumns() []table.Column {
 		{Title: "Status", Width: 10},
 		{Title: "Restarts", Width: 10},
 		{Title: "Age", Width: 10},
-		{Title: "Image", Width: 30},
-		{Title: "Container", Width: 20},
-		{Title: "Node", Width: 20},
-		{Title: "Context", Width: 20},
 	}
 }

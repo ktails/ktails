@@ -26,10 +26,6 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 				pod.Status,
 				strconv.FormatInt(int64(pod.Restarts), 10),
 				pod.Age,
-				pod.Image,
-				pod.Container,
-				pod.Node,
-				pod.Context,
 			}
 		}
 		pt := msgs.PodTableMsg{Context: kubeContext, Rows: rows}
