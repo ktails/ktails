@@ -8,9 +8,6 @@ import (
 )
 
 type Pods struct {
-	// Window size
-	Width  int
-	Height int
 	// Context name for this pod list
 	ContextName string
 	Namespace   string
@@ -40,6 +37,7 @@ func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
 		Client:      client,
 		PaneTitle:   contextName + " - " + namespace,
 		table:       table.New(),
+		dimensions: Dimensions{Width: 60, Height: 10}, // Default dimensions
 	}
 	p.initPodListPane()
 	return p

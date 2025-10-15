@@ -20,8 +20,6 @@ type contextList struct {
 }
 
 type ContextsInfo struct {
-	Width     int
-	Height    int
 	Client    *k8s.Client
 	Focused   bool
 	PaneTitle string
@@ -43,8 +41,9 @@ func (c *ContextsInfo) GetDimensions() Dimensions {
 
 func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	return &ContextsInfo{
-		Client:    client,
-		PaneTitle: "Kubernetes Contexts",
+		Client:     client,
+		PaneTitle:  "Kubernetes Contexts",
+		dimensions: Dimensions{Width: 30, Height: 10}, // Default dimensions
 	}
 }
 
