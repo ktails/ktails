@@ -9,6 +9,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
 	"github.com/ivyascorp-net/ktails/internal/tui/cmds"
+	"github.com/ivyascorp-net/ktails/internal/tui/models"
 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
 	"github.com/ivyascorp-net/ktails/internal/tui/views"
@@ -48,12 +49,13 @@ func NewSimpleTui(client *k8s.Client) *SimpleTui {
 	return &SimpleTui{
 		// start in loading mode so we can initialize the table after we learn the
 		// terminal size (WindowSizeMsg) and populate rows from the k8s client
-		mode:     ModeContextPane,
-		mainTabs: 0,
-		width:    0,
-		height:   0,
-		client:   client,
-		layout:   views.NewLayout(client),
+		mode:          ModeContextPane,
+		mainTabs:      0,
+		width:         0,
+		height:        0,
+		client:        client,
+		layout:        views.NewLayout(client),
+		podPaneIdxMap: map[string]int{},
 	}
 }
 
@@ -279,12 +281,48 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 		return s, nil
 	}
 
+	// Ensure index map exists
+	if s.podPaneIdxMap == nil {
+		s.podPaneIdxMap = map[string]int{}
+	}
+
+	// Create panes for any new contexts and prepare load commands
 	var localCmds []tea.Cmd
 	for _, ctxName := range msg.Contexts {
 		namespace := s.client.DefaultNamespace(ctxName)
+		if _, exists := s.layout.PodListPane[ctxName]; !exists {
+			p := models.NewPodsModel(s.client, ctxName, namespace)
+			s.layout.PodListPane[ctxName] = p
+			// assign a stable index based on insertion
+			s.podPaneIdxMap[ctxName] = len(s.podPaneIdxMap)
+		}
+		// queue load data command (always refresh)
 		localCmds = append(localCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
 	}
 
+	// Size newly added panes if we already know terminal size
+	if s.width > 0 && s.height > 0 {
+		docFW, docFH := styles.DocStyle().GetFrameSize()
+		availW := s.width - docFW
+		availH := s.height - docFH
+		dividerW := 1
+		leftW := (availW - dividerW) / 3
+		rightW := availW - dividerW - leftW
+		n := len(s.layout.PodListPane)
+		rowH := availH
+		if n > 0 {
+			rowH = availH / n
+			if rowH < 3 {
+				rowH = 3
+			}
+		}
+		for i := range s.layout.PodListPane {
+			s.layout.PodListPane[i].Width = rightW
+			s.layout.PodListPane[i].Height = rowH
+		}
+	}
+
+	// Focus first pod pane
 	s.mode = ModePodViewing
 	s.layout.ContextPane.SetFocused(false)
 	if len(s.layout.PodListPane) > 0 {
