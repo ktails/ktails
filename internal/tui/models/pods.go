@@ -18,8 +18,21 @@ type Pods struct {
 	Client      *k8s.Client
 	PaneTitle   string
 	table       table.Model
+	// Dimensions
+	dimensions Dimensions
 }
 
+func (p *Pods) SetDimensions(d Dimensions) {
+	p.dimensions = d
+	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
+	inner := d.GetInnerDimensions(frameW, frameH)
+	p.table.SetWidth(inner.Width)
+	p.table.SetHeight(inner.Height)
+}
+
+func (p *Pods) GetDimensions() Dimensions {
+	return p.dimensions
+}
 func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
 	p := &Pods{
 		ContextName: contextName,
@@ -51,24 +64,24 @@ func (p *Pods) Init() tea.Cmd {
 func (p *Pods) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		if p.Width == 0 {
-			p.Width = msg.Width
-		}
-		if p.Height == 0 {
-			p.Height = msg.Height
-		}
-		// Account for pane borders and padding
-		frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
-		innerW := p.Width - frameW
-		if innerW < 10 {
-			innerW = 10
-		}
-		innerH := p.Height - (frameH + 1) // +1 for title bar
-		if innerH < 5 {
-			innerH = 5
-		}
-		p.table.SetWidth(innerW)
-		p.table.SetHeight(innerH)
+		// if p.Width == 0 {
+		// 	p.Width = msg.Width
+		// }
+		// if p.Height == 0 {
+		// 	p.Height = msg.Height
+		// }
+		// // Account for pane borders and padding
+		// frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
+		// innerW := p.Width - frameW
+		// if innerW < 10 {
+		// 	innerW = 10
+		// }
+		// innerH := p.Height - (frameH + 1) // +1 for title bar
+		// if innerH < 5 {
+		// 	innerH = 5
+		// }
+		// p.table.SetWidth(innerW)
+		// p.table.SetHeight(innerH)
 		return nil
 
 	case []table.Row:
@@ -99,8 +112,8 @@ func (p *Pods) View() string {
 	// Render the table with a titled pane
 	return styles.RenderTitledPane(
 		p.PaneTitle,
-		p.Width,
-		p.Height,
+		p.dimensions.Width,
+		p.dimensions.Height,
 		p.table.View(),
 		p.Focused,
 	)

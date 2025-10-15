@@ -23,6 +23,11 @@ const (
 	ModeHelp                    // Help screen
 )
 
+type layoutDimensions struct {
+	leftPane  models.Dimensions
+	rightPane models.Dimensions
+}
+
 type SimpleTui struct {
 	// App state
 	mode       Mode
@@ -144,45 +149,60 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		// capture window size
 		s.width = msg.Width
 		s.height = msg.Height
-		// compute available area after outer doc frame and divider
-		docFW, docFH := styles.DocStyle().GetFrameSize()
-		availW := s.width - docFW
-		availH := s.height - docFH
-		if availW < 10 {
-			availW = s.width // fallback
-		}
-		if availH < 5 {
-			availH = s.height // fallback
-		}
-		dividerW := 1 // VerticalDivider is a 1-char bar without spacing
-		leftW := (availW - dividerW) / 3
-		rightW := availW - dividerW - leftW
-		if rightW < 0 {
-			rightW = 0
-		}
-		// set left pane bounds and forward msg so it can size inner list
-		s.layout.ContextPane.Width = leftW
-		s.layout.ContextPane.Height = availH
-		batchCmds := []tea.Cmd{}
-		ctxPaneCmd := s.layout.ContextPane.Update(msg)
-		// divide right area across tables vertically
-		n := len(s.layout.PodListPane)
-		if n > 0 {
-			rowH := availH / n
-			if rowH < 3 {
-				rowH = 3
-			}
 
-			for i := range s.layout.PodListPane {
-				s.layout.PodListPane[i].Width = rightW
-				s.layout.PodListPane[i].Height = rowH
-				batchCmds = append(batchCmds, s.layout.PodListPane[i].Update(msg))
-			}
+		// Calculate layout dimensions once
+		dims := s.calculateLayoutDimensions()
+
+		// Apply to context pane
+		s.layout.ContextPane.SetDimensions(dims.leftPane)
+
+		// Apply to all pod panes
+		for _, pane := range s.layout.PodListPane {
+			pane.SetDimensions(dims.rightPane)
 		}
-		return s, tea.Batch(append(batchCmds, ctxPaneCmd)...)
+
+		return s, nil
+		// // capture window size
+		// s.width = msg.Width
+		// s.height = msg.Height
+		// // compute available area after outer doc frame and divider
+		// docFW, docFH := styles.DocStyle().GetFrameSize()
+		// availW := s.width - docFW
+		// availH := s.height - docFH
+		// if availW < 10 {
+		// 	availW = s.width // fallback
+		// }
+		// if availH < 5 {
+		// 	availH = s.height // fallback
+		// }
+		// dividerW := 1 // VerticalDivider is a 1-char bar without spacing
+		// leftW := (availW - dividerW) / 3
+		// rightW := availW - dividerW - leftW
+		// if rightW < 0 {
+		// 	rightW = 0
+		// }
+		// // set left pane bounds and forward msg so it can size inner list
+		// s.layout.ContextPane.Width = leftW
+		// s.layout.ContextPane.Height = availH
+		// batchCmds := []tea.Cmd{}
+		// ctxPaneCmd := s.layout.ContextPane.Update(msg)
+		// // divide right area across tables vertically
+		// n := len(s.layout.PodListPane)
+		// if n > 0 {
+		// 	rowH := availH / n
+		// 	if rowH < 3 {
+		// 		rowH = 3
+		// 	}
+
+		// 	for i := range s.layout.PodListPane {
+		// 		s.layout.PodListPane[i].Width = rightW
+		// 		s.layout.PodListPane[i].Height = rowH
+		// 		batchCmds = append(batchCmds, s.layout.PodListPane[i].Update(msg))
+		// 	}
+		// }
+		// return s, tea.Batch(append(batchCmds, ctxPaneCmd)...)
 
 	case msgs.PodTableMsg:
 		for _, pane := range s.layout.PodListPane {
@@ -267,12 +287,112 @@ func (s *SimpleTui) viewHelp() string {
 }
 
 // === Handle ContextsSelectedMsg ===
+// func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Model, tea.Cmd) {
+// 	if len(msg.Contexts) == 0 {
+// 		return s, nil
+// 	}
+
+// 	// Create panes for any new contexts and prepare load commands
+// 	var batchCmds []tea.Cmd
+
+// 	for _, ctxName := range msg.Contexts {
+// 		// Check if context already exists
+// 		exists := false
+// 		for _, p := range s.layout.PodListPane {
+// 			if p.ContextName == ctxName {
+// 				exists = true
+// 				break
+// 			}
+// 		}
+
+// 		if !exists {
+// 			namespace := s.client.DefaultNamespace(ctxName)
+// 			p := models.NewPodsModel(s.client, ctxName, namespace)
+// 			s.layout.PodListPane = append(s.layout.PodListPane, p)
+// 		}
+
+// 		// Always load data (refresh)
+// 		namespace := s.client.DefaultNamespace(ctxName)
+// 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
+// 	}
+
+// 	// Size newly added panes if we already know terminal size
+// 	if s.width > 0 && s.height > 0 {
+// 		docFW, docFH := styles.DocStyle().GetFrameSize()
+// 		availW := s.width - docFW
+// 		availH := s.height - docFH
+// 		dividerW := 1
+// 		leftW := (availW - dividerW) / 3
+// 		rightW := availW - dividerW - leftW
+// 		n := len(s.layout.PodListPane)
+// 		rowH := availH
+// 		if n > 0 {
+// 			rowH = availH / n
+// 			if rowH < 3 {
+// 				rowH = 3
+// 			}
+// 		}
+// 		for i := range s.layout.PodListPane {
+// 			s.layout.PodListPane[i].Width = rightW
+// 			s.layout.PodListPane[i].Height = rowH
+// 		}
+// 	}
+
+// 	// Switch mode and focus first pod pane
+// 	s.mode = ModePodViewing
+// 	s.layout.ContextPane.SetFocused(false)
+
+// 	// Blur all pod panes first
+// 	for _, p := range s.layout.PodListPane {
+// 		p.SetFocused(false)
+// 	}
+
+// 	// Focus first pane (index 0)
+// 	if len(s.layout.PodListPane) > 0 {
+// 		s.mainTabs = 1
+// 		s.podPaneIdx = 0
+// 		s.layout.PodListPane[0].SetFocused(true)
+// 	}
+
+//		return s, tea.Batch(batchCmds...)
+//	}
+//
+// handle layout dimensions
+func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
+	// Get frame size from doc style
+	docFW, docFH := styles.DocStyle().GetFrameSize()
+
+	// Calculate available space
+	availW := max(s.width-docFW, 10)
+	availH := max(s.height-docFH, 5)
+
+	// Account for divider (1 char)
+	dividerW := 1
+
+	// Left pane is 1/3 of width
+	leftW := (availW - dividerW) / 3
+	rightW := availW - dividerW - leftW
+
+	// Right pane height divided by number of panes
+	n := len(s.layout.PodListPane)
+	rightH := availH
+	if n > 0 {
+		rightH = availH / n
+	}
+
+	return layoutDimensions{
+		leftPane:  models.NewDimensions(leftW, availH),
+		rightPane: models.NewDimensions(rightW, rightH),
+	}
+}
+
+// === Usage example in handleContextsSelected ===
+
 func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Model, tea.Cmd) {
 	if len(msg.Contexts) == 0 {
 		return s, nil
 	}
 
-	// Create panes for any new contexts and prepare load commands
 	var batchCmds []tea.Cmd
 
 	for _, ctxName := range msg.Contexts {
@@ -291,43 +411,26 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 			s.layout.PodListPane = append(s.layout.PodListPane, p)
 		}
 
-		// Always load data (refresh)
 		namespace := s.client.DefaultNamespace(ctxName)
 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
 	}
 
-	// Size newly added panes if we already know terminal size
+	// Apply dimensions if terminal size is known
 	if s.width > 0 && s.height > 0 {
-		docFW, docFH := styles.DocStyle().GetFrameSize()
-		availW := s.width - docFW
-		availH := s.height - docFH
-		dividerW := 1
-		leftW := (availW - dividerW) / 3
-		rightW := availW - dividerW - leftW
-		n := len(s.layout.PodListPane)
-		rowH := availH
-		if n > 0 {
-			rowH = availH / n
-			if rowH < 3 {
-				rowH = 3
-			}
-		}
-		for i := range s.layout.PodListPane {
-			s.layout.PodListPane[i].Width = rightW
-			s.layout.PodListPane[i].Height = rowH
+		dims := s.calculateLayoutDimensions()
+		for _, pane := range s.layout.PodListPane {
+			pane.SetDimensions(dims.rightPane)
 		}
 	}
 
-	// Switch mode and focus first pod pane
+	// Switch mode and focus
 	s.mode = ModePodViewing
 	s.layout.ContextPane.SetFocused(false)
 
-	// Blur all pod panes first
 	for _, p := range s.layout.PodListPane {
 		p.SetFocused(false)
 	}
 
-	// Focus first pane (index 0)
 	if len(s.layout.PodListPane) > 0 {
 		s.mainTabs = 1
 		s.podPaneIdx = 0

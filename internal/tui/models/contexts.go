@@ -26,6 +26,19 @@ type ContextsInfo struct {
 	Focused   bool
 	PaneTitle string
 	list      list.Model
+	// Dimensions
+	dimensions Dimensions
+}
+
+func (c *ContextsInfo) SetDimensions(d Dimensions) {
+	c.dimensions = d
+	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
+	inner := d.GetInnerDimensions(frameW, frameH)
+	c.list.SetSize(inner.Width, inner.Height)
+}
+
+func (c *ContextsInfo) GetDimensions() Dimensions {
+	return c.dimensions
 }
 
 func NewContextInfo(client *k8s.Client) *ContextsInfo {
@@ -43,22 +56,22 @@ func (c *ContextsInfo) Init() tea.Cmd {
 func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
-		if c.Width == 0 {
-			c.Width = m.Width / 3
-		}
-		if c.Height == 0 {
-			c.Height = m.Height
-		}
-		frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
-		innerW := c.Width - frameW
-		if innerW < 10 {
-			innerW = 10
-		}
-		innerH := c.Height - (frameH + 1)
-		if innerH < 5 {
-			innerH = 5
-		}
-		c.list.SetSize(innerW, innerH)
+		// if c.Width == 0 {
+		// 	c.Width = m.Width / 3
+		// }
+		// if c.Height == 0 {
+		// 	c.Height = m.Height
+		// }
+		// frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
+		// innerW := c.Width - frameW
+		// if innerW < 10 {
+		// 	innerW = 10
+		// }
+		// innerH := c.Height - (frameH + 1)
+		// if innerH < 5 {
+		// 	innerH = 5
+		// }
+		// c.list.SetSize(innerW, innerH)
 		return nil
 
 	case tea.KeyMsg:
@@ -160,7 +173,7 @@ func (c *ContextsInfo) View() string {
 	c.list.Styles = styles.CatppuccinMochaListStylesFocused(c.Focused)
 	c.list.SetShowStatusBar(false)
 	c.list.SetShowTitle(false)
-	return styles.RenderTitledPane(c.PaneTitle, c.Width, c.Height, c.list.View(), c.Focused)
+	return styles.RenderTitledPane(c.PaneTitle, c.dimensions.Width, c.dimensions.Height, c.list.View(), c.Focused)
 }
 
 func (c *ContextsInfo) initContextPane() {
