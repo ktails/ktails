@@ -5,6 +5,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ivyascorp-net/ktails/internal/k8s"
 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
+	"github.com/termkit/skeleton"
 )
 
 type Pods struct {
@@ -17,13 +18,14 @@ type Pods struct {
 	table       table.Model
 	// Dimensions
 	dimensions Dimensions
+	skeleton   *skeleton.Skeleton
 }
 
 func (p *Pods) SetDimensions(d Dimensions) {
 	p.dimensions = d
 	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
 	inner := d.GetInnerDimensions(frameW, frameH, true)
-	
+
 	// Set both width and height explicitly to avoid any interim states
 	p.table.SetWidth(inner.Width)
 	p.table.SetHeight(inner.Height)
@@ -32,7 +34,7 @@ func (p *Pods) SetDimensions(d Dimensions) {
 func (p *Pods) GetDimensions() Dimensions {
 	return p.dimensions
 }
-func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
+func NewPodsModel(client *k8s.Client, contextName, namespace string, s *skeleton.Skeleton) *Pods {
 	title := contextName + " - " + namespace
 	if contextName == "" {
 		title = "Pod List" // Better placeholder title
@@ -45,6 +47,7 @@ func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
 		PaneTitle:   title,
 		table:       table.New(),
 		dimensions:  Dimensions{Width: 60, Height: 10}, // Default dimensions
+		skeleton:    s,
 	}
 	p.initPodListPane()
 	return p
@@ -66,29 +69,29 @@ func (p *Pods) Init() tea.Cmd {
 	return nil
 }
 
-func (p *Pods) Update(msg tea.Msg) tea.Cmd {
+func (p *Pods) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		return nil
+		return nil, nil
 
 	case []table.Row:
 		// Update rows when PodTableMsg is received
 		p.table.SetRows(msg)
-		return nil
+		return p, nil
 
 	case tea.KeyMsg:
 		// Forward key messages to the table when focused
 		if p.Focused {
 			var cmd tea.Cmd
 			p.table, cmd = p.table.Update(msg)
-			return cmd
+			return p, cmd
 		}
-		return nil
+		return p, nil
 
 	default:
 		var cmd tea.Cmd
 		p.table, cmd = p.table.Update(msg)
-		return cmd
+		return p, cmd
 	}
 }
 

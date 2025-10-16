@@ -53,9 +53,6 @@ func NewSimpleTui(client *k8s.Client) *SimpleTui {
 	layout := views.NewLayout(client)
 
 	// Create initial placeholder pane for the right side
-	placeholder := models.NewPodsModel(client, "", "")
-	placeholder.PaneTitle = "Select a context to view pods"
-	layout.PodListPane = []*models.Pods{placeholder}
 	return &SimpleTui{
 		mode:     ModeContextPane,
 		mainTabs: 0,
@@ -99,57 +96,24 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return s, tea.Quit
 
 		case "tab":
-			n := len(s.layout.PodListPane)
-			s.mainTabs = (s.mainTabs + 1) % (n + 1)
-
-			// Blur all
-			s.layout.ContextPane.SetFocused(false)
-			for _, p := range s.layout.PodListPane {
-				p.SetFocused(false)
-			}
-
-			if s.mainTabs == 0 {
+			if s.mode == ModePodViewing {
 				s.mode = ModeContextPane
 				s.layout.ContextPane.SetFocused(true)
-			} else {
+
+			} else if s.mode == ModeContextPane {
 				s.mode = ModePodViewing
-				s.podPaneIdx = s.mainTabs - 1
-				s.layout.PodListPane[s.podPaneIdx].SetFocused(true)
+				s.layout.ContextPane.SetFocused(false)
 			}
 			return s, nil
 
 		case "shift+tab":
-			// Reverse cycle through pod panes
-			n := len(s.layout.PodListPane)
-			if n == 0 {
-				s.mainTabs = 0
+			if s.mode == ModePodViewing {
 				s.mode = ModeContextPane
 				s.layout.ContextPane.SetFocused(true)
-				return s, nil
-			}
 
-			// Blur all
-			s.layout.ContextPane.SetFocused(false)
-			for _, p := range s.layout.PodListPane {
-				p.SetFocused(false)
-			}
-
-			if s.mainTabs == 0 {
-				// from contexts, go to last pod pane
-				s.mainTabs = n
+			} else if s.mode == ModeContextPane {
 				s.mode = ModePodViewing
-				s.podPaneIdx = n - 1
-			} else {
-				// from a pod pane, go to previous
-				s.mainTabs--
-				if s.mainTabs == 0 {
-					s.mode = ModeContextPane
-					s.layout.ContextPane.SetFocused(true)
-				} else {
-					s.mode = ModePodViewing
-					s.podPaneIdx = s.mainTabs - 1
-					s.layout.PodListPane[s.podPaneIdx].SetFocused(true)
-				}
+				s.layout.ContextPane.SetFocused(false)
 			}
 			return s, nil
 		}
@@ -177,13 +141,9 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return s, nil
 
 	case msgs.PodTableMsg:
-		for _, pane := range s.layout.PodListPane {
-			if pane.ContextName == msg.Context {
-				pane.UpdateRows(msg.Rows)
-				break
-			}
-		}
-		return s, nil
+		s.layout.PodPages.SetActivePage(msg.Context)
+		_, cmd := s.layout.PodPages.Update(msg)
+		return s, cmd
 
 	case initialLoadMsg:
 		// (re)initialize the contexts table when requested
@@ -205,10 +165,10 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return s, cmd
 
 	case ModePodViewing:
-		if s.podPaneIdx >= 0 && s.podPaneIdx < len(s.layout.PodListPane) {
-			cmd := s.layout.PodListPane[s.podPaneIdx].Update(msg)
-			return s, cmd
-		}
+		// forward to current pod pane but keep root model
+		var cmd tea.Cmd
+		_, cmd = s.layout.PodPages.Update(msg)
+		return s, cmd
 
 	case ModeHelp:
 		// handle help mode key presses (handled above), no table updates here
@@ -225,11 +185,8 @@ func (s *SimpleTui) View() string {
 	if s.mode == ModeHelp {
 		return s.viewHelp()
 	}
-	rights := make([]string, len(s.layout.PodListPane))
-	for i, pane := range s.layout.PodListPane {
-		rights[i] = pane.View()
-	}
-	right := lipgloss.JoinVertical(lipgloss.Left, rights...)
+	rights := s.layout.PodPages.View()
+	right := lipgloss.JoinVertical(lipgloss.Left, rights)
 	left := s.layout.ContextPane.View()
 	content := lipgloss.JoinHorizontal(lipgloss.Left, left, styles.VerticalDivider(), right)
 	return styles.DocStyle().Render(content)

@@ -4,17 +4,20 @@ package views
 import (
 	"github.com/ivyascorp-net/ktails/internal/k8s"
 	"github.com/ivyascorp-net/ktails/internal/tui/models"
+	"github.com/termkit/skeleton"
 )
 
 type MasterLayout struct {
 	ContextPane *models.ContextsInfo
-	PodListPane []*models.Pods
+	PodPages    *skeleton.Skeleton
 }
 
 func NewLayout(client *k8s.Client) MasterLayout {
 	ctxPane := models.NewContextInfo(client)
+	s := skeleton.NewSkeleton()
+	s.AddPage("No Pods", "No Pods to display. Select a context to view pods.", nil)
 	return MasterLayout{
 		ContextPane: ctxPane,
-		PodListPane: []*models.Pods{},
+		PodPages:    s,
 	}
 }

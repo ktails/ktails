@@ -6,9 +6,22 @@ import (
 	"github.com/ivyascorp-net/ktails/internal/tui/models"
 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
+	"github.com/termkit/skeleton"
 )
 
-// calculateLayoutDimensions calculates the dimensions for left and right panes
+// import (
+// 	tea "github.com/charmbracelet/bubbletea"
+// 	"github.com/ivyascorp-net/ktails/internal/tui/cmds"
+// 	"github.com/ivyascorp-net/ktails/internal/tui/models"
+// 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
+// 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
+// )
+
+func newPodPanes() {
+
+}
+
+// // calculateLayoutDimensions calculates the dimensions for left and right panes
 func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 	// Get frame size from doc style
 	docFW, docFH := styles.DocStyle().GetFrameSize()
@@ -30,7 +43,7 @@ func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 	}
 }
 
-// handleContextsSelected handles the selection of contexts
+// // handleContextsSelected handles the selection of contexts
 func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Model, tea.Cmd) {
 	if len(msg.Contexts) == 0 {
 		return s, nil
@@ -38,28 +51,14 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 
 	var batchCmds []tea.Cmd
 
-	// Clear placeholder pane if it exists
-	if len(s.layout.PodListPane) == 1 && s.layout.PodListPane[0].ContextName == "" {
-		s.layout.PodListPane = []*models.Pods{}
+	if s.layout.PodPages.GetActivePage() == "No Pods" {
+		s.layout.PodPages.DeletePage("No Pods")
 	}
+	s.layout.PodPages = skeleton.NewSkeleton()
 
 	// Create all new panes
 	for _, ctxName := range msg.Contexts {
-		// Check if context already exists
-		exists := false
-		for _, p := range s.layout.PodListPane {
-			if p.ContextName == ctxName {
-				exists = true
-				break
-			}
-		}
-
-		if !exists {
-			namespace := s.client.DefaultNamespace(ctxName)
-			p := models.NewPodsModel(s.client, ctxName, namespace)
-			// Add to layout
-			s.layout.PodListPane = append(s.layout.PodListPane, p)
-		}
+		s.layout.PodPages.AddPage(ctxName, "", models.NewPodsModel(s.client, ctxName, s.client.DefaultNamespace(ctxName), s.layout.PodPages))
 
 		namespace := s.client.DefaultNamespace(ctxName)
 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
@@ -75,17 +74,7 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 	// Switch mode and focus
 	s.mode = ModePodViewing
 	s.layout.ContextPane.SetFocused(false)
-
-	for _, p := range s.layout.PodListPane {
-		p.SetFocused(false)
-	}
-
-	if len(s.layout.PodListPane) > 0 {
-		s.mainTabs = 1
-		s.podPaneIdx = 0
-		s.layout.PodListPane[0].SetFocused(true)
-	}
-
+	s.layout.PodPages.SetActivePage(msg.Contexts[0])
 	return s, tea.Batch(batchCmds...)
 }
 
@@ -95,49 +84,8 @@ func (s *SimpleTui) applyPodPaneDimensions() {
 		return // Can't calculate dimensions yet
 	}
 
-	dims := s.calculateLayoutDimensions()
-	n := len(s.layout.PodListPane)
-
-	if n == 0 {
-		return
-	}
-
-	if n == 1 {
-		// Single pane gets full height
-		s.layout.PodListPane[0].SetDimensions(models.NewDimensions(dims.rightPane.Width, dims.rightPane.Height))
-	} else {
-		// Multiple panes: distribute height evenly
-		const minHeight = 8 // minimum height for usability (title + header + few rows)
-		totalAvailable := dims.rightPane.Height
-
-		// Check if we can give each pane the minimum height
-		if n*minHeight > totalAvailable {
-			// Not enough space, just divide evenly without enforcing minimum
-			baseH := totalAvailable / n
-			remainder := totalAvailable % n
-
-			for i, pane := range s.layout.PodListPane {
-				h := baseH
-				if i < remainder {
-					h++
-				}
-				pane.SetDimensions(models.NewDimensions(dims.rightPane.Width, max(h, 3)))
-			}
-		} else {
-			// Enough space, distribute evenly
-			baseH := totalAvailable / n
-			remainder := totalAvailable % n
-
-			for i, pane := range s.layout.PodListPane {
-				h := baseH
-				// Distribute remainder to first panes
-				if i < remainder {
-					h++
-				}
-				pane.SetDimensions(models.NewDimensions(dims.rightPane.Width, h))
-			}
-		}
-	}
+	// dims := s.calculateLayoutDimensions()
+	
 }
 
 // max returns the maximum of two integers
