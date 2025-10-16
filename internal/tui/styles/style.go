@@ -216,7 +216,7 @@ func DocStyle() lipgloss.Style {
 	p := CatppuccinMocha()
 	return lipgloss.NewStyle().
 		Background(p.Crust).
-		Padding(1, 2)
+		Padding(1)
 }
 
 // VerticalDivider renders a subtle vertical rule to separate panes.
@@ -239,7 +239,7 @@ func PaneBodyStyle(focused bool) lipgloss.Style {
 		BorderForeground(border).
 		Background(p.Mantle).
 		// No vertical padding so content starts right under the title bar
-		Padding(0, 1)
+		Padding(1)
 }
 
 // TitleBar renders a rounded top border with the title centered between the lines.

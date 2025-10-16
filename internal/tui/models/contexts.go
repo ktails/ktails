@@ -172,6 +172,7 @@ func (c *ContextsInfo) View() string {
 	c.list.Styles = styles.CatppuccinMochaListStylesFocused(c.Focused)
 	c.list.SetShowStatusBar(false)
 	c.list.SetShowTitle(false)
+	c.list.SetShowHelp(false)
 	return styles.RenderTitledPane(c.PaneTitle, c.dimensions.Width, c.dimensions.Height, c.list.View(), c.Focused)
 }
 
