@@ -283,9 +283,7 @@ func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 		rightPane: models.NewDimensions(rightW, availH),
 	}
 }
-
 // handleContextsSelected handles the selection of contexts
-
 func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Model, tea.Cmd) {
 	if len(msg.Contexts) == 0 {
 		return s, nil
@@ -298,9 +296,7 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 		s.layout.PodListPane = []*models.Pods{}
 	}
 
-	// Track which panes are newly created
-	newPanes := make([]*models.Pods, 0)
-
+	// Create all new panes first WITHOUT setting dimensions
 	for _, ctxName := range msg.Contexts {
 		// Check if context already exists
 		exists := false
@@ -314,24 +310,15 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 		if !exists {
 			namespace := s.client.DefaultNamespace(ctxName)
 			p := models.NewPodsModel(s.client, ctxName, namespace)
-
-			// Apply dimensions IMMEDIATELY before adding to layout
-			if s.width > 0 && s.height > 0 {
-				dims := s.calculateLayoutDimensions()
-				// Temporarily give it full right pane dimensions
-				// We'll redistribute after all panes are created
-				p.SetDimensions(models.NewDimensions(dims.rightPane.Width, dims.rightPane.Height))
-			}
-
+			// Don't set dimensions here - let applyPodPaneDimensions handle it
 			s.layout.PodListPane = append(s.layout.PodListPane, p)
-			newPanes = append(newPanes, p)
 		}
 
 		namespace := s.client.DefaultNamespace(ctxName)
 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
 	}
 
-	// Now redistribute dimensions across ALL panes if terminal size is known
+	// Now apply dimensions to ALL panes at once AFTER they're all added
 	if s.width > 0 && s.height > 0 {
 		s.applyPodPaneDimensions()
 	}
