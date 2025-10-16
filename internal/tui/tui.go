@@ -283,6 +283,7 @@ func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 		rightPane: models.NewDimensions(rightW, availH),
 	}
 }
+
 // handleContextsSelected handles the selection of contexts
 func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Model, tea.Cmd) {
 	if len(msg.Contexts) == 0 {
@@ -291,12 +292,15 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 
 	var batchCmds []tea.Cmd
 
-	// Clear placeholder pane if it exists (empty context name means placeholder)
+	// Clear placeholder pane if it exists
 	if len(s.layout.PodListPane) == 1 && s.layout.PodListPane[0].ContextName == "" {
 		s.layout.PodListPane = []*models.Pods{}
 	}
 
-	// Create all new panes first WITHOUT setting dimensions
+	// Calculate dimensions once upfront
+	// dims := s.calculateLayoutDimensions()
+
+	// Create all new panes with correct dimensions immediately
 	for _, ctxName := range msg.Contexts {
 		// Check if context already exists
 		exists := false
@@ -310,7 +314,8 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 		if !exists {
 			namespace := s.client.DefaultNamespace(ctxName)
 			p := models.NewPodsModel(s.client, ctxName, namespace)
-			// Don't set dimensions here - let applyPodPaneDimensions handle it
+
+			// Add to layout FIRST
 			s.layout.PodListPane = append(s.layout.PodListPane, p)
 		}
 
@@ -318,7 +323,8 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
 	}
 
-	// Now apply dimensions to ALL panes at once AFTER they're all added
+	// Apply dimensions to ALL panes at once AFTER they're all added
+	// This ensures consistent sizing before first render
 	if s.width > 0 && s.height > 0 {
 		s.applyPodPaneDimensions()
 	}
@@ -357,17 +363,19 @@ func (s *SimpleTui) applyPodPaneDimensions() {
 		// Single pane gets full height
 		s.layout.PodListPane[0].SetDimensions(models.NewDimensions(dims.rightPane.Width, dims.rightPane.Height))
 	} else {
-		// Multiple panes: distribute height evenly with remainder
+		// Multiple panes: distribute height evenly
 		baseH := dims.rightPane.Height / n
 		remainder := dims.rightPane.Height % n
 
 		for i, pane := range s.layout.PodListPane {
 			h := baseH
+			// Distribute remainder to first panes
 			if i < remainder {
 				h++
 			}
-			if h < 3 {
-				h = 3
+			// Enforce minimum height for usability
+			if h < 5 {
+				h = 5
 			}
 			pane.SetDimensions(models.NewDimensions(dims.rightPane.Width, h))
 		}

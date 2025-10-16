@@ -23,6 +23,8 @@ func (p *Pods) SetDimensions(d Dimensions) {
 	p.dimensions = d
 	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
 	inner := d.GetInnerDimensions(frameW, frameH, true)
+	
+	// Set both width and height explicitly to avoid any interim states
 	p.table.SetWidth(inner.Width)
 	p.table.SetHeight(inner.Height)
 }
