@@ -29,10 +29,9 @@ type layoutDimensions struct {
 
 type SimpleTui struct {
 	// App state
-	mode       Mode
-	prevMode   Mode
-	mainTabs   int // 0 = left pane, 1..n = right tables
-	podPaneIdx int // current pod pane index when in pod viewing mode
+	mode     Mode
+	prevMode Mode
+	mainTabs int // 0 = left pane, 1..n = right tables
 	// terminal size
 	width    int
 	height   int
@@ -52,7 +51,6 @@ type initialLoadMsg struct{}
 func NewSimpleTui(client *k8s.Client) *SimpleTui {
 	layout := views.NewLayout(client)
 
-	// Create initial placeholder pane for the right side
 	return &SimpleTui{
 		mode:     ModeContextPane,
 		mainTabs: 0,
@@ -99,7 +97,6 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if s.mode == ModePodViewing {
 				s.mode = ModeContextPane
 				s.layout.ContextPane.SetFocused(true)
-
 			} else if s.mode == ModeContextPane {
 				s.mode = ModePodViewing
 				s.layout.ContextPane.SetFocused(false)
@@ -110,12 +107,23 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if s.mode == ModePodViewing {
 				s.mode = ModeContextPane
 				s.layout.ContextPane.SetFocused(true)
-
 			} else if s.mode == ModeContextPane {
 				s.mode = ModePodViewing
 				s.layout.ContextPane.SetFocused(false)
 			}
 			return s, nil
+
+			// case "left", "h":
+			// 	if s.mode == ModePodViewing {
+			// 		s.layout.PodPages.PrevPage()
+			// 		return s, nil
+			// 	}
+
+			// case "right", "l":
+			// 	if s.mode == ModePodViewing {
+			// 		s.layout.PodPages.NextPage()
+			// 		return s, nil
+			// 	}
 		}
 
 	case tea.WindowSizeMsg:
@@ -132,17 +140,22 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Calculate layout dimensions once
 		dims := s.calculateLayoutDimensions()
 
-		// Apply to context pane (always full available height)
+		// Apply to context pane
 		s.layout.ContextPane.SetDimensions(models.NewDimensions(dims.leftPane.Width, dims.leftPane.Height))
 
-		// Apply to all pod panes using helper
+		// Apply to skeleton
+		// s.layout.PodPages.Width(dims.rightPane.Width)
+		// s.layout.PodPages.SetHeight(dims.rightPane.Height)
+
+		// Apply dimensions to all pod panes
 		s.applyPodPaneDimensions()
 
 		return s, nil
 
 	case msgs.PodTableMsg:
-		s.layout.PodPages.SetActivePage(msg.Context)
-		_, cmd := s.layout.PodPages.Update(msg)
+		// Forward the message to the specific pod pane
+		var cmd tea.Cmd
+		_, cmd = s.layout.PodPages.Update(msg)
 		return s, cmd
 
 	case initialLoadMsg:
@@ -165,7 +178,7 @@ func (s *SimpleTui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return s, cmd
 
 	case ModePodViewing:
-		// forward to current pod pane but keep root model
+		// forward to skeleton which will route to active page
 		var cmd tea.Cmd
 		_, cmd = s.layout.PodPages.Update(msg)
 		return s, cmd
@@ -185,9 +198,11 @@ func (s *SimpleTui) View() string {
 	if s.mode == ModeHelp {
 		return s.viewHelp()
 	}
-	rights := s.layout.PodPages.View()
-	right := lipgloss.JoinVertical(lipgloss.Left, rights)
+
+	// Render skeleton
+	right := s.layout.PodPages.View()
 	left := s.layout.ContextPane.View()
+
 	content := lipgloss.JoinHorizontal(lipgloss.Left, left, styles.VerticalDivider(), right)
 	return styles.DocStyle().Render(content)
 }
@@ -195,7 +210,6 @@ func (s *SimpleTui) View() string {
 // === Help Mode ===
 
 func (s *SimpleTui) viewHelp() string {
-	// Guard against zero sizes before first WindowSizeMsg
 	w, h := s.width, s.height
 	helpText := ""
 
@@ -208,6 +222,7 @@ func (s *SimpleTui) viewHelp() string {
 	default:
 		// focus right (pods)
 		helpText = "Arrow keys to navigate tables. Tab to cycle forward, Shift+Tab to cycle backward."
+		helpText += "\nUse left/right or h/l to switch between pod panes"
 	}
 	return lipgloss.Place(
 		w,

@@ -9,19 +9,7 @@ import (
 	"github.com/termkit/skeleton"
 )
 
-// import (
-// 	tea "github.com/charmbracelet/bubbletea"
-// 	"github.com/ivyascorp-net/ktails/internal/tui/cmds"
-// 	"github.com/ivyascorp-net/ktails/internal/tui/models"
-// 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
-// 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
-// )
-
-func newPodPanes() {
-
-}
-
-// // calculateLayoutDimensions calculates the dimensions for left and right panes
+// calculateLayoutDimensions calculates the dimensions for left and right panes
 func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 	// Get frame size from doc style
 	docFW, docFH := styles.DocStyle().GetFrameSize()
@@ -43,7 +31,7 @@ func (s *SimpleTui) calculateLayoutDimensions() layoutDimensions {
 	}
 }
 
-// // handleContextsSelected handles the selection of contexts
+// handleContextsSelected handles the selection of contexts
 func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Model, tea.Cmd) {
 	if len(msg.Contexts) == 0 {
 		return s, nil
@@ -51,41 +39,60 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 
 	var batchCmds []tea.Cmd
 
-	if s.layout.PodPages.GetActivePage() == "No Pods" {
-		s.layout.PodPages.DeletePage("No Pods")
-	}
-	s.layout.PodPages = skeleton.NewSkeleton()
+	// Clear existing pages (except we don't need the "No Pods" check anymore)
+	s.layout.PodPages.DeletePage("placeholder")
+
+	// Calculate dimensions first
+	dims := s.calculateLayoutDimensions()
 
 	// Create all new panes
 	for _, ctxName := range msg.Contexts {
-		s.layout.PodPages.AddPage(ctxName, "", models.NewPodsModel(s.client, ctxName, s.client.DefaultNamespace(ctxName), s.layout.PodPages))
-
 		namespace := s.client.DefaultNamespace(ctxName)
+
+		// Create the pod model
+		skel := skeleton.NewSkeleton()
+		podPane := models.NewPodsModel(s.client, ctxName, namespace, skel)
+
+		// Set dimensions on the pane
+		podPane.SetDimensions(dims.rightPane)
+
+		// Add to skeleton
+		s.layout.PodPages.AddPage(ctxName, ctxName, podPane)
+
+		// Queue command to load pod data
 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
 	}
 
-	// Apply dimensions to ALL panes AFTER they're all added
-	// This ensures correct sizing on first render
-	dims := s.calculateLayoutDimensions()
-	// Apply to context pane (always full available height)
+	// Set skeleton dimensions
+	// s.layout.PodPages.SetWidth(dims.rightPane.Width)
+	// s.layout.PodPages.SetHeight(dims.rightPane.Height)
+
+	// Apply to context pane
 	s.layout.ContextPane.SetDimensions(models.NewDimensions(dims.leftPane.Width, dims.leftPane.Height))
-	s.applyPodPaneDimensions()
 
 	// Switch mode and focus
 	s.mode = ModePodViewing
 	s.layout.ContextPane.SetFocused(false)
-	s.layout.PodPages.SetActivePage(msg.Contexts[0])
+	// s.layout.PodPages.SetFocused(true)
+
+	// Set first context as active
+	// if len(msg.Contexts) > 0 {
+	// 	s.layout.PodPages.SwitchPage(msg.Contexts[0])
+	// }
+
 	return s, tea.Batch(batchCmds...)
 }
 
-// applyPodPaneDimensions applies dimensions to all pod panes
+// applyPodPaneDimensions applies dimensions to all pod panes in the skeleton
 func (s *SimpleTui) applyPodPaneDimensions() {
 	if s.width == 0 || s.height == 0 {
 		return // Can't calculate dimensions yet
 	}
 
 	// dims := s.calculateLayoutDimensions()
-	
+
+	// Update dimensions for all pod panes
+
 }
 
 // max returns the maximum of two integers

@@ -15,7 +15,12 @@ type MasterLayout struct {
 func NewLayout(client *k8s.Client) MasterLayout {
 	ctxPane := models.NewContextInfo(client)
 	s := skeleton.NewSkeleton()
-	s.AddPage("No Pods", "No Pods to display. Select a context to view pods.", nil)
+
+	// Add a default placeholder page
+	placeholderPane := models.NewPodsModel(client, "", "", nil)
+	s.AddPage("placeholder", "", placeholderPane)
+	s.SetActivePage("placeholder")
+
 	return MasterLayout{
 		ContextPane: ctxPane,
 		PodPages:    s,
