@@ -6,7 +6,6 @@ import (
 	"github.com/ivyascorp-net/ktails/internal/tui/models"
 	"github.com/ivyascorp-net/ktails/internal/tui/msgs"
 	"github.com/ivyascorp-net/ktails/internal/tui/styles"
-	"github.com/termkit/skeleton"
 )
 
 // calculateLayoutDimensions calculates the dimensions for left and right panes
@@ -39,33 +38,37 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 
 	var batchCmds []tea.Cmd
 
-	// Clear existing pages (except we don't need the "No Pods" check anymore)
+	// Clear existing pages and tracking
 	s.layout.PodPages.DeletePage("placeholder")
+	// Clear the tracking map
+	s.podPanes = make(map[string]*models.Pods)
 
 	// Calculate dimensions first
 	dims := s.calculateLayoutDimensions()
+
+	// Set skeleton dimensions BEFORE adding pages
+	s.layout.PodPages.SetTerminalViewportHeight(dims.rightPane.Width)
+	s.layout.PodPages.SetTerminalViewportWidth(dims.rightPane.Height)
 
 	// Create all new panes
 	for _, ctxName := range msg.Contexts {
 		namespace := s.client.DefaultNamespace(ctxName)
 
-		// Create the pod model
-		skel := skeleton.NewSkeleton()
-		podPane := models.NewPodsModel(s.client, ctxName, namespace, skel)
+		// Create the pod model (removed unused 's' parameter)
+		podPane := models.NewPodsModel(s.client, ctxName, namespace)
 
-		// Set dimensions on the pane
+		// Set dimensions on the pane BEFORE adding to skeleton
 		podPane.SetDimensions(dims.rightPane)
 
-		// Add to skeleton
+		// Track the pane in our map
+		s.podPanes[ctxName] = podPane
+
+		// Add to skeleton - skeleton will handle it as tea.Model
 		s.layout.PodPages.AddPage(ctxName, ctxName, podPane)
 
 		// Queue command to load pod data
 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(s.client, ctxName, namespace))
 	}
-
-	// Set skeleton dimensions
-	// s.layout.PodPages.SetWidth(dims.rightPane.Width)
-	// s.layout.PodPages.SetHeight(dims.rightPane.Height)
 
 	// Apply to context pane
 	s.layout.ContextPane.SetDimensions(models.NewDimensions(dims.leftPane.Width, dims.leftPane.Height))
@@ -73,12 +76,13 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 	// Switch mode and focus
 	s.mode = ModePodViewing
 	s.layout.ContextPane.SetFocused(false)
-	// s.layout.PodPages.SetFocused(true)
 
 	// Set first context as active
-	// if len(msg.Contexts) > 0 {
-	// 	s.layout.PodPages.SwitchPage(msg.Contexts[0])
-	// }
+	if len(msg.Contexts) > 0 {
+		s.layout.PodPages.SetActivePage(msg.Contexts[0])
+		// Update focus for the active pane
+		s.updatePodFocus()
+	}
 
 	return s, tea.Batch(batchCmds...)
 }
@@ -86,13 +90,19 @@ func (s *SimpleTui) handleContextsSelected(msg msgs.ContextsSelectedMsg) (tea.Mo
 // applyPodPaneDimensions applies dimensions to all pod panes in the skeleton
 func (s *SimpleTui) applyPodPaneDimensions() {
 	if s.width == 0 || s.height == 0 {
-		return // Can't calculate dimensions yet
+		return
 	}
 
-	// dims := s.calculateLayoutDimensions()
+	dims := s.calculateLayoutDimensions()
 
-	// Update dimensions for all pod panes
+	// Set skeleton dimensions
+	s.layout.PodPages.SetTerminalViewportWidth(dims.rightPane.Width)
+	s.layout.PodPages.SetTerminalViewportHeight(dims.rightPane.Height)
 
+	// Update dimensions for all tracked pod panes
+	for _, podPane := range s.podPanes {
+		podPane.SetDimensions(dims.rightPane)
+	}
 }
 
 // max returns the maximum of two integers
@@ -101,4 +111,17 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// updatePodFocus updates the focus state of the currently active pod pane
+func (s *SimpleTui) updatePodFocus() {
+	focused := s.mode == ModePodViewing
+
+	// Get the currently active page name from skeleton
+	activePage := s.layout.PodPages.GetActivePage()
+
+	// Update focus for all panes (unfocus inactive, focus active)
+	for ctxName, pane := range s.podPanes {
+		pane.SetFocused(focused && ctxName == activePage)
+	}
 }

@@ -16,8 +16,8 @@ func NewLayout(client *k8s.Client) MasterLayout {
 	ctxPane := models.NewContextInfo(client)
 	s := skeleton.NewSkeleton()
 
-	// Add a default placeholder page
-	placeholderPane := models.NewPodsModel(client, "", "", nil)
+	// Add a default placeholder page (removed unused parameter)
+	placeholderPane := models.NewPodsModel(client, "", "")
 	s.AddPage("placeholder", "", placeholderPane)
 	s.SetActivePage("placeholder")
 

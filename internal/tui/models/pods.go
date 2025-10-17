@@ -24,7 +24,7 @@ func (p *Pods) SetDimensions(d Dimensions) {
 	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
 	inner := d.GetInnerDimensions(frameW, frameH, true)
 
-	// Set both width and height explicitly to avoid any interim states
+	// Set both width and height explicitly
 	p.table.SetWidth(inner.Width)
 	p.table.SetHeight(inner.Height)
 }
@@ -33,10 +33,10 @@ func (p *Pods) GetDimensions() Dimensions {
 	return p.dimensions
 }
 
-func NewPodsModel(client *k8s.Client, contextName, namespace string, s interface{}) *Pods {
+func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
 	title := contextName + " - " + namespace
 	if contextName == "" {
-		title = "Pod List" // Better placeholder title
+		title = "Pod List"
 	}
 
 	p := &Pods{
@@ -45,7 +45,7 @@ func NewPodsModel(client *k8s.Client, contextName, namespace string, s interface
 		Client:      client,
 		PaneTitle:   title,
 		table:       table.New(),
-		dimensions:  Dimensions{Width: 60, Height: 10}, // Default dimensions
+		dimensions:  Dimensions{Width: 60, Height: 10},
 	}
 	p.initPodListPane()
 	return p
@@ -57,7 +57,6 @@ func (p *Pods) initPodListPane() {
 		table.WithRows([]table.Row{}),
 		table.WithFocused(false),
 	)
-	// Provide sane defaults so it renders before first WindowSizeMsg
 	p.table.SetWidth(60)
 	p.table.SetHeight(10)
 	p.table.SetStyles(styles.CatppuccinTableStyles())
@@ -67,10 +66,10 @@ func (p *Pods) Init() tea.Cmd {
 	return nil
 }
 
+// Update MUST return (tea.Model, tea.Cmd) for skeleton compatibility
 func (p *Pods) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Forward key messages to the table when focused
 		if p.Focused {
 			var cmd tea.Cmd
 			p.table, cmd = p.table.Update(msg)
@@ -91,17 +90,16 @@ func (p *Pods) View() string {
 
 	content := p.table.View()
 
-	// Show helpful message if this is the placeholder pane (empty context)
+	// Show helpful message if this is the placeholder pane
 	if p.ContextName == "" && len(p.table.Rows()) == 0 {
 		content = styles.PlaceholderMessage(
 			"No context selected",
 			"Press Enter on a context to view pods",
 			p.dimensions.Width,
-			p.dimensions.Height-3, // account for title and borders
+			p.dimensions.Height-3,
 		)
 	}
 
-	// Render the table with a titled pane
 	return styles.RenderTitledPane(
 		p.PaneTitle,
 		p.dimensions.Width,
@@ -120,7 +118,6 @@ func (p *Pods) SetFocused(f bool) {
 	}
 }
 
-// GetSelectedPod returns the currently selected pod name, or empty string if none
 func (p *Pods) GetSelectedPod() string {
 	if p.table.Cursor() < 0 || p.table.Cursor() >= len(p.table.Rows()) {
 		return ""
@@ -129,21 +126,17 @@ func (p *Pods) GetSelectedPod() string {
 	if len(row) == 0 {
 		return ""
 	}
-	// First column is pod name
 	return row[0]
 }
 
-// UpdateRows updates the table rows
 func (p *Pods) UpdateRows(rows []table.Row) {
 	p.table.SetRows(rows)
 }
 
-// GetContext returns the context name for this pod pane
 func (p *Pods) GetContext() string {
 	return p.ContextName
 }
 
-// GetNamespace returns the namespace for this pod pane
 func (p *Pods) GetNamespace() string {
 	return p.Namespace
 }

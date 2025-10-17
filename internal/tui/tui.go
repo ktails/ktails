@@ -41,6 +41,8 @@ type SimpleTui struct {
 	// MasterLayout
 	layout views.MasterLayout
 
+	// Track pod panes separately since skeleton stores them as interface{}
+	podPanes map[string]*models.Pods // key is context name
 	// dump debug msgs
 	Dump io.Writer
 }
