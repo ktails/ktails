@@ -7,5 +7,6 @@ type PodTableMsg struct {
 	Rows    []table.Row
 }
 type ContextsSelectedMsg struct {
-	Contexts []string
+	ContextName      string
+	DefaultNamespace string
 }

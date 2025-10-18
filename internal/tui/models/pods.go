@@ -3,8 +3,8 @@ package models
 import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ivyascorp-net/ktails/internal/k8s"
-	"github.com/ivyascorp-net/ktails/internal/tui/styles"
+	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/tui/styles"
 )
 
 type Pods struct {
@@ -19,14 +19,11 @@ type Pods struct {
 	dimensions Dimensions
 }
 
-func (p *Pods) SetDimensions(d Dimensions) {
-	p.dimensions = d
-	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
-	inner := d.GetInnerDimensions(frameW, frameH, true)
+func (p *Pods) SetDimensions() {
 
 	// Set both width and height explicitly
-	p.table.SetWidth(inner.Width)
-	p.table.SetHeight(inner.Height)
+	p.table.SetWidth(p.dimensions.Width)
+	p.table.SetHeight(p.dimensions.Height)
 }
 
 func (p *Pods) GetDimensions() Dimensions {
@@ -69,6 +66,9 @@ func (p *Pods) Init() tea.Cmd {
 // Update MUST return (tea.Model, tea.Cmd) for skeleton compatibility
 func (p *Pods) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		p.SetDimensions()
+		return p, nil
 	case tea.KeyMsg:
 		if p.Focused {
 			var cmd tea.Cmd
