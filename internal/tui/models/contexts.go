@@ -63,20 +63,20 @@ func (c *ContextsInfo) Init() tea.Cmd {
 func (c *ContextsInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "up", "j":
-				c.list, cmd = c.list.Update(msg)
-				return c, cmd
-			case "down", "k":
-				c.list, cmd = c.list.Update(msg)
-				return c, cmd
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "j":
+			c.list, cmd = c.list.Update(msg)
+			return c, cmd
+		case "down", "k":
+			c.list, cmd = c.list.Update(msg)
+			return c, cmd
 		case " ":
 			c.toggleSelection()
 		case "enter":
 			selectCmd := c.confirmSelection()
 			if selectCmd == nil {
-				
+
 				return c, nil
 			}
 
@@ -153,8 +153,9 @@ func (c *ContextsInfo) confirmSelection() []tea.Cmd {
 		return nil
 	}
 	for _, s := range selected {
+		sel := s
 		cmd := func() tea.Msg {
-			return s
+			return sel
 		}
 		cmds = append(cmds, cmd)
 
