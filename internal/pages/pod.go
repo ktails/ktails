@@ -19,6 +19,7 @@ type PodPage struct {
 	Client      *k8s.Client
 	PageTitle   string
 	table       table.Model
+	allRows     []table.Row
 }
 
 func podTableColumns() []table.Column {
@@ -56,13 +57,21 @@ func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return p, cmd
 		}
 	case msgs.ContextsSelectedMsg:
+		if len(p.allRows) == 0 {
+			p.allRows = []table.Row{}
+		}
 		// Load pods for the selected contexts when this page becomes active.
 		p.ContextName = msg.ContextName
 		p.Namespace = msg.DefaultNamespace
 		return p, p.loadPods()
 	case msgs.PodTableMsg:
-		if len(msg.Rows) > 0 {
-			p.handlePodTableMsg(msg)
+
+		if len(msg.Rows) > 0 && len(p.allRows) == 0 {
+			p.allRows = msg.Rows
+			p.handlePodTableMsg(p.allRows)
+		} else if len(msg.Rows) > 0 && len(p.allRows) > 0 {
+			p.allRows = append(p.allRows, msg.Rows...)
+			p.handlePodTableMsg(p.allRows)
 		}
 
 		return p, nil
@@ -70,9 +79,9 @@ func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return p, nil
 }
 
-func (p *PodPage) handlePodTableMsg(msg msgs.PodTableMsg) {
+func (p *PodPage) handlePodTableMsg(rows []table.Row) {
 	p.table.Focus()
-	p.table.SetRows(msg.Rows)
+	p.table.SetRows(rows)
 }
 
 func (p *PodPage) loadPods() tea.Cmd {
