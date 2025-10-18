@@ -56,23 +56,16 @@ func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			p.table, cmd = p.table.Update(msg)
 			return p, cmd
 		}
+	// case msgs.ResetPodTableMsg:
+	// 	p.allRows = []table.Row{}
+	// 	return p, nil
 	case msgs.ContextsSelectedMsg:
-		if len(p.allRows) == 0 {
-			p.allRows = []table.Row{}
-		}
-		// Load pods for the selected contexts when this page becomes active.
 		p.ContextName = msg.ContextName
 		p.Namespace = msg.DefaultNamespace
 		return p, p.loadPods()
 	case msgs.PodTableMsg:
-
-		if len(msg.Rows) > 0 && len(p.allRows) == 0 {
-			p.allRows = msg.Rows
-			p.handlePodTableMsg(p.allRows)
-		} else if len(msg.Rows) > 0 && len(p.allRows) > 0 {
-			p.allRows = append(p.allRows, msg.Rows...)
-			p.handlePodTableMsg(p.allRows)
-		}
+		p.allRows = append(p.allRows, msg.Rows...)
+		p.handlePodTableMsg(p.allRows)
 
 		return p, nil
 	}
