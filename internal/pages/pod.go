@@ -1,0 +1,84 @@
+package pages
+
+import (
+	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/tui/cmds"
+	"github.com/ktails/ktails/internal/tui/msgs"
+	"github.com/ktails/ktails/internal/tui/styles"
+	"github.com/termkit/skeleton"
+)
+
+type PodPage struct {
+	s *skeleton.Skeleton
+	// Context name for this pod list
+	ContextName string
+	Namespace   string
+	Focused     bool
+	Client      *k8s.Client
+	PageTitle   string
+	table       table.Model
+}
+
+func podTableColumns() []table.Column {
+	return []table.Column{
+		{Title: "Name", Width: 20},
+		{Title: "Namespace", Width: 15},
+		{Title: "Status", Width: 10},
+		{Title: "Restarts", Width: 10},
+		{Title: "Age", Width: 10},
+	}
+}
+
+func NewPodPageModel(s *skeleton.Skeleton, client *k8s.Client) *PodPage {
+	return &PodPage{
+		s:      s,
+		Client: client,
+		table:  table.New(table.WithColumns(podTableColumns())),
+	}
+}
+
+func (p *PodPage) Init() tea.Cmd {
+	return nil
+}
+
+func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "j":
+			p.table, cmd = p.table.Update(msg)
+			return p, cmd
+		case "down", "k":
+			p.table, cmd = p.table.Update(msg)
+			return p, cmd
+		}
+	case msgs.ContextsSelectedMsg:
+		// Load pods for the selected contexts when this page becomes active.
+		return p, p.loadPods(msg)
+	case msgs.PodTableMsg:
+		if len(msg.Rows) > 0 {
+			p.handlePodTableMsg(msg)
+		}
+
+		return p, nil
+	}
+	return p, nil
+}
+
+func (p *PodPage) handlePodTableMsg(msg msgs.PodTableMsg) {
+	p.table.SetRows(msg.Rows)
+}
+
+func (p *PodPage) loadPods(msg msgs.ContextsSelectedMsg) tea.Cmd {
+	p.s.TriggerUpdate()
+	return cmds.LoadPodInfoCmd(p.Client, msg.ContextName, msg.DefaultNamespace)
+
+}
+
+func (p *PodPage) View() string {
+	p.table.SetStyles(styles.CatppuccinTableStyles())
+	return p.table.View()
+}

@@ -2,7 +2,7 @@ package models
 
 const (
 	TitleBarHeight            = 1
-	PaneBodyVerticalPadding   = 0 // from Padding(0, 1)
+	PaneBodyVerticalPadding   = 1 // from Padding(0, 1)
 	PaneBodyHorizontalPadding = 2 // left + right
 )
 
