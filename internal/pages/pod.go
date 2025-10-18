@@ -57,7 +57,9 @@ func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case msgs.ContextsSelectedMsg:
 		// Load pods for the selected contexts when this page becomes active.
-		return p, p.loadPods(msg)
+		p.ContextName = msg.ContextName
+		p.Namespace = msg.DefaultNamespace
+		return p, p.loadPods()
 	case msgs.PodTableMsg:
 		if len(msg.Rows) > 0 {
 			p.handlePodTableMsg(msg)
@@ -69,12 +71,13 @@ func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (p *PodPage) handlePodTableMsg(msg msgs.PodTableMsg) {
+	p.table.Focus()
 	p.table.SetRows(msg.Rows)
 }
 
-func (p *PodPage) loadPods(msg msgs.ContextsSelectedMsg) tea.Cmd {
+func (p *PodPage) loadPods() tea.Cmd {
 	p.s.TriggerUpdate()
-	return cmds.LoadPodInfoCmd(p.Client, msg.ContextName, msg.DefaultNamespace)
+	return cmds.LoadPodInfoCmd(p.Client, p.ContextName, p.Namespace)
 
 }
 

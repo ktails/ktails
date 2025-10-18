@@ -76,6 +76,7 @@ func (c *ContextsInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			selectCmd := c.confirmSelection()
 			if selectCmd == nil {
+				
 				return c, nil
 			}
 
