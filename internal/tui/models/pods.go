@@ -4,139 +4,86 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/tui/cmds"
+	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
+	"github.com/termkit/skeleton"
 )
 
-type Pods struct {
+type PodPage struct {
+	s *skeleton.Skeleton
 	// Context name for this pod list
 	ContextName string
 	Namespace   string
 	Focused     bool
 	Client      *k8s.Client
-	PaneTitle   string
+	PageTitle   string
 	table       table.Model
-	// Dimensions
-	dimensions Dimensions
+	allRows     []table.Row
 }
 
-func (p *Pods) SetDimensions() {
-
-	// Set both width and height explicitly
-	p.table.SetWidth(p.dimensions.Width)
-	p.table.SetHeight(p.dimensions.Height)
-}
-
-func (p *Pods) GetDimensions() Dimensions {
-	return p.dimensions
-}
-
-func NewPodsModel(client *k8s.Client, contextName, namespace string) *Pods {
-	title := contextName + " - " + namespace
-	if contextName == "" {
-		title = "Pod List"
+func podTableColumns() []table.Column {
+	return []table.Column{
+		{Title: "Name", Width: 20},
+		{Title: "Namespace", Width: 15},
+		{Title: "Status", Width: 10},
+		{Title: "Restarts", Width: 10},
+		{Title: "Age", Width: 10},
 	}
+}
 
-	p := &Pods{
-		ContextName: contextName,
-		Namespace:   namespace,
-		Client:      client,
-		PaneTitle:   title,
-		table:       table.New(),
-		dimensions:  Dimensions{Width: 60, Height: 10},
+func NewPodPageModel(s *skeleton.Skeleton, client *k8s.Client) *PodPage {
+	return &PodPage{
+		s:      s,
+		Client: client,
+		table:  table.New(table.WithColumns(podTableColumns())),
 	}
-	p.initPodListPane()
-	return p
 }
 
-func (p *Pods) initPodListPane() {
-	p.table = table.New(
-		table.WithColumns(PodTableColumns()),
-		table.WithRows([]table.Row{}),
-		table.WithFocused(false),
-	)
-	p.table.SetWidth(60)
-	p.table.SetHeight(10)
-	p.table.SetStyles(styles.CatppuccinTableStyles())
-}
-
-func (p *Pods) Init() tea.Cmd {
+func (p *PodPage) Init() tea.Cmd {
 	return nil
 }
 
-// Update MUST return (tea.Model, tea.Cmd) for skeleton compatibility
-func (p *Pods) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		p.SetDimensions()
-		return p, nil
 	case tea.KeyMsg:
-		if p.Focused {
-			var cmd tea.Cmd
+		switch msg.String() {
+		case "up", "j":
+			p.table, cmd = p.table.Update(msg)
+			return p, cmd
+		case "down", "k":
 			p.table, cmd = p.table.Update(msg)
 			return p, cmd
 		}
+	// case msgs.ResetPodTableMsg:
+	// 	p.allRows = []table.Row{}
+	// 	return p, nil
+	case msgs.ContextsSelectedMsg:
+		p.ContextName = msg.ContextName
+		p.Namespace = msg.DefaultNamespace
+		return p, p.loadPods()
+	case msgs.PodTableMsg:
+		p.allRows = append(p.allRows, msg.Rows...)
+		p.handlePodTableMsg(p.allRows)
+
 		return p, nil
-
-	default:
-		var cmd tea.Cmd
-		p.table, cmd = p.table.Update(msg)
-		return p, cmd
 	}
+	return p, nil
 }
 
-func (p *Pods) View() string {
-	// Update table styles based on focus state
-	p.table.SetStyles(styles.TableStylesFocused(p.Focused))
-
-	content := p.table.View()
-
-	// Show helpful message if this is the placeholder pane
-	if p.ContextName == "" && len(p.table.Rows()) == 0 {
-		content = styles.PlaceholderMessage(
-			"No context selected",
-			"Press Enter on a context to view pods",
-			p.dimensions.Width,
-			p.dimensions.Height-3,
-		)
-	}
-
-	return styles.RenderTitledPane(
-		p.PaneTitle,
-		p.dimensions.Width,
-		p.dimensions.Height,
-		content,
-		p.Focused,
-	)
-}
-
-func (p *Pods) SetFocused(f bool) {
-	p.Focused = f
-	if f {
-		p.table.Focus()
-	} else {
-		p.table.Blur()
-	}
-}
-
-func (p *Pods) GetSelectedPod() string {
-	if p.table.Cursor() < 0 || p.table.Cursor() >= len(p.table.Rows()) {
-		return ""
-	}
-	row := p.table.SelectedRow()
-	if len(row) == 0 {
-		return ""
-	}
-	return row[0]
-}
-
-func (p *Pods) UpdateRows(rows []table.Row) {
+func (p *PodPage) handlePodTableMsg(rows []table.Row) {
+	p.table.Focus()
 	p.table.SetRows(rows)
 }
 
-func (p *Pods) GetContext() string {
-	return p.ContextName
+func (p *PodPage) loadPods() tea.Cmd {
+	p.s.TriggerUpdate()
+	return cmds.LoadPodInfoCmd(p.Client, p.ContextName, p.Namespace)
+
 }
 
-func (p *Pods) GetNamespace() string {
-	return p.Namespace
+func (p *PodPage) View() string {
+	p.table.SetStyles(styles.CatppuccinTableStyles())
+	return p.table.View()
 }

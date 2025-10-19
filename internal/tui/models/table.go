@@ -23,3 +23,13 @@ func PodTableColumns() []table.Column {
 		{Title: "Age", Width: 10},
 	}
 }
+
+func DeploymentTableColumns() []table.Column {
+	return []table.Column{
+		{Title: "Name", Width: 30},
+		{Title: "Namespace", Width: 15},
+		{Title: "Status", Width: 10},
+		{Title: "Restarts", Width: 10},
+		{Title: "Age", Width: 10},
+	}
+}
