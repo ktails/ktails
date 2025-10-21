@@ -1,3 +1,4 @@
+// Package cmds implement interface to k8s client
 package cmds
 
 import (
@@ -29,6 +30,28 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 			}
 		}
 		pt := msgs.PodTableMsg{Context: kubeContext, Rows: rows}
+		return pt
+	}
+}
+
+func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
+	return func() tea.Msg {
+		// Fetch deployments for the context
+		deployments, err := client.GetDeploymentInfo(kubeContext, namespace)
+		if err != nil {
+			return nil
+		}
+
+		// Convert pods to table rows
+		rows := make([]table.Row, len(deployments))
+		for i, deployment := range deployments {
+			rows[i] = table.Row{
+				deployment.Name,
+				deployment.Ready,
+				deployment.Age.String(),
+			}
+		}
+		pt := msgs.DeploymentTableMsg{Context: kubeContext, Rows: rows}
 		return pt
 	}
 }

@@ -22,16 +22,6 @@ type PodPage struct {
 	allRows     []table.Row
 }
 
-func podTableColumns() []table.Column {
-	return []table.Column{
-		{Title: "Name", Width: 20},
-		{Title: "Namespace", Width: 15},
-		{Title: "Status", Width: 10},
-		{Title: "Restarts", Width: 10},
-		{Title: "Age", Width: 10},
-	}
-}
-
 func NewPodPageModel(s *skeleton.Skeleton, client *k8s.Client) *PodPage {
 	return &PodPage{
 		s:      s,
@@ -80,7 +70,6 @@ func (p *PodPage) handlePodTableMsg(rows []table.Row) {
 func (p *PodPage) loadPods() tea.Cmd {
 	p.s.TriggerUpdate()
 	return cmds.LoadPodInfoCmd(p.Client, p.ContextName, p.Namespace)
-
 }
 
 func (p *PodPage) View() string {

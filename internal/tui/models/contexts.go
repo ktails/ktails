@@ -76,23 +76,22 @@ func (c *ContextsInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			selectCmd := c.confirmSelection()
 			if selectCmd == nil {
-
 				return c, nil
 			}
 
 			switchCmd := func() tea.Msg {
 				// Replace with the correct skeleton API if different:
 				// e.g. SetActivePage, GoToPage, SetActiveTabByKey, etc.
-				c.Skel.SetActivePage("pod")
+				c.Skel.SetActivePage("deployment")
 				c.Skel.TriggerUpdate()
 				return pageSwitched{}
 			}
-			selectedCmdSeq := tea.Batch(selectCmd...)
+
+			allCmds := append([]tea.Cmd{switchCmd}, selectCmd...)
 
 			// Ensure we switch to the pod page before sending the selection.
 			return c, tea.Sequence(
-				switchCmd,
-				selectedCmdSeq)
+				allCmds...)
 
 		}
 
@@ -164,24 +163,24 @@ func (c *ContextsInfo) confirmSelection() []tea.Cmd {
 	return cmds
 }
 
-func (c *ContextsInfo) clearSelections() tea.Cmd {
-	items := c.list.Items()
-	changed := false
-
-	for i, item := range items {
-		if ctx, ok := item.(contextList); ok && ctx.Selected {
-			ctx.Selected = false
-			items[i] = ctx
-			changed = true
-		}
-	}
-
-	if changed {
-		c.list.SetItems(items)
-	}
-
-	return nil
-}
+// func (c *ContextsInfo) clearSelections() tea.Cmd {
+// 	items := c.list.Items()
+// 	changed := false
+//
+// 	for i, item := range items {
+// 		if ctx, ok := item.(contextList); ok && ctx.Selected {
+// 			ctx.Selected = false
+// 			items[i] = ctx
+// 			changed = true
+// 		}
+// 	}
+//
+// 	if changed {
+// 		c.list.SetItems(items)
+// 	}
+//
+// 	return nil
+// }
 
 func (c *ContextsInfo) getSelectedContexts() []msgs.ContextsSelectedMsg {
 	var selected []msgs.ContextsSelectedMsg

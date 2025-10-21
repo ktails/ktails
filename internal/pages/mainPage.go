@@ -16,7 +16,7 @@ func NewMainModel(client *k8s.Client) tea.Model {
 	colorPalette := styles.CatppuccinMocha()
 	s := skeleton.NewSkeleton()
 	s.AddPage("contexts", "Kubernetes Contexts", models.NewContextInfo(s, client))
-	s.AddPage("deployment", "Deployments", nil)
+	s.AddPage("deployment", "Deployments", models.NewDeploymentPage(s, client))
 	s.AddPage("pod", "Pods", models.NewPodPageModel(s, client))
 	s.SetActiveTabBorderColor(string(colorPalette.Maroon))
 	s.SetBorderColor(string(colorPalette.Flamingo))
