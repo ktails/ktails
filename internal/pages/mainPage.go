@@ -2,38 +2,76 @@
 package pages
 
 import (
-	"time"
-
-	teakey "github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/models"
-	"github.com/ktails/ktails/internal/tui/styles"
-	"github.com/termkit/skeleton"
 )
 
-func NewMainModel(client *k8s.Client) tea.Model {
-	colorPalette := styles.CatppuccinMocha()
-	s := skeleton.NewSkeleton()
-	s.AddPage("contexts", "Kubernetes Contexts", models.NewContextInfo(s, client))
-	s.AddPage("deployment", "Deployments", models.NewDeploymentPage(s, client))
-	s.AddPage("pod", "Pods", models.NewPodPageModel(s, client))
-	s.SetActiveTabBorderColor(string(colorPalette.Maroon))
-	s.SetBorderColor(string(colorPalette.Flamingo))
+type MainPage struct {
+	// dimensions
+	width          int
+	height         int
+	appState       *AppState
+	contextList    *models.ContextsInfo
+	deploymentList *models.DeploymentPage
+	podList        *models.PodPage
+	// k8s client
+	Client *k8s.Client
+}
 
-	// Add widgets
-	s.AddWidget("time", time.Now().Format("15:04:05"))
-	s.KeyMap.SetKeyNextTab(teakey.NewBinding(teakey.WithKeys(tea.KeyTab.String())))
-	s.KeyMap.SetKeyPrevTab(teakey.NewBinding(teakey.WithKeys(tea.KeyShiftTab.String())))
-	s.KeyMap.SetKeyQuit(teakey.NewBinding(teakey.WithKeys("q")))
+func NewMainPageModel(c *k8s.Client) *MainPage {
+	ctxInfo := models.NewContextInfo(c)
+	depList := models.NewDeploymentPage(c)
+	pList := models.NewPodPageModel(c)
+	return &MainPage{
+		appState:       new(AppState),
+		contextList:    ctxInfo,
+		deploymentList: depList,
+		podList:        pList,
+	}
+}
 
-	// Update system stats every second
-	go func() {
-		for {
-			time.Sleep(time.Second)
-			s.TriggerUpdate()
-			s.UpdateWidgetValue("time", time.Now().Format("15:04:05"))
-		}
-	}()
-	return s
+func (m *MainPage) Init() tea.Cmd {
+	m.contextList.Init()
+	return nil
+}
+
+func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+
+		cmd = m.contextList.Update(msg)
+		return m, cmd
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+
+		msg.Width, msg.Height = getContextPaneDimensions(m.width, m.height)
+		return m, m.contextList.Update(msg)
+	default:
+		cmd = m.contextList.Update(msg)
+
+		return m, cmd
+	}
+}
+
+func (m *MainPage) View() string {
+	// docStyle := styles.DocStyle()
+	// // docStyle.MarginBackground(styles.CatppuccinMocha().Crust)
+	// style := styles.ListPaneStyle()
+	// style.Width(m.width)
+	// style.Height(m.height)
+	// s := m.contextList.View()
+	// finalView := style.Render(s)
+
+	// return docStyle.Render(finalView)
+	return m.contextList.View()
+}
+
+func getContextPaneDimensions(w, h int) (cW, cH int) {
+	cW = w / 3
+	cH = h - 5
+	return cW, cH
 }

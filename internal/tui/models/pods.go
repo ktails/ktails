@@ -22,9 +22,8 @@ type PodPage struct {
 	allRows     []table.Row
 }
 
-func NewPodPageModel(s *skeleton.Skeleton, client *k8s.Client) *PodPage {
+func NewPodPageModel(client *k8s.Client) *PodPage {
 	return &PodPage{
-		s:      s,
 		Client: client,
 		table:  table.New(table.WithColumns(podTableColumns())),
 	}

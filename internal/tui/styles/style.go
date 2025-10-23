@@ -122,7 +122,6 @@ func CatppuccinMochaListStyles() list.Styles {
 		Title: lipgloss.NewStyle().
 			Foreground(p.Text).
 			Background(p.Mantle).
-			Padding(0, 1).
 			Bold(true),
 
 		HelpStyle: lipgloss.NewStyle().
@@ -150,7 +149,7 @@ func CatppuccinMochaListStylesFocused(focused bool) list.Styles {
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(border).
 			BorderBottom(true).
-			Padding(0, 1).
+			Padding(1).
 			Bold(true),
 		PaginationStyle: lipgloss.NewStyle().Foreground(p.Subtext0),
 		HelpStyle:       lipgloss.NewStyle().Foreground(p.Subtext0),
@@ -164,12 +163,8 @@ func CatppuccinMochaListStylesFocused(focused bool) list.Styles {
 
 // ListPaneStyle provides a bordered container for the contexts list pane.
 func ListPaneStyle() lipgloss.Style {
-	p := CatppuccinMocha()
 	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(p.Overlay0).
-		Background(p.Mantle).
-		Padding(1, 1, 1, 1)
+		Border(lipgloss.RoundedBorder()).MarginTop(10)
 }
 
 // PaneStyle returns a focus-aware pane style using the palette.

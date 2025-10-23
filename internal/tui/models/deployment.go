@@ -21,9 +21,8 @@ type DeploymentPage struct {
 	allRows []table.Row
 }
 
-func NewDeploymentPage(s *skeleton.Skeleton, client *k8s.Client) *DeploymentPage {
+func NewDeploymentPage(client *k8s.Client) *DeploymentPage {
 	return &DeploymentPage{
-		Skel:   s,
 		Client: client,
 		table:  table.New(table.WithColumns(deploymentTableColumns())),
 	}

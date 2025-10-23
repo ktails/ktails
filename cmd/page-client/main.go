@@ -19,9 +19,9 @@ func main() {
 	}
 	fmt.Println("✅ Client created successfully")
 
-	mp := pages.NewMainModel(client)
+	mp := pages.NewMainPageModel(client)
 
-	p := tea.NewProgram(mp)
+	p := tea.NewProgram(mp, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
