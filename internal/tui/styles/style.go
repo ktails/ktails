@@ -165,8 +165,7 @@ func CatppuccinMochaListStylesFocused(focused bool) list.Styles {
 func ListPaneStyle() lipgloss.Style {
 	p := CatppuccinMocha()
 	l := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).BorderStyle(lipgloss.DoubleBorder())
-	l.Foreground(p.Flamingo).Background(p.Blue)
+		Border(lipgloss.RoundedBorder()).BorderStyle(lipgloss.DoubleBorder()).BorderForeground(p.Red)
 	return l
 }
 
@@ -209,13 +208,7 @@ func TableStylesFocused(focused bool) table.Styles {
 	return styles
 }
 
-// DocStyle is an outer wrapper similar to lipgloss layout example.
-func DocStyle() lipgloss.Style {
-	p := CatppuccinMocha()
-	return lipgloss.NewStyle().
-		Background(p.Crust).
-		Padding(1)
-}
+
 
 // VerticalDivider renders a subtle vertical rule to separate panes.
 func VerticalDivider() string {

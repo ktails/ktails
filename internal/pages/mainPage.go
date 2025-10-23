@@ -64,10 +64,11 @@ func (m *MainPage) View() string {
 	// docStyle := styles.DocStyle()
 	// // docStyle.MarginBackground(styles.CatppuccinMocha().Crust)
 	style := styles.ListPaneStyle()
-	// style.Width(m.width)
-	// style.Height(m.height)
-	headerStyle := "Header"
-	footerStyle := "Footer"
+
+	style = style.Width(m.width - 5)
+	style = style.Height(m.height - 10)
+	headerStyle := styles.NewHeaderStyle().Align(lipgloss.Center).Render("Header")
+	footerStyle := styles.NewFooterStyle().Render("Footer")
 	verticalJoin := lipgloss.JoinVertical(lipgloss.Left, headerStyle, style.Render(m.contextList.View()), footerStyle)
 	// finalView := style.Render(m.contextList.View())
 	return verticalJoin

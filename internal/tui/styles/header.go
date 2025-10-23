@@ -3,14 +3,16 @@ package styles
 
 import "github.com/charmbracelet/lipgloss"
 
-var header lipgloss.Style
-
-func GetHeader() lipgloss.Style {
-	header = lipgloss.NewStyle().Height(DefaultHeaderMargin)
-	return header
+// DocStyle is an outer wrapper similar to lipgloss layout example.
+func NewHeaderStyle() lipgloss.Style {
+	p := CatppuccinMocha()
+	return lipgloss.NewStyle().Height(DefaultHeaderMargin).
+		Background(p.Sapphire).
+		Padding(1)
 }
-
-func GetFooter() lipgloss.Style {
-	header = lipgloss.NewStyle().Height(DefaultHeaderMargin)
-	return header
+func NewFooterStyle() lipgloss.Style {
+	p := CatppuccinMocha()
+	return lipgloss.NewStyle().Height(DefaultFooterMargin).
+		Background(p.Overlay2).
+		Padding(1)
 }
