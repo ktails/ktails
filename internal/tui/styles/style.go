@@ -163,8 +163,11 @@ func CatppuccinMochaListStylesFocused(focused bool) list.Styles {
 
 // ListPaneStyle provides a bordered container for the contexts list pane.
 func ListPaneStyle() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).MarginTop(10)
+	p := CatppuccinMocha()
+	l := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderStyle(lipgloss.DoubleBorder())
+	l.Foreground(p.Flamingo).Background(p.Blue)
+	return l
 }
 
 // PaneStyle returns a focus-aware pane style using the palette.

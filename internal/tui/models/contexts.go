@@ -174,6 +174,7 @@ func (c *ContextsInfo) View() string {
 	c.list.SetShowStatusBar(false)
 	// c.list.SetShowTitle(true)
 	c.list.SetShowHelp(false)
+	c.list.Styles.Title.MarginTop(styles.DefaultHeaderMargin)
 	// c.list.Styles = styles.ListPaneStyle()
 	switch c.isLoading {
 	case true:

@@ -3,8 +3,10 @@ package pages
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/models"
+	"github.com/ktails/ktails/internal/tui/styles"
 )
 
 type MainPage struct {
@@ -48,8 +50,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		msg.Width, msg.Height = getContextPaneDimensions(m.width, m.height)
-		return m, m.contextList.Update(msg)
+		windowMsg := tea.WindowSizeMsg{}
+		windowMsg.Width, windowMsg.Height = getContextPaneDimensions(m.width, m.height)
+		return m, m.contextList.Update(windowMsg)
 	default:
 		cmd = m.contextList.Update(msg)
 
@@ -60,18 +63,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *MainPage) View() string {
 	// docStyle := styles.DocStyle()
 	// // docStyle.MarginBackground(styles.CatppuccinMocha().Crust)
-	// style := styles.ListPaneStyle()
+	style := styles.ListPaneStyle()
 	// style.Width(m.width)
 	// style.Height(m.height)
-	// s := m.contextList.View()
-	// finalView := style.Render(s)
-
-	// return docStyle.Render(finalView)
-	return m.contextList.View()
+	headerStyle := "Header"
+	footerStyle := "Footer"
+	verticalJoin := lipgloss.JoinVertical(lipgloss.Left, headerStyle, style.Render(m.contextList.View()), footerStyle)
+	// finalView := style.Render(m.contextList.View())
+	return verticalJoin
 }
 
 func getContextPaneDimensions(w, h int) (cW, cH int) {
-	cW = w / 3
-	cH = h - 5
+	cW = w / 4
+	cH = h - 10
 	return cW, cH
 }
