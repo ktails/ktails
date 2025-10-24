@@ -2,6 +2,8 @@
 package pages
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ktails/ktails/internal/k8s"
@@ -11,9 +13,18 @@ import (
 
 type MainPage struct {
 	// dimensions
-	width          int
-	height         int
-	appState       *AppState
+	width  int
+	height int
+
+	// tabs, basic implementation from bubbletea e.g. https://github.com/charmbracelet/bubbletea/blob/main/examples/tabs/main.go
+	tabs       []string
+	tabContent string
+	activeTab  int
+
+	// future App state
+	appState *AppState
+
+	// base models
 	contextList    *models.ContextsInfo
 	deploymentList *models.DeploymentPage
 	podList        *models.PodPage
@@ -25,8 +36,13 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 	ctxInfo := models.NewContextInfo(c)
 	depList := models.NewDeploymentPage(c)
 	pList := models.NewPodPageModel(c)
+	tabs := styles.DefaultTabs
+	tabs = append(tabs, "svc")
+	tabContent := ""
 	return &MainPage{
 		appState:       new(AppState),
+		tabs:           tabs,
+		tabContent:     tabContent,
 		contextList:    ctxInfo,
 		deploymentList: depList,
 		podList:        pList,
@@ -42,9 +58,19 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-
-		cmd = m.contextList.Update(msg)
-		return m, cmd
+		switch keypress := msg.String(); keypress {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "right", "tab":
+			m.activeTab = min(m.activeTab+1, len(m.tabs)-1)
+			return m, nil
+		case "left", "shift+tab":
+			m.activeTab = max(m.activeTab-1, 0)
+			return m, nil
+		default:
+			cmd = m.contextList.Update(msg)
+			return m, cmd
+		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -63,15 +89,21 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *MainPage) View() string {
 	// docStyle := styles.DocStyle()
 	// // docStyle.MarginBackground(styles.CatppuccinMocha().Crust)
-	style := styles.ListPaneStyle()
 
-	style = style.Width(m.width - 5)
-	style = style.Height(m.height - 10)
-	headerStyle := styles.NewHeaderStyle().Align(lipgloss.Center).Render("Header")
-	footerStyle := styles.NewFooterStyle().Render("Footer")
-	verticalJoin := lipgloss.JoinVertical(lipgloss.Left, headerStyle, style.Render(m.contextList.View()), footerStyle)
-	// finalView := style.Render(m.contextList.View())
-	return verticalJoin
+	tabs := strings.Builder{}
+	switch m.tabs[m.activeTab] {
+	case "Kubernetes Contexts":
+		m.tabContent = m.contextList.View()
+	default:
+		m.tabContent = "More Info Coming Soon"
+	}
+
+	tabHeaders := styles.RenderTabHeaders(m.activeTab, m.tabs, m.width-10, m.height-10)
+	tabs.WriteString(tabHeaders)
+	tabs.WriteString("\n")
+	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Render(m.tabContent))
+
+	return tabs.String()
 }
 
 func getContextPaneDimensions(w, h int) (cW, cH int) {

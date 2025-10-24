@@ -85,6 +85,38 @@ func CatppuccinMocha() Palette {
 	}
 }
 
+// CatppuccinMocha returns the Mocha palette.
+func CatppuccinLatte() Palette {
+	return Palette{
+		Base:      lipgloss.Color("#eff1f5"),
+		Mantle:    lipgloss.Color("#e6e9ef"),
+		Crust:     lipgloss.Color("#dce0e8"),
+		Text:      lipgloss.Color("#4c4f69"),
+		Subtext1:  lipgloss.Color("#5c5f77"),
+		Subtext0:  lipgloss.Color("#6c6f85"),
+		Overlay2:  lipgloss.Color("#7c7f93"),
+		Overlay1:  lipgloss.Color("#8c8fa1"),
+		Overlay0:  lipgloss.Color("#9ca0b0"),
+		Surface2:  lipgloss.Color("#acb0be"),
+		Surface1:  lipgloss.Color("#bcc0cc"),
+		Surface0:  lipgloss.Color("#ccd0da"),
+		Blue:      lipgloss.Color("#1e66f5"),
+		Lavender:  lipgloss.Color("#7287fd"),
+		Sapphire:  lipgloss.Color("#209fb5"),
+		Sky:       lipgloss.Color("#04a5e5"),
+		Teal:      lipgloss.Color("#179299"),
+		Green:     lipgloss.Color("#40a02b"),
+		Yellow:    lipgloss.Color("#df8e1d"),
+		Peach:     lipgloss.Color("#fe640b"),
+		Maroon:    lipgloss.Color("#e64553"),
+		Red:       lipgloss.Color("#d20f39"),
+		Mauve:     lipgloss.Color("#8839ef"),
+		Pink:      lipgloss.Color("#ea76cb"),
+		Flamingo:  lipgloss.Color("#dd7878"),
+		Rosewater: lipgloss.Color("#dc8a78"),
+	}
+}
+
 // CatppuccinTableStyles returns Bubbles table styles using the Catppuccin Mocha palette.
 func CatppuccinTableStyles() table.Styles {
 	p := CatppuccinMocha()
@@ -207,8 +239,6 @@ func TableStylesFocused(focused bool) table.Styles {
 		Bold(true)
 	return styles
 }
-
-
 
 // VerticalDivider renders a subtle vertical rule to separate panes.
 func VerticalDivider() string {
