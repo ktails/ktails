@@ -75,10 +75,10 @@ Space
 Up
 Space 
 Sleep 1s
-Enter
-Down Sleep 1s
 Tab
-Up Sleep 2s
+Tab Sleep 2s
+Tab Sleep 2s
 Shift+Tab
+Left
 Sleep 3s
 Type q

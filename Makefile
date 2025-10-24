@@ -1,7 +1,7 @@
 .PHONY: build run debug test test-one lint fmt tidy clean
 
 build:
-	go build ./cmd/page-client
+	go build -o ./build/ktails ./cmd/page-client
 
 run:
 	go run ./cmd/page-client
