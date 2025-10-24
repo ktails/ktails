@@ -60,18 +60,18 @@ Output ktails.gif
 Require echo
 
 Set Shell "bash"
-Set FontSize 32
-Set Width 3600
-Set Height 1200
+Set FontSize 12
+Set Width 1210
+Set Height 600
 
 Type "echo 'Welcome to ktails!'" Sleep 500ms  Enter
 
 Show 
-Type ./ktails Sleep 1s Enter
-
+Type ./build/ktails Sleep 1s Enter
+Sleep 2s
 Down
 Down
-Space
+Space Sleep 1s
 Up
 Space 
 Sleep 1s
@@ -79,6 +79,7 @@ Tab
 Tab Sleep 2s
 Tab Sleep 2s
 Shift+Tab
+Left
 Left
 Sleep 3s
 Type q
