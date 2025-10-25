@@ -32,32 +32,25 @@ func (d *DeploymentPage) Init() tea.Cmd {
 	return nil
 }
 
-func (d *DeploymentPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (d *DeploymentPage) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "j":
+		case "up", "k":
 			d.table, cmd = d.table.Update(msg)
-			return d, cmd
-		case "down", "k":
+			return cmd
+		case "down", "j":
 			d.table, cmd = d.table.Update(msg)
-			return d, cmd
+			return cmd
 		}
-	// case msgs.ResetPodTableMsg:
-	// 	p.allRows = []table.Row{}
-	// 	return p, nil
-	case msgs.ContextsSelectedMsg:
-		d.ContextName = msg.ContextName
-		d.Namespace = msg.DefaultNamespace
-		return d, d.loadDeployments()
 	case msgs.DeploymentTableMsg:
 		d.allRows = append(d.allRows, msg.Rows...)
 		d.handleDeploymentTableMsg(d.allRows)
 
-		return d, nil
+		return nil
 	}
-	return d, nil
+	return nil
 }
 
 func (d *DeploymentPage) handleDeploymentTableMsg(rows []table.Row) {

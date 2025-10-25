@@ -7,7 +7,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/tui/cmds"
 	"github.com/ktails/ktails/internal/tui/models"
+	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
 
@@ -22,8 +24,8 @@ type MainPage struct {
 	activeTab  int
 
 	// future App state
-	appState *AppState
-
+	appState       *AppState
+	appStateLoaded bool
 	// base models
 	contextList    *models.ContextsInfo
 	deploymentList *models.DeploymentPage
@@ -46,6 +48,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 		contextList:    ctxInfo,
 		deploymentList: depList,
 		podList:        pList,
+		appStateLoaded: false,
 	}
 }
 
@@ -79,10 +82,28 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		windowMsg := tea.WindowSizeMsg{}
 		windowMsg.Width, windowMsg.Height = getContextPaneDimensions(m.width, m.height)
 		return m, m.contextList.Update(windowMsg)
-	default:
-		cmd = m.contextList.Update(msg)
+	case []msgs.ContextsSelectedMsg:
+		for _, ms := range msg {
+			if _, exists := m.appState.SelectedContextsNamespace[ms.ContextName]; !exists {
+				m.appState.SelectedContextsNamespace[ms.ContextName] = ms.DefaultNamespace
+			}
+		}
+		cmdSequence := []tea.Cmd{}
+		for c, n := range m.appState.SelectedContextsNamespace {
+			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, c, n))
 
+		}
+		m.appStateLoaded = true
+		return m, tea.Sequence(cmdSequence...)
+
+	}
+
+	switch m.appStateLoaded {
+	case true:
+		cmd = m.deploymentList.Update(msg)
 		return m, cmd
+	default:
+		return m, nil
 	}
 }
 

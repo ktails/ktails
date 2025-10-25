@@ -68,10 +68,10 @@ func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 		return nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "j":
+		case "up", "k":
 			c.list, cmd = c.list.Update(msg)
 			return cmd
-		case "down", "k":
+		case "down", "j":
 			c.list, cmd = c.list.Update(msg)
 			return cmd
 		case " ":
@@ -81,8 +81,7 @@ func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 			if selectCmd == nil {
 				return nil
 			}
-			return tea.Sequence(
-				selectCmd...)
+			return selectCmd
 		default:
 			c.list, cmd = c.list.Update(msg)
 
@@ -122,10 +121,9 @@ func (c *ContextsInfo) toggleSelection() tea.Cmd {
 	return nil
 }
 
-func (c *ContextsInfo) confirmSelection() []tea.Cmd {
+func (c *ContextsInfo) confirmSelection() tea.Cmd {
 	selected := c.getSelectedContexts()
 
-	cmds := []tea.Cmd{}
 	// If nothing selected, use focused item
 	if len(selected) == 0 {
 		idx := c.list.Index()
@@ -143,16 +141,12 @@ func (c *ContextsInfo) confirmSelection() []tea.Cmd {
 	if len(selected) == 0 {
 		return nil
 	}
-	for _, s := range selected {
-		sel := s
-		cmd := func() tea.Msg {
-			return sel
-		}
-		cmds = append(cmds, cmd)
 
+	cmd := func() tea.Msg {
+		return selected
 	}
 
-	return cmds
+	return cmd
 }
 
 func (c *ContextsInfo) getSelectedContexts() []msgs.ContextsSelectedMsg {
