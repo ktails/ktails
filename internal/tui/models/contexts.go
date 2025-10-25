@@ -65,7 +65,7 @@ func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 		c.width = msg.Width
 		c.height = msg.Height
 		c.SetDimensions()
-		return nil
+	// don't return here; allow init to run below on first update
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
