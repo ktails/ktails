@@ -17,3 +17,11 @@ func (a AppState) GetCurrentContext() string {
 func (a *AppState) GetCurrentNamespace() string {
 	return a.currentNamespace
 }
+
+func NewAppState() *AppState {
+	return &AppState{
+		SelectedContexts: []string{},
+		currentContext:   "",
+		currentNamespace: "",
+	}
+}

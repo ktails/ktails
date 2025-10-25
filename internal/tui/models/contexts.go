@@ -65,7 +65,7 @@ func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 		c.width = msg.Width
 		c.height = msg.Height
 		c.SetDimensions()
-		return tea.Printf("List Size is %dx%d", c.list.Width(), c.list.Height())
+		return nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "j":
@@ -172,10 +172,7 @@ func (c *ContextsInfo) getSelectedContexts() []msgs.ContextsSelectedMsg {
 func (c *ContextsInfo) View() string {
 	c.list.Styles = styles.CatppuccinMochaListStyles()
 	c.list.SetShowStatusBar(false)
-	// c.list.SetShowTitle(true)
 	c.list.SetShowHelp(false)
-	c.list.Styles.Title.MarginTop(styles.DefaultHeaderMargin)
-	// c.list.Styles = styles.ListPaneStyle()
 	switch c.isLoading {
 	case true:
 	case false:

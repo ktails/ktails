@@ -87,8 +87,6 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *MainPage) View() string {
-	// docStyle := styles.DocStyle()
-	// // docStyle.MarginBackground(styles.CatppuccinMocha().Crust)
 
 	tabs := strings.Builder{}
 	switch m.tabs[m.activeTab] {
@@ -101,7 +99,7 @@ func (m *MainPage) View() string {
 	tabHeaders := styles.RenderTabHeaders(m.activeTab, m.tabs, m.width-10, m.height-10)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
-	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Render(m.tabContent))
+	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Align(lipgloss.Left).Render(m.tabContent))
 
 	return tabs.String()
 }

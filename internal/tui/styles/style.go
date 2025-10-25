@@ -165,7 +165,7 @@ func CatppuccinMochaListStyles() list.Styles {
 	}
 }
 
-// Focus-aware list styles.
+// CatppuccinMochaListStylesFocused for focussed-aware list styles.
 func CatppuccinMochaListStylesFocused(focused bool) list.Styles {
 	p := CatppuccinMocha()
 	accent := p.Blue
