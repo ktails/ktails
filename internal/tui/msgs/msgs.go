@@ -15,3 +15,7 @@ type DeploymentTableMsg struct {
 	Context string
 	Rows    []table.Row
 }
+type ContextsStateMsg struct {
+	Selected   []ContextsSelectedMsg
+	Deselected []string // context names to remove
+}

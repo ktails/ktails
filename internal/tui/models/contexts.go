@@ -32,7 +32,32 @@ type ContextsInfo struct {
 	isLoading bool
 }
 
-func (c *ContextsInfo) SetDimensions() {
+func (c *ContextsInfo) initContextPane() {
+	rawContextsList, err := c.Client.ListContexts()
+	if err != nil {
+		log.Printf("unable to fetch context from client: %v", err)
+	}
+
+	currentCtx := c.Client.GetCurrentContext()
+	itemList := make([]list.Item, 0, len(rawContextsList))
+
+	for _, ctxInfo := range rawContextsList {
+		ctx := contextList{
+			Name:             ctxInfo.Name,
+			Cluster:          ctxInfo.Cluster,
+			DefaultNamespace: ctxInfo.DefaultNamespace,
+			Selected:         false,
+			IsCurrent:        ctxInfo.Name == currentCtx,
+		}
+		itemList = append(itemList, ctx)
+	}
+
+	c.list.SetItems(itemList)
+	c.list.Title = "Select Kubernetes Contexts"
+	c.isLoading = false
+}
+
+func (c *ContextsInfo) setDimensions() {
 	c.list.SetWidth(c.width)
 	c.list.SetHeight(c.height)
 }
@@ -65,7 +90,7 @@ func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		c.width = msg.Width
 		c.height = msg.Height
-		c.SetDimensions()
+		c.setDimensions()
 	// don't return here; allow init to run below on first update
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -122,46 +147,56 @@ func (c *ContextsInfo) toggleSelection() tea.Cmd {
 	return nil
 }
 
-func (c *ContextsInfo) confirmSelection() tea.Cmd {
-	selected := c.getSelectedContexts()
+// Add new method to get all contexts (selected and deselected)
+func (c *ContextsInfo) getAllContextStates() msgs.ContextsStateMsg {
+	selected := []msgs.ContextsSelectedMsg{}
+	deselected := []string{}
 
-	// If nothing selected, use focused item
-	if len(selected) == 0 {
-		idx := c.list.Index()
-		if idx >= 0 && idx < len(c.list.Items()) {
-			if item, ok := c.list.Items()[idx].(contextList); ok {
-				msgs := msgs.ContextsSelectedMsg{
-					ContextName:      item.Name,
-					DefaultNamespace: item.DefaultNamespace,
-				}
-				selected = append(selected, msgs)
+	for _, item := range c.list.Items() {
+		if ctx, ok := item.(contextList); ok {
+			if ctx.Selected {
+				selected = append(selected, msgs.ContextsSelectedMsg{
+					ContextName:      ctx.Name,
+					DefaultNamespace: ctx.DefaultNamespace,
+				})
+			} else {
+				deselected = append(deselected, ctx.Name)
 			}
 		}
 	}
 
-	if len(selected) == 0 {
+	return msgs.ContextsStateMsg{
+		Selected:   selected,
+		Deselected: deselected,
+	}
+}
+
+// Replace confirmSelection with this version:
+func (c *ContextsInfo) confirmSelection() tea.Cmd {
+	state := c.getAllContextStates()
+
+	// If nothing selected, use focused item
+	if len(state.Selected) == 0 {
+		idx := c.list.Index()
+		if idx >= 0 && idx < len(c.list.Items()) {
+			if item, ok := c.list.Items()[idx].(contextList); ok {
+				state.Selected = append(state.Selected, msgs.ContextsSelectedMsg{
+					ContextName:      item.Name,
+					DefaultNamespace: item.DefaultNamespace,
+				})
+			}
+		}
+	}
+
+	if len(state.Selected) == 0 {
 		return nil
 	}
 
 	cmd := func() tea.Msg {
-		return selected
+		return state
 	}
 
 	return cmd
-}
-
-func (c *ContextsInfo) getSelectedContexts() []msgs.ContextsSelectedMsg {
-	var selected []msgs.ContextsSelectedMsg
-	for _, item := range c.list.Items() {
-		if ctx, ok := item.(contextList); ok && ctx.Selected {
-			msg := msgs.ContextsSelectedMsg{
-				ContextName:      ctx.Name,
-				DefaultNamespace: ctx.DefaultNamespace,
-			}
-			selected = append(selected, msg)
-		}
-	}
-	return selected
 }
 
 func (c *ContextsInfo) View() string {
@@ -175,31 +210,6 @@ func (c *ContextsInfo) View() string {
 
 	}
 	return ""
-}
-
-func (c *ContextsInfo) initContextPane() {
-	rawContextsList, err := c.Client.ListContexts()
-	if err != nil {
-		log.Printf("unable to fetch context from client: %v", err)
-	}
-
-	currentCtx := c.Client.GetCurrentContext()
-	itemList := make([]list.Item, 0, len(rawContextsList))
-
-	for _, ctxInfo := range rawContextsList {
-		ctx := contextList{
-			Name:             ctxInfo.Name,
-			Cluster:          ctxInfo.Cluster,
-			DefaultNamespace: ctxInfo.DefaultNamespace,
-			Selected:         false,
-			IsCurrent:        ctxInfo.Name == currentCtx,
-		}
-		itemList = append(itemList, ctx)
-	}
-
-	c.list.SetItems(itemList)
-	c.list.Title = "Select Kubernetes Contexts"
-	c.isLoading = false
 }
 
 func (cl contextList) Title() string {

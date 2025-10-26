@@ -16,8 +16,6 @@ type DeploymentPage struct {
 	// share contextList
 	ContextName string
 	Namespace   string
-	// allRows
-	allRows []table.Row
 }
 
 func NewDeploymentPage(client *k8s.Client) *DeploymentPage {

@@ -77,3 +77,11 @@ func (a *AppState) IsAnyLoading() bool {
 func (a *AppState) GetNamespace(context string) string {
 	return a.SelectedContexts[context]
 }
+
+// RemoveContext removes a context and cleans up its data
+func (a *AppState) RemoveContext(context string) {
+	delete(a.SelectedContexts, context)
+	delete(a.Deployments, context)
+	delete(a.LoadingDeployments, context)
+	delete(a.Errors, context)
+}
