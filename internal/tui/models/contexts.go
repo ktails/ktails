@@ -9,7 +9,6 @@ import (
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
-	"github.com/termkit/skeleton"
 )
 
 type contextList struct {
@@ -22,90 +21,83 @@ type contextList struct {
 
 type ContextsInfo struct {
 	Client    *k8s.Client
-	Skel      *skeleton.Skeleton
 	Focused   bool
 	PaneTitle string
-	list      list.Model
+	// bubbles
+	list list.Model
 	// Dimensions
-	dimensions Dimensions
-}
-type pageSwitched struct{}
-
-func (c *ContextsInfo) SetDimensions(d Dimensions) {
-	c.dimensions = d
-	frameW, frameH := styles.PaneBodyStyle(false).GetFrameSize()
-	inner := d.GetInnerDimensions(frameW, frameH, true)
-	c.list.SetSize(inner.Width, inner.Height)
+	width  int
+	height int
+	// states
+	isLoading bool
 }
 
-func (c *ContextsInfo) GetDimensions() Dimensions {
-	return c.dimensions
+func (c *ContextsInfo) SetDimensions() {
+	c.list.SetWidth(c.width)
+	c.list.SetHeight(c.height)
 }
 
-func NewContextInfo(s *skeleton.Skeleton, client *k8s.Client) *ContextsInfo {
+func (c *ContextsInfo) GetDimensions() (w, h int) {
+	return c.width, c.height
+}
+
+func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	newListDelegate := list.NewDefaultDelegate()
+	newListDelegate.Styles.SelectedTitle = styles.CatppuccinMochaListStyles().Title
 	newList := list.New([]list.Item{}, newListDelegate, 0, 0)
 	return &ContextsInfo{
-		Client:     client,
-		PaneTitle:  "Kubernetes Contexts",
-		dimensions: Dimensions{Width: 30, Height: 10}, // Default dimensions
-		Skel:       s,
-		list:       newList,
+		Client:    client,
+		PaneTitle: "Kubernetes Contexts",
+		list:      newList,
+		isLoading: true,
 	}
 }
 
 func (c *ContextsInfo) Init() tea.Cmd {
 	// defer c.Skel.TriggerUpdate()
-	c.initContextPane()
+	// c.initContextPane()
 	return nil
 }
 
-func (c *ContextsInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		c.width = msg.Width
+		c.height = msg.Height
+		c.SetDimensions()
+	// don't return here; allow init to run below on first update
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "j":
+		case "up", "k":
 			c.list, cmd = c.list.Update(msg)
-			return c, cmd
-		case "down", "k":
+			return cmd
+		case "down", "j":
 			c.list, cmd = c.list.Update(msg)
-			return c, cmd
+			return cmd
 		case " ":
 			c.toggleSelection()
 		case "enter":
 			selectCmd := c.confirmSelection()
 			if selectCmd == nil {
-				return c, nil
+				return nil
 			}
+			return selectCmd
+		default:
+			c.list, cmd = c.list.Update(msg)
 
-			switchCmd := func() tea.Msg {
-				// Replace with the correct skeleton API if different:
-				// e.g. SetActivePage, GoToPage, SetActiveTabByKey, etc.
-				c.Skel.SetActivePage("deployment")
-				c.Skel.TriggerUpdate()
-				return pageSwitched{}
-			}
-
-			allCmds := append([]tea.Cmd{switchCmd}, selectCmd...)
-
-			// Ensure we switch to the pod page before sending the selection.
-			return c, tea.Sequence(
-				allCmds...)
-
+			return cmd
 		}
 
-	// case msgs.ContextsSelectedMsg:
-	// 	batchCmds := []tea.Cmd{}
-	// 	for _, v := range msg.Contexts {
-	// 		namespace := c.Client.DefaultNamespace(v)
-	// 		batchCmds = append(batchCmds, cmds.LoadPodInfoCmd(c.Client, v, namespace))
-	// 	}
-	// 	return c, tea.Batch(batchCmds...)
 	default:
 
 	}
-	return c, nil
+	switch c.isLoading {
+	case true:
+		c.initContextPane()
+		return nil
+	}
+	return nil
 }
 
 func (c *ContextsInfo) toggleSelection() tea.Cmd {
@@ -130,10 +122,9 @@ func (c *ContextsInfo) toggleSelection() tea.Cmd {
 	return nil
 }
 
-func (c *ContextsInfo) confirmSelection() []tea.Cmd {
+func (c *ContextsInfo) confirmSelection() tea.Cmd {
 	selected := c.getSelectedContexts()
 
-	cmds := []tea.Cmd{}
 	// If nothing selected, use focused item
 	if len(selected) == 0 {
 		idx := c.list.Index()
@@ -151,36 +142,13 @@ func (c *ContextsInfo) confirmSelection() []tea.Cmd {
 	if len(selected) == 0 {
 		return nil
 	}
-	for _, s := range selected {
-		sel := s
-		cmd := func() tea.Msg {
-			return sel
-		}
-		cmds = append(cmds, cmd)
 
+	cmd := func() tea.Msg {
+		return selected
 	}
 
-	return cmds
+	return cmd
 }
-
-// func (c *ContextsInfo) clearSelections() tea.Cmd {
-// 	items := c.list.Items()
-// 	changed := false
-//
-// 	for i, item := range items {
-// 		if ctx, ok := item.(contextList); ok && ctx.Selected {
-// 			ctx.Selected = false
-// 			items[i] = ctx
-// 			changed = true
-// 		}
-// 	}
-//
-// 	if changed {
-// 		c.list.SetItems(items)
-// 	}
-//
-// 	return nil
-// }
 
 func (c *ContextsInfo) getSelectedContexts() []msgs.ContextsSelectedMsg {
 	var selected []msgs.ContextsSelectedMsg
@@ -197,11 +165,16 @@ func (c *ContextsInfo) getSelectedContexts() []msgs.ContextsSelectedMsg {
 }
 
 func (c *ContextsInfo) View() string {
-	c.list.Styles = styles.CatppuccinMochaListStylesFocused(c.Focused)
+	c.list.Styles = styles.CatppuccinMochaListStyles()
 	c.list.SetShowStatusBar(false)
-	c.list.SetShowTitle(false)
 	c.list.SetShowHelp(false)
-	return c.list.View()
+	switch c.isLoading {
+	case true:
+	case false:
+		return c.list.View()
+
+	}
+	return ""
 }
 
 func (c *ContextsInfo) initContextPane() {
@@ -224,9 +197,9 @@ func (c *ContextsInfo) initContextPane() {
 		itemList = append(itemList, ctx)
 	}
 
-	delegate := list.NewDefaultDelegate()
-	c.list = list.New(itemList, delegate, c.Skel.GetTerminalWidth(), c.Skel.GetTerminalHeight())
-	c.list.Title = ""
+	c.list.SetItems(itemList)
+	c.list.Title = "Select Kubernetes Contexts"
+	c.isLoading = false
 }
 
 func (cl contextList) Title() string {
@@ -242,7 +215,7 @@ func (cl contextList) Title() string {
 }
 
 func (cl contextList) Description() string {
-	return cl.DefaultNamespace
+	return cl.DefaultNamespace + "\n" + cl.Cluster
 }
 
 func (cl contextList) FilterValue() string {

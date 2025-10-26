@@ -5,8 +5,8 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
-	"github.com/ktails/ktails/internal/tui/cmds"
 	"github.com/ktails/ktails/internal/tui/msgs"
+	"github.com/ktails/ktails/internal/tui/styles"
 	"github.com/termkit/skeleton"
 )
 
@@ -21,9 +21,8 @@ type DeploymentPage struct {
 	allRows []table.Row
 }
 
-func NewDeploymentPage(s *skeleton.Skeleton, client *k8s.Client) *DeploymentPage {
+func NewDeploymentPage(client *k8s.Client) *DeploymentPage {
 	return &DeploymentPage{
-		Skel:   s,
 		Client: client,
 		table:  table.New(table.WithColumns(deploymentTableColumns())),
 	}
@@ -33,32 +32,26 @@ func (d *DeploymentPage) Init() tea.Cmd {
 	return nil
 }
 
-func (d *DeploymentPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (d *DeploymentPage) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "j":
+		case "up", "k":
 			d.table, cmd = d.table.Update(msg)
-			return d, cmd
-		case "down", "k":
+			return cmd
+		case "down", "j":
 			d.table, cmd = d.table.Update(msg)
-			return d, cmd
+			return cmd
 		}
-	// case msgs.ResetPodTableMsg:
-	// 	p.allRows = []table.Row{}
-	// 	return p, nil
-	case msgs.ContextsSelectedMsg:
-		d.ContextName = msg.ContextName
-		d.Namespace = msg.DefaultNamespace
-		return d, d.loadDeployments()
 	case msgs.DeploymentTableMsg:
 		d.allRows = append(d.allRows, msg.Rows...)
 		d.handleDeploymentTableMsg(d.allRows)
 
-		return d, nil
+		return nil
 	}
-	return d, nil
+	d.table, cmd = d.table.Update(msg)
+	return cmd
 }
 
 func (d *DeploymentPage) handleDeploymentTableMsg(rows []table.Row) {
@@ -66,11 +59,7 @@ func (d *DeploymentPage) handleDeploymentTableMsg(rows []table.Row) {
 	d.table.SetRows(rows)
 }
 
-func (d *DeploymentPage) loadDeployments() tea.Cmd {
-	d.Skel.TriggerUpdate()
-	return cmds.LoadDeploymentInfoCmd(d.Client, d.ContextName, d.Namespace)
-}
-
 func (d *DeploymentPage) View() string {
+	d.table.SetStyles(styles.CatppuccinTableStyles())
 	return d.table.View()
 }
