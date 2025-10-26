@@ -6,10 +6,11 @@ type AppState struct {
 
 func (a *AppState) GetNamespace(kubeCtxName string) string {
 	return a.SelectedContextsNamespace[kubeCtxName]
-
 }
+
 func NewAppState() *AppState {
+	m := map[string]string{}
 	return &AppState{
-		SelectedContextsNamespace: map[string]string{},
+		SelectedContextsNamespace: m,
 	}
 }

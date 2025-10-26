@@ -50,7 +50,8 @@ func (d *DeploymentPage) Update(msg tea.Msg) tea.Cmd {
 
 		return nil
 	}
-	return nil
+	d.table, cmd = d.table.Update(msg)
+	return cmd
 }
 
 func (d *DeploymentPage) handleDeploymentTableMsg(rows []table.Row) {

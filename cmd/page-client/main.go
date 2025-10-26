@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/pages"
+	"github.com/ktails/ktails/utils"
 )
 
 // Main Program
@@ -22,7 +23,8 @@ func main() {
 	mp := pages.NewMainPageModel(client)
 
 	p := tea.NewProgram(mp, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	if r, err := p.Run(); err != nil {
+		utils.PrintJSON(r)
 		panic(err)
 	}
 }

@@ -42,7 +42,8 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 	tabs = append(tabs, "svc")
 	tabContent := ""
 	return &MainPage{
-		appState:       new(AppState),
+		Client:         c,
+		appState:       NewAppState(),
 		tabs:           tabs,
 		tabContent:     tabContent,
 		contextList:    ctxInfo,
@@ -70,9 +71,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left", "shift+tab":
 			m.activeTab = max(m.activeTab-1, 0)
 			return m, nil
-		default:
-			cmd = m.contextList.Update(msg)
-			return m, cmd
+			// default:
+			// 	cmd = m.contextList.Update(msg)
+			// 	return m, cmd
 		}
 
 	case tea.WindowSizeMsg:
@@ -98,6 +99,20 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
+	switch m.tabs[m.activeTab] {
+	case "Kubernetes Contexts":
+		cmd = m.contextList.Update(msg)
+		return m, cmd
+	case "Deployments":
+		if m.appStateLoaded {
+			cmd = m.deploymentList.Update(msg)
+			return m, cmd
+		}
+	default:
+		return m, nil
+
+	}
+
 	switch m.appStateLoaded {
 	case true:
 		cmd = m.deploymentList.Update(msg)
@@ -113,6 +128,12 @@ func (m *MainPage) View() string {
 	switch m.tabs[m.activeTab] {
 	case "Kubernetes Contexts":
 		m.tabContent = m.contextList.View()
+	case "Deployments":
+		if m.appStateLoaded {
+			m.tabContent = m.deploymentList.View()
+			break
+		}
+		m.tabContent = "contexts not selected."
 	default:
 		m.tabContent = "More Info Coming Soon"
 	}

@@ -43,6 +43,7 @@ func (c *ContextsInfo) GetDimensions() (w, h int) {
 
 func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	newListDelegate := list.NewDefaultDelegate()
+	newListDelegate.Styles.SelectedTitle = styles.CatppuccinMochaListStyles().Title
 	newList := list.New([]list.Item{}, newListDelegate, 0, 0)
 	return &ContextsInfo{
 		Client:    client,
