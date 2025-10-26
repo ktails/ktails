@@ -85,9 +85,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.contextList.Update(windowMsg)
 	case []msgs.ContextsSelectedMsg:
 		for _, ms := range msg {
-			if _, exists := m.appState.SelectedContextsNamespace[ms.ContextName]; !exists {
-				m.appState.SelectedContextsNamespace[ms.ContextName] = ms.DefaultNamespace
-			}
+			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
 		}
 		// switch to Deployments tab after selection
 		for i, t := range m.tabs {
@@ -97,16 +95,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		cmdSequence := []tea.Cmd{}
-		for c, n := range m.appState.SelectedContextsNamespace {
-			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, c, n))
-
+		for context, namespace := range m.appState.SelectedContexts {
+			m.appState.SetLoading(context, true)
+			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
 		}
+
 		m.appStateLoaded = true
 		return m, tea.Sequence(cmdSequence...)
 	case msgs.DeploymentTableMsg:
-		// Always route deployment table updates to the deployment page,
-		// regardless of which tab is currently active, so we don't drop data.
-		cmd = m.deploymentList.Update(msg)
+
+		m.appState.SetDeployments(msg.Context, msg.Rows)
+		allRows := m.appState.GetAllDeployments()
+		m.deploymentList.SetRows(allRows)
 		return m, cmd
 
 	}
