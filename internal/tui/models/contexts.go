@@ -45,7 +45,8 @@ func (c *ContextsInfo) GetDimensions() (w, h int) {
 
 func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	newListDelegate := list.NewDefaultDelegate()
-	newListDelegate.Styles.SelectedTitle = styles.CatppuccinMochaListStyles().Title
+	newListDelegate.Styles.SelectedTitle = styles.CatppuccinMochaListStyles().Title.Foreground(styles.CatppuccinLatte().Flamingo)
+	newListDelegate.Styles.SelectedDesc = styles.CatppuccinMochaListStyles().Title.Foreground(styles.CatppuccinLatte().Rosewater)
 	newList := list.New([]list.Item{}, newListDelegate, 0, 0)
 	return &ContextsInfo{
 		Client:             client,
@@ -159,7 +160,10 @@ func (c *ContextsInfo) confirmSelection() tea.Cmd {
 	state := c.getAllContextStates()
 
 	// If nothing selected, use focused item
-	if len(state.Selected) == 0 {
+	// Only auto-select the focused item when there are no deselections.
+	// This allows users to truly clear all selections: when contexts are
+	// deselected, we should not re-add the focused item implicitly.
+	if len(state.Selected) == 0 && len(state.Deselected) == 0 {
 		idx := c.list.Index()
 		if idx >= 0 && idx < len(c.list.Items()) {
 			if item, ok := c.list.Items()[idx].(contextList); ok {
@@ -186,6 +190,7 @@ func (c *ContextsInfo) confirmSelection() tea.Cmd {
 
 func (c *ContextsInfo) View() string {
 	c.list.Styles = styles.CatppuccinMochaListStyles()
+	c.list.Styles.Title = styles.CatppuccinMochaListStyles().Title.Faint(true).Width(c.width).Padding(0, 1)
 	c.list.SetShowStatusBar(false)
 	c.list.SetShowHelp(false)
 	switch c.isLoading {
@@ -198,6 +203,12 @@ func (c *ContextsInfo) View() string {
 }
 
 func (c *ContextsInfo) initContextPane() {
+	newListDelegate := list.NewDefaultDelegate()
+	newListDelegate.Styles.SelectedTitle = styles.CatppuccinMochaListStyles().Title.Foreground(styles.CatppuccinLatte().Flamingo).Width(c.width).Padding(0, 1)
+	newListDelegate.Styles.SelectedDesc = styles.CatppuccinMochaListStyles().Title.Foreground(styles.CatppuccinLatte().Rosewater).Width(c.width).Padding(0, 1)
+	newListDelegate.Styles.NormalTitle = styles.CatppuccinMochaListStyles().Title.Foreground(styles.CatppuccinLatte().Flamingo).Width(c.width).Padding(0, 1).Faint(true)
+	newListDelegate.Styles.NormalDesc = styles.CatppuccinMochaListStyles().Title.Foreground(styles.CatppuccinLatte().Rosewater).Width(c.width).Padding(0, 1).Faint(true)
+	c.list.SetDelegate(newListDelegate)
 	rawContextsList, err := c.Client.ListContexts()
 	if err != nil {
 		log.Printf("unable to fetch context from client: %v", err)

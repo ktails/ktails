@@ -92,6 +92,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, ms := range msg.Selected {
 			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
 		}
+		m.deploymentList.SetRows(m.appState.GetAllDeployments())
 		// If nothing selected, clear everything and stay on context tab
 		if len(m.appState.SelectedContexts) == 0 {
 			m.appStateLoaded = false

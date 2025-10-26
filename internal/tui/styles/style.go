@@ -150,9 +150,12 @@ func CatppuccinMochaListStyles() list.Styles {
 	p := CatppuccinMocha()
 	return list.Styles{
 		Title: lipgloss.NewStyle().
-			Foreground(p.Text).
+			Foreground(p.Flamingo).
 			Background(p.Mantle).
 			Bold(true),
+		NoItems: lipgloss.NewStyle().
+			Background(p.Mantle).
+			Bold(false),
 
 		HelpStyle: lipgloss.NewStyle().
 			Foreground(p.Text).
