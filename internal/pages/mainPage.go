@@ -4,6 +4,7 @@ package pages
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ktails/ktails/internal/k8s"
@@ -83,11 +84,19 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		windowMsg := tea.WindowSizeMsg{}
 		windowMsg.Width, windowMsg.Height = getContextPaneDimensions(m.width, m.height)
 		return m, m.contextList.Update(windowMsg)
-	case []msgs.ContextsSelectedMsg:
-		for _, ms := range msg {
-			if _, exists := m.appState.SelectedContextsNamespace[ms.ContextName]; !exists {
-				m.appState.SelectedContextsNamespace[ms.ContextName] = ms.DefaultNamespace
-			}
+	case msgs.ContextsStateMsg:
+		// Remove deselected contexts
+		for _, contextName := range msg.Deselected {
+			m.appState.RemoveContext(contextName)
+		}
+		for _, ms := range msg.Selected {
+			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
+		}
+		// If nothing selected, clear everything and stay on context tab
+		if len(m.appState.SelectedContexts) == 0 {
+			m.appStateLoaded = false
+			m.deploymentList.SetRows([]table.Row{})
+			return m, nil
 		}
 		// switch to Deployments tab after selection
 		for i, t := range m.tabs {
@@ -97,16 +106,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		cmdSequence := []tea.Cmd{}
-		for c, n := range m.appState.SelectedContextsNamespace {
-			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, c, n))
-
+		for context, namespace := range m.appState.SelectedContexts {
+			m.appState.SetLoading(context, true)
+			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
 		}
+
 		m.appStateLoaded = true
 		return m, tea.Sequence(cmdSequence...)
 	case msgs.DeploymentTableMsg:
-		// Always route deployment table updates to the deployment page,
-		// regardless of which tab is currently active, so we don't drop data.
-		cmd = m.deploymentList.Update(msg)
+
+		m.appState.SetDeployments(msg.Context, msg.Rows)
+		allRows := m.appState.GetAllDeployments()
+		m.deploymentList.SetRows(allRows)
 		return m, cmd
 
 	}
@@ -141,11 +152,11 @@ func (m *MainPage) View() string {
 	case "Kubernetes Contexts":
 		m.tabContent = m.contextList.View()
 	case "Deployments":
-		if m.appStateLoaded {
+		if !m.appStateLoaded || len(m.appState.SelectedContexts) == 0 {
+			m.tabContent = "No contexts selected. Go back to 'Kubernetes Contexts' tab and select contexts."
+		} else {
 			m.tabContent = m.deploymentList.View()
-			break
 		}
-		m.tabContent = "contexts not selected."
 	default:
 		m.tabContent = "More Info Coming Soon"
 	}

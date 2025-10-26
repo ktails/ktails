@@ -5,7 +5,6 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
-	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
 	"github.com/termkit/skeleton"
 )
@@ -17,8 +16,6 @@ type DeploymentPage struct {
 	// share contextList
 	ContextName string
 	Namespace   string
-	// allRows
-	allRows []table.Row
 }
 
 func NewDeploymentPage(client *k8s.Client) *DeploymentPage {
@@ -44,17 +41,12 @@ func (d *DeploymentPage) Update(msg tea.Msg) tea.Cmd {
 			d.table, cmd = d.table.Update(msg)
 			return cmd
 		}
-	case msgs.DeploymentTableMsg:
-		d.allRows = append(d.allRows, msg.Rows...)
-		d.handleDeploymentTableMsg(d.allRows)
-
-		return nil
 	}
 	d.table, cmd = d.table.Update(msg)
 	return cmd
 }
 
-func (d *DeploymentPage) handleDeploymentTableMsg(rows []table.Row) {
+func (d *DeploymentPage) SetRows(rows []table.Row) {
 	d.table.Focus()
 	d.table.SetRows(rows)
 }
