@@ -9,10 +9,10 @@ import (
 )
 
 type DeploymentInfo struct {
-	Name   string
-	Age    time.Duration
-	Ready  string
-	Status []string
+	Name          string
+	Age           time.Duration
+	ReadyReplicas int32
+	Status        []string
 }
 
 func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]DeploymentInfo, error) {
@@ -27,11 +27,12 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 	for _, deployment := range d.Items {
 
 		age := time.Since(deployment.CreationTimestamp.Time)
+		ReadyReplicas := deployment.Status.ReadyReplicas
 
 		deploymentInfoList = append(deploymentInfoList, DeploymentInfo{
-			Name:  deployment.Name,
-			Age:   age,
-			Ready: deployment.Status.String(),
+			Name:          deployment.Name,
+			Age:           age,
+			ReadyReplicas: ReadyReplicas,
 		})
 
 	}

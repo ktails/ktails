@@ -5,8 +5,8 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
-	"github.com/ktails/ktails/internal/tui/cmds"
 	"github.com/ktails/ktails/internal/tui/msgs"
+	"github.com/ktails/ktails/internal/tui/styles"
 	"github.com/termkit/skeleton"
 )
 
@@ -59,11 +59,7 @@ func (d *DeploymentPage) handleDeploymentTableMsg(rows []table.Row) {
 	d.table.SetRows(rows)
 }
 
-func (d *DeploymentPage) loadDeployments() tea.Cmd {
-	d.Skel.TriggerUpdate()
-	return cmds.LoadDeploymentInfoCmd(d.Client, d.ContextName, d.Namespace)
-}
-
 func (d *DeploymentPage) View() string {
+	d.table.SetStyles(styles.CatppuccinTableStyles())
 	return d.table.View()
 }

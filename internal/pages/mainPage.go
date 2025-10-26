@@ -89,6 +89,13 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appState.SelectedContextsNamespace[ms.ContextName] = ms.DefaultNamespace
 			}
 		}
+		// switch to Deployments tab after selection
+		for i, t := range m.tabs {
+			if t == "Deployments" {
+				m.activeTab = i
+				break
+			}
+		}
 		cmdSequence := []tea.Cmd{}
 		for c, n := range m.appState.SelectedContextsNamespace {
 			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, c, n))
@@ -96,6 +103,11 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.appStateLoaded = true
 		return m, tea.Sequence(cmdSequence...)
+	case msgs.DeploymentTableMsg:
+		// Always route deployment table updates to the deployment page,
+		// regardless of which tab is currently active, so we don't drop data.
+		cmd = m.deploymentList.Update(msg)
+		return m, cmd
 
 	}
 
@@ -150,4 +162,19 @@ func getContextPaneDimensions(w, h int) (cW, cH int) {
 	cW = w / 4
 	cH = h - 10
 	return cW, cH
+}
+
+// local helpers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

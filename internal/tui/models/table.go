@@ -27,9 +27,8 @@ func podTableColumns() []table.Column {
 func deploymentTableColumns() []table.Column {
 	return []table.Column{
 		{Title: "Name", Width: 30},
-		{Title: "Namespace", Width: 15},
-		{Title: "Status", Width: 10},
-		{Title: "Restarts", Width: 10},
 		{Title: "Age", Width: 10},
+		{Title: "ReadyReplicas", Width: 15},
+		{Title: "Contexts", Width: 12},
 	}
 }
