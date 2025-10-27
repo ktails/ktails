@@ -13,7 +13,7 @@ func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
 }
 
 var (
-	DefaultTabs       = []string{"Kubernetes Contexts", "Deployments", "Pods"}
+	DefaultTabs       = []string{ "Deployments", "Pods"}
 	inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
 	activeTabBorder   = tabBorderWithBottom("┘", " ", "└")
 	DocStyle          = lipgloss.NewStyle().Padding(1, 2, 1, 2).BorderStyle(lipgloss.InnerHalfBlockBorder())

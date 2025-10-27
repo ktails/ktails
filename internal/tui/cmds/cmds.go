@@ -47,7 +47,7 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 		for i, deployment := range deployments {
 			rows[i] = table.Row{
 				deployment.Name,
-				deployment.Age.String(),
+				deployment.Age,
 				strconv.Itoa(int(deployment.ReadyReplicas)),
 				kubeContext,
 			}

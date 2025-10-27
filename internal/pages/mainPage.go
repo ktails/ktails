@@ -12,6 +12,7 @@ import (
 	"github.com/ktails/ktails/internal/tui/models"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
+	"github.com/ktails/ktails/internal/tui/views"
 )
 
 type MainPage struct {
@@ -148,6 +149,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *MainPage) View() string {
 
+	leftPaneWidth := m.width / 3
+	leftPane := views.RenderLeftPane(m.contextList.View(), leftPaneWidth, m.height-10)
+
 	tabs := strings.Builder{}
 	switch m.tabs[m.activeTab] {
 	case "Kubernetes Contexts":
@@ -162,12 +166,15 @@ func (m *MainPage) View() string {
 		m.tabContent = "More Info Coming Soon"
 	}
 
-	tabHeaders := styles.RenderTabHeaders(m.activeTab, m.tabs, m.width-10, m.height-10)
+	tabWidth := m.width - leftPaneWidth - 10
+
+	tabHeaders := styles.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, m.height-10)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
-	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Align(lipgloss.Left).Render(m.tabContent))
+	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 10).Align(lipgloss.Left).Render(m.tabContent))
 
-	return tabs.String()
+	fullView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String())
+	return fullView
 }
 
 func getContextPaneDimensions(w, h int) (cW, cH int) {
