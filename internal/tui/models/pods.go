@@ -38,16 +38,13 @@ func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "j":
+		case "up", "k":
 			p.table, cmd = p.table.Update(msg)
 			return p, cmd
-		case "down", "k":
+		case "down", "j":
 			p.table, cmd = p.table.Update(msg)
 			return p, cmd
 		}
-	// case msgs.ResetPodTableMsg:
-	// 	p.allRows = []table.Row{}
-	// 	return p, nil
 	case msgs.ContextsSelectedMsg:
 		p.ContextName = msg.ContextName
 		p.Namespace = msg.DefaultNamespace

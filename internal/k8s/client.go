@@ -342,3 +342,49 @@ func (c *Client) SwitchContext(contextName string) error {
 
 	return nil
 }
+
+func (c *Client) ClientByContextName(contextName string) error {
+	// Check if context exists
+	if _, exists := c.rawConfig.Contexts[contextName]; !exists {
+		return fmt.Errorf("context %s not found in kubeconfig", contextName)
+	}
+
+	// Create new config with overridden context
+	loadingRules := &clientcmd.ClientConfigLoadingRules{
+		ExplicitPath: c.kubeconfigPath,
+	}
+	configOverrides := &clientcmd.ConfigOverrides{
+		CurrentContext: contextName,
+	}
+
+	// Create new client config
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		configOverrides,
+	)
+
+	// Build rest config
+	restConfig, err := clientConfig.ClientConfig()
+	if err != nil {
+		return fmt.Errorf("failed to create client config for context %s: %w", contextName, err)
+	}
+
+	// Create new clientset
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes client for context %s: %w", contextName, err)
+	}
+
+	// Test the connection
+	_, err = clientset.Discovery().ServerVersion()
+	if err != nil {
+		return fmt.Errorf("failed to connect to cluster in context %s: %w", contextName, err)
+	}
+
+	// Update client
+	c.clientset = clientset
+	c.clientConfig = clientConfig
+	c.currentContext = contextName
+
+	return nil
+}
