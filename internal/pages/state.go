@@ -1,6 +1,9 @@
 package pages
 
-import "github.com/charmbracelet/bubbles/table"
+import (
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/ktails/ktails/internal/k8s"
+)
 
 type AppState struct {
 	// Selected contexts and their namespaces
@@ -14,14 +17,17 @@ type AppState struct {
 
 	// Errors
 	Errors map[string]string // context -> error message
+	// k8s client set with contextname
+	ClientByContextName map[string]*k8s.Client
 }
 
 func NewAppState() *AppState {
 	return &AppState{
-		SelectedContexts:   make(map[string]string),
-		Deployments:        make(map[string][]table.Row),
-		LoadingDeployments: make(map[string]bool),
-		Errors:             make(map[string]string),
+		SelectedContexts:    make(map[string]string),
+		Deployments:         make(map[string][]table.Row),
+		LoadingDeployments:  make(map[string]bool),
+		Errors:              make(map[string]string),
+		ClientByContextName: make(map[string]*k8s.Client),
 	}
 }
 
@@ -84,4 +90,19 @@ func (a *AppState) RemoveContext(context string) {
 	delete(a.Deployments, context)
 	delete(a.LoadingDeployments, context)
 	delete(a.Errors, context)
+}
+
+func (a *AppState) SetClientByContextName(client *k8s.Client) {
+
+	for c := range a.ClientByContextName {
+		for sc := range a.SelectedContexts {
+			if c == sc {
+				break
+			}
+			a.ClientByContextName[sc] = client
+
+		}
+
+	}
+
 }
