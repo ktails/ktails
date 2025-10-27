@@ -13,7 +13,7 @@ func RenderLeftPane(data string, w, h int) string {
 
 func RenderLeftPaneBlur(data string, w, h int) string {
 
-	lp := styles.LeftPane.BorderForeground(styles.CatppuccinLatte().Mantle).Width(w).Height(h).Render(data)
+	lp := styles.LeftPaneBlur.Width(w).Height(h).Render(data)
 	return lp
 
 }

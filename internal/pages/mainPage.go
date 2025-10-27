@@ -191,15 +191,18 @@ func (m *MainPage) View() string {
 	leftPaneWidth := m.width / 3
 	leftPane := ""
 	tabBlur := false
+	tabBottom := styles.WindowStyle
 
 	switch m.focus {
 	case focusLeftPane:
 		leftPane = views.RenderLeftPane(m.contextList.View(), leftPaneWidth, m.height-10)
 		tabBlur = true
+		tabBottom = styles.WindowBlurStyle
 
 	case focusTabs:
 		leftPane = views.RenderLeftPaneBlur(m.contextList.View(), leftPaneWidth, m.height-10)
 		tabBlur = false
+		tabBottom = styles.WindowStyle
 	}
 
 	tabs := strings.Builder{}
@@ -221,7 +224,7 @@ func (m *MainPage) View() string {
 	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
-	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Left).Render(m.tabContent))
+	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Left).Render(m.tabContent))
 	fullView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String())
 	return fullView
 }
