@@ -15,6 +15,13 @@ import (
 	"github.com/ktails/ktails/internal/tui/views"
 )
 
+type focusTarget int
+
+const (
+	focusLeftPane focusTarget = iota
+	focusTabs
+)
+
 type MainPage struct {
 	// dimensions
 	width  int
@@ -32,6 +39,7 @@ type MainPage struct {
 	contextList    *models.ContextsInfo
 	deploymentList *models.DeploymentPage
 	podList        *models.PodPage
+	focus          focusTarget
 	// k8s client
 	Client *k8s.Client
 }
@@ -42,17 +50,23 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 	pList := models.NewPodPageModel(c)
 	tabs := styles.DefaultTabs
 	tabs = append(tabs, "svc")
-	tabContent := ""
-	return &MainPage{
+
+	m := &MainPage{
 		Client:         c,
 		appState:       NewAppState(),
 		tabs:           tabs,
-		tabContent:     tabContent,
+		tabContent:     "",
 		contextList:    ctxInfo,
 		deploymentList: depList,
 		podList:        pList,
 		appStateLoaded: false,
+		focus:          focusLeftPane,
 	}
+
+	m.updateFocusStates()
+
+	return m
+
 }
 
 func (m *MainPage) Init() tea.Cmd {
@@ -61,24 +75,39 @@ func (m *MainPage) Init() tea.Cmd {
 }
 
 func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch keypress := msg.String(); keypress {
+		keypress := msg.String()
+		switch keypress {
 		case "ctrl+t":
-			
+			m.toggleFocus()
+			return m, nil
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		}
+
+		if m.focus == focusLeftPane {
+			cmd := m.contextList.Update(msg)
+			return m, cmd
+		}
+
+		switch keypress {
 		case "right", "tab":
 			m.activeTab = min(m.activeTab+1, len(m.tabs)-1)
+			m.updateFocusStates()
 			return m, nil
 		case "left", "shift+tab":
 			m.activeTab = max(m.activeTab-1, 0)
+			m.updateFocusStates()
 			return m, nil
-			// default:
-			// 	cmd = m.contextList.Update(msg)
-			// 	return m, cmd
 		}
+
+		if m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded {
+			cmd := m.deploymentList.Update(msg)
+			return m, cmd
+		}
+
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -87,8 +116,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		windowMsg := tea.WindowSizeMsg{}
 		windowMsg.Width, windowMsg.Height = getContextPaneDimensions(m.width, m.height)
 		return m, m.contextList.Update(windowMsg)
+
 	case msgs.ContextsStateMsg:
-		// Remove deselected contexts
 		for _, contextName := range msg.Deselected {
 			m.appState.RemoveContext(contextName)
 		}
@@ -96,19 +125,21 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
 		}
 		m.deploymentList.SetRows(m.appState.GetAllDeployments())
-		// If nothing selected, clear everything and stay on context tab
+
 		if len(m.appState.SelectedContexts) == 0 {
 			m.appStateLoaded = false
 			m.deploymentList.SetRows([]table.Row{})
+			m.updateFocusStates()
 			return m, nil
 		}
-		// switch to Deployments tab after selection
+
 		for i, t := range m.tabs {
 			if t == "Deployments" {
 				m.activeTab = i
 				break
 			}
 		}
+
 		cmdSequence := []tea.Cmd{}
 		for context, namespace := range m.appState.SelectedContexts {
 			m.appState.SetLoading(context, true)
@@ -116,39 +147,60 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.appStateLoaded = true
+		m.updateFocusStates()
 		return m, tea.Sequence(cmdSequence...)
-	case msgs.DeploymentTableMsg:
 
+	case msgs.DeploymentTableMsg:
 		m.appState.SetDeployments(msg.Context, msg.Rows)
 		allRows := m.appState.GetAllDeployments()
 		m.deploymentList.SetRows(allRows)
-		return m, cmd
-
-	}
-
-	switch m.tabs[m.activeTab] {
-	case "Deployments":
-		if m.appStateLoaded {
-			cmd = m.deploymentList.Update(msg)
-			return m, cmd
-		}
-	default:
-		return m, nil
-
-	}
-
-	switch m.appStateLoaded {
-	case true:
-		cmd = m.deploymentList.Update(msg)
-		return m, cmd
-	default:
+		m.updateFocusStates()
 		return m, nil
 	}
+
+	if m.focus == focusTabs && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded {
+		cmd := m.deploymentList.Update(msg)
+		return m, cmd
+	}
+
+	if m.focus == focusLeftPane {
+		cmd := m.contextList.Update(msg)
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+func (m *MainPage) toggleFocus() {
+	if m.focus == focusLeftPane {
+		m.focus = focusTabs
+	} else {
+		m.focus = focusLeftPane
+	}
+	m.updateFocusStates()
+}
+
+func (m *MainPage) updateFocusStates() {
+	m.contextList.SetFocused(m.focus == focusLeftPane)
+
+	shouldFocusDeployments := m.focus == focusTabs && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded
+	m.deploymentList.SetFocused(shouldFocusDeployments)
 }
 
 func (m *MainPage) View() string {
 	leftPaneWidth := m.width / 3
-	leftPane := views.RenderLeftPane(m.contextList.View(), leftPaneWidth, m.height-10)
+	leftPane := ""
+	tabBlur := false
+
+	switch m.focus {
+	case focusLeftPane:
+		leftPane = views.RenderLeftPane(m.contextList.View(), leftPaneWidth, m.height-10)
+		tabBlur = true
+
+	case focusTabs:
+		leftPane = views.RenderLeftPaneBlur(m.contextList.View(), leftPaneWidth, m.height-10)
+		tabBlur = false
+	}
 
 	tabs := strings.Builder{}
 	switch m.tabs[m.activeTab] {
@@ -166,7 +218,7 @@ func (m *MainPage) View() string {
 
 	tabWidth := m.width - leftPaneWidth - 10
 
-	tabHeaders := styles.RenderTabHeaders(m.activeTab, m.tabs, tabWidth)
+	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
 	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Left).Render(m.tabContent))

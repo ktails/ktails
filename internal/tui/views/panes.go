@@ -2,15 +2,18 @@
 // future to divide right pane into rightTopPane and rightBottomPane
 package views
 
-import "github.com/charmbracelet/lipgloss"
-
-var (
-	leftPane = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).Padding(2, 0)
-)
+import "github.com/ktails/ktails/internal/tui/styles"
 
 func RenderLeftPane(data string, w, h int) string {
 
-	lp := leftPane.Width(w).Height(h).Render(data)
+	lp := styles.LeftPane.Width(w).Height(h).Render(data)
+	return lp
+
+}
+
+func RenderLeftPaneBlur(data string, w, h int) string {
+
+	lp := styles.LeftPane.BorderForeground(styles.CatppuccinLatte().Mantle).Width(w).Height(h).Render(data)
 	return lp
 
 }
