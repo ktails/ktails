@@ -65,6 +65,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch keypress := msg.String(); keypress {
+		case "ctrl+t":
+			
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "right", "tab":
@@ -125,9 +127,6 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.tabs[m.activeTab] {
-	case "Kubernetes Contexts":
-		cmd = m.contextList.Update(msg)
-		return m, cmd
 	case "Deployments":
 		if m.appStateLoaded {
 			cmd = m.deploymentList.Update(msg)
@@ -148,7 +147,6 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *MainPage) View() string {
-
 	leftPaneWidth := m.width / 3
 	leftPane := views.RenderLeftPane(m.contextList.View(), leftPaneWidth, m.height-10)
 
@@ -168,11 +166,10 @@ func (m *MainPage) View() string {
 
 	tabWidth := m.width - leftPaneWidth - 10
 
-	tabHeaders := styles.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, m.height-10)
+	tabHeaders := styles.RenderTabHeaders(m.activeTab, m.tabs, tabWidth)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
-	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 10).Align(lipgloss.Left).Render(m.tabContent))
-
+	tabs.WriteString(styles.WindowStyle.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Left).Render(m.tabContent))
 	fullView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String())
 	return fullView
 }

@@ -13,7 +13,7 @@ func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
 }
 
 var (
-	DefaultTabs       = []string{ "Deployments", "Pods"}
+	DefaultTabs       = []string{"Deployments", "Pods"}
 	inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
 	activeTabBorder   = tabBorderWithBottom("┘", " ", "└")
 	DocStyle          = lipgloss.NewStyle().Padding(1, 2, 1, 2).BorderStyle(lipgloss.InnerHalfBlockBorder())
@@ -23,7 +23,7 @@ var (
 	WindowStyle       = lipgloss.NewStyle().BorderForeground(highlightColor).Padding(2, 0).Align(lipgloss.Center).Border(lipgloss.NormalBorder()).UnsetBorderTop()
 )
 
-func RenderTabHeaders(activeTab int, tabs []string, w, h int) string {
+func RenderTabHeaders(activeTab int, tabs []string, w int) string {
 	var renderedTabs []string
 	width := w / len(tabs)
 	for i, t := range tabs {
