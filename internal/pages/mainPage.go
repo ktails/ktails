@@ -36,16 +36,16 @@ type MainPage struct {
 	// App state
 	appState       *AppState
 	appStateLoaded bool
-	
+
 	// base models
 	contextList    *models.ContextsInfo
 	deploymentList *models.DeploymentPage
 	podList        *models.PodPage
 	focus          focusTarget
-	
+
 	// k8s client
 	Client *k8s.Client
-	
+
 	// Error display
 	errorMessage string
 }
@@ -129,15 +129,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.ContextsStateMsg:
 		// Clear previous errors when contexts change
 		m.errorMessage = ""
-		
+
 		for _, contextName := range msg.Deselected {
 			m.appState.RemoveContext(contextName)
 		}
-		
+
 		for _, ms := range msg.Selected {
 			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
 		}
-		
+
 		m.deploymentList.SetRows(m.appState.GetAllDeployments())
 
 		if len(m.appState.SelectedContexts) == 0 {
@@ -232,6 +232,7 @@ func (m *MainPage) updateFocusStates() {
 }
 
 func (m *MainPage) View() string {
+
 	leftPaneWidth := m.width / 3
 	leftPane := ""
 	tabBlur := false
@@ -251,7 +252,7 @@ func (m *MainPage) View() string {
 
 	// Build tab content
 	tabs := strings.Builder{}
-	
+
 	switch m.tabs[m.activeTab] {
 	case "Kubernetes Contexts":
 		m.tabContent = m.contextList.View()
@@ -281,14 +282,21 @@ func (m *MainPage) View() string {
 		m.tabContent = loadingMsg + "\n\n" + m.tabContent
 	}
 
-	tabWidth := m.width - leftPaneWidth - 10
+	tabWidth := m.width - leftPaneWidth - 8
 	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
 	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Left).Render(m.tabContent))
-	
-	fullView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String())
+
+	fullView := lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()), m.renderStatusBar())
+
 	return fullView
+}
+
+// renderStatusBar
+func (m *MainPage) renderStatusBar() string {
+	statusBar := styles.StatusBar.Width(m.width-2).Render("status bar")
+	return statusBar
 }
 
 // renderErrorBanner creates a styled error message banner
@@ -301,7 +309,7 @@ func (m *MainPage) renderErrorBanner() string {
 		Padding(0, 1).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(p.Red)
-	
+
 	return errorStyle.Render("⚠ Error: " + m.errorMessage + " (Press Ctrl+E to dismiss)")
 }
 
@@ -310,7 +318,7 @@ func (m *MainPage) renderErrorSummary() string {
 	if len(m.appState.Errors) == 0 {
 		return ""
 	}
-	
+
 	p := styles.CatppuccinMocha()
 	errorStyle := lipgloss.NewStyle().
 		Foreground(p.Red).
@@ -318,14 +326,14 @@ func (m *MainPage) renderErrorSummary() string {
 		Padding(0, 1).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(p.Red)
-	
+
 	var errorLines []string
 	errorLines = append(errorLines, "⚠ Errors encountered:")
 	for ctx, err := range m.appState.Errors {
 		errorLines = append(errorLines, fmt.Sprintf("  • %s: %s", ctx, err))
 	}
 	errorLines = append(errorLines, "(Press Ctrl+E to dismiss)")
-	
+
 	return errorStyle.Render(strings.Join(errorLines, "\n"))
 }
 
@@ -336,18 +344,18 @@ func (m *MainPage) renderLoadingIndicator() string {
 		Foreground(p.Blue).
 		Background(p.Surface0).
 		Padding(0, 1)
-	
+
 	var loadingContexts []string
 	for ctx, loading := range m.appState.LoadingDeployments {
 		if loading {
 			loadingContexts = append(loadingContexts, ctx)
 		}
 	}
-	
+
 	if len(loadingContexts) == 0 {
 		return ""
 	}
-	
+
 	msg := fmt.Sprintf("⏳ Loading: %s...", strings.Join(loadingContexts, ", "))
 	return loadingStyle.Render(msg)
 }
