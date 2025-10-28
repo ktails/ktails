@@ -8,8 +8,10 @@ const (
 )
 
 var (
-	focusColor = CatppuccinLatte().Peach
-	blurColor  = CatppuccinLatte().Flamingo
+	// Use a single palette across the TUI for consistency
+	// Focused elements use a vibrant accent; blurred elements use a subtle overlay
+	focusColor = CatppuccinMocha().Mauve
+	blurColor  = CatppuccinMocha().Overlay0
 	LeftPane   = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).
 			Padding(2, 0).BorderForeground(focusColor)
 	LeftPaneBlur = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).

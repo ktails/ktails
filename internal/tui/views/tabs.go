@@ -5,20 +5,26 @@ import (
 	"github.com/ktails/ktails/internal/tui/styles"
 )
 
-func RenderTabHeaders(activeTab int, tabs []string, w int, focus bool) string {
+// RenderTabHeaders renders tab headers with clear focus/blur styling.
+// If blur is true, the tabs are shown in their blurred styles; otherwise focused styles.
+func RenderTabHeaders(activeTab int, tabs []string, w int, blur bool) string {
 	var renderedTabs []string
 	width := w / len(tabs)
 	for i, t := range tabs {
 		var style lipgloss.Style
 		isFirst, isLast, isActive := i == 0, i == len(tabs)-1, i == activeTab
-		if isActive && focus {
-			style = styles.ActiveTabStyle
-		} else if focus {
-			style = styles.ActiveTabStyle
-		} else if !isActive && !focus {
-			style = styles.ActiveTabBlurStyle
+		if blur {
+			if isActive {
+				style = styles.ActiveTabBlurStyle
+			} else {
+				style = styles.InactiveTabBlurStyle
+			}
 		} else {
-			style = styles.InactiveTabBlurStyle
+			if isActive {
+				style = styles.ActiveTabStyle
+			} else {
+				style = styles.InactiveTabStyle
+			}
 		}
 
 		border, _, _, _, _ := style.GetBorder()
