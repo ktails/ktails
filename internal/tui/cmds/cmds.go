@@ -39,7 +39,9 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 		// Fetch deployments for the context
 		deployments, err := client.GetDeploymentInfo(kubeContext, namespace)
 		if err != nil {
-			return nil
+			return msgs.DeploymentTableMsg{
+				Err: err,
+			}
 		}
 
 		// Convert pods to table rows
