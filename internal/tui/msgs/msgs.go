@@ -14,6 +14,7 @@ type ContextsSelectedMsg struct {
 type DeploymentTableMsg struct {
 	Context string
 	Rows    []table.Row
+	Err     error
 }
 type ContextsStateMsg struct {
 	Selected   []ContextsSelectedMsg
