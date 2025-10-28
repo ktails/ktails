@@ -55,3 +55,11 @@ func (d *DeploymentPage) View() string {
 	d.table.SetStyles(styles.CatppuccinTableStyles())
 	return d.table.View()
 }
+
+func (d *DeploymentPage) SetFocused(f bool) {
+	if f {
+		d.table.Focus()
+		return
+	}
+	d.table.Blur()
+}

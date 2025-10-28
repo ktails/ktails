@@ -10,7 +10,7 @@ import (
 
 type DeploymentInfo struct {
 	Name          string
-	Age           time.Duration
+	Age           string
 	ReadyReplicas int32
 	Status        []string
 }
@@ -26,7 +26,7 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 	}
 	for _, deployment := range d.Items {
 
-		age := time.Since(deployment.CreationTimestamp.Time)
+		age := formatDuration(time.Since(deployment.CreationTimestamp.Time))
 		ReadyReplicas := deployment.Status.ReadyReplicas
 
 		deploymentInfoList = append(deploymentInfoList, DeploymentInfo{
