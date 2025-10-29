@@ -12,7 +12,7 @@
   aliases unless needed.
 - **Naming**: exported identifiers stay PascalCase with doc comments; internal
   helpers use camelCase.
-- **Structs**: initialize maps/slices in constructors (`pages.NewAppState`); keep
+- **Structs**: initialize maps/slices in constructors (`state.NewAppState`); keep
   zero-value safe.
 - **Errors**: wrap contexts with `fmt.Errorf(... %w)`; surface to callers instead
   of logging and swallowing.
