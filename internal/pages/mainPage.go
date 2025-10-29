@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/state"
 	"github.com/ktails/ktails/internal/tui/cmds"
 	"github.com/ktails/ktails/internal/tui/models"
 	"github.com/ktails/ktails/internal/tui/msgs"
@@ -34,7 +35,7 @@ type MainPage struct {
 	activeTab  int
 
 	// App state
-	appState       *AppState
+	appState       *state.AppState
 	appStateLoaded bool
 
 	// base models
@@ -59,7 +60,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 
 	m := &MainPage{
 		Client:         c,
-		appState:       NewAppState(),
+		appState:       state.NewAppState(),
 		tabs:           tabs,
 		tabContent:     "",
 		contextList:    ctxInfo,

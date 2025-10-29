@@ -8,14 +8,25 @@
 - **Lint**: `make lint` wraps `go vet ./...` and optional `staticcheck`.
 - **Format**: prefer `make fmt` or `go fmt ./...`; never skip gofmt.
 - **Deps**: `make tidy` updates go.{mod,sum}; avoid manual edits.
-- **Imports**: rely on `gofmt` grouping (std, third-party, local) no custom alias unless needed.
-- **Naming**: exported identifiers stay PascalCase with doc comments; internal helpers use camelCase.
-- **Structs**: initialize maps/slices in constructors (`pages.NewAppState`); keep zero-value safe.
-- **Errors**: wrap contexts with `fmt.Errorf(... %w)`; surface to callers instead of logging and swallowing.
-- **Logging**: prefer `log.Printf` for recoverable issues; avoid `fmt.Println` in core logic.
-- **Cmds**: Bubble Tea commands return closures and should emit messages or `nil` on failure.
-- **State**: mutate shared state via methods; clear companion maps when removing contexts.
-- **Styling/Layout**: reuse Catppuccin helpers from `internal/tui/styles`; keep views lean and avoid raw ANSI.
-- **K8s Access**: reuse `k8s.Client`, switching context via `SwitchContext` before API calls.
-- **Build Artifacts**: clean with `make clean`; keep repo free of stray binaries or logs.
-- **Governance**: no Cursor/Copilot custom rules present—default to this guide for automation.
+- **Imports**: rely on `gofmt` grouping (std, third-party, local) with no custom
+  aliases unless needed.
+- **Naming**: exported identifiers stay PascalCase with doc comments; internal
+  helpers use camelCase.
+- **Structs**: initialize maps/slices in constructors (`pages.NewAppState`); keep
+  zero-value safe.
+- **Errors**: wrap contexts with `fmt.Errorf(... %w)`; surface to callers instead
+  of logging and swallowing.
+- **Logging**: prefer `log.Printf` for recoverable issues; avoid `fmt.Println`
+  in core logic.
+- **Cmds**: Bubble Tea commands return closures and should emit messages or
+  `nil` on failure.
+- **State**: mutate shared state via methods; clear companion maps when
+  removing contexts.
+- **Styling/Layout**: reuse Catppuccin helpers from `internal/tui/styles`; keep
+  views lean and avoid raw ANSI.
+- **K8s Access**: reuse `k8s.Client`, switching context via `SwitchContext`
+  before API calls.
+- **Build Artifacts**: clean with `make clean`; keep repo free of stray binaries
+  or logs.
+- **Governance**: no Cursor/Copilot custom rules present—default to this guide
+  for automation.
