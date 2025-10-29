@@ -3,7 +3,9 @@ package pages
 
 import (
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,6 +83,9 @@ func (m *MainPage) Init() tea.Cmd {
 }
 
 func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	start := time.Now()
+	defer m.logSlowUpdate(start)
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		keypress := msg.String()
@@ -103,11 +108,29 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch keypress {
 		case "right", "tab":
-			m.activeTab = min(m.activeTab+1, len(m.tabs)-1)
+			next := m.activeTab + 1
+			if next >= len(m.tabs) {
+				return m, nil
+			}
+
+			nextTab := m.tabs[next]
+			if nextTab == "Deployments" {
+				snapshot := m.appState.Snapshot()
+				if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
+					return m, nil
+				}
+			}
+
+			m.activeTab = next
 			m.updateFocusStates()
 			return m, nil
 		case "left", "shift+tab":
-			m.activeTab = max(m.activeTab-1, 0)
+			prev := m.activeTab - 1
+			if prev < 0 {
+				return m, nil
+			}
+
+			m.activeTab = prev
 			m.updateFocusStates()
 			return m, nil
 		}
@@ -139,11 +162,14 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
 		}
 
-		m.deploymentList.SetRows(m.appState.GetAllDeployments())
+		snapshot := m.appState.Snapshot()
+		m.deploymentList.SetRows(snapshot.Deployments)
+		m.contextList.SetLoadingStates(snapshot.LoadingStates)
 
-		if len(m.appState.SelectedContexts) == 0 {
+		if len(snapshot.SelectedContexts) == 0 {
 			m.appStateLoaded = false
 			m.deploymentList.SetRows([]table.Row{})
+			m.contextList.SetLoadingStates(nil)
 			m.updateFocusStates()
 			return m, nil
 		}
@@ -158,14 +184,21 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Load data for all selected contexts
 		cmdSequence := []tea.Cmd{}
-		for context, namespace := range m.appState.SelectedContexts {
+		for context, namespace := range snapshot.SelectedContexts {
 			m.appState.SetLoading(context, true)
 			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
 		}
 
+		m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
+
 		m.appStateLoaded = true
 		m.updateFocusStates()
-		return m, tea.Sequence(cmdSequence...)
+
+		if len(cmdSequence) == 0 {
+			return m, nil
+		}
+
+		return m, tea.Batch(cmdSequence...)
 
 	case msgs.DeploymentTableMsg:
 		// Handle errors from deployment loading
@@ -174,13 +207,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appState.SetError(msg.Context, errMsg)
 			m.errorMessage = errMsg
 			m.appState.SetLoading(msg.Context, false)
+			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
 			return m, nil
 		}
 
 		// Success - update state
 		m.appState.SetDeployments(msg.Context, msg.Rows)
-		allRows := m.appState.GetAllDeployments()
-		m.deploymentList.SetRows(allRows)
+		snapshot := m.appState.Snapshot()
+		m.deploymentList.SetRows(snapshot.Deployments)
+		m.contextList.SetLoadingStates(snapshot.LoadingStates)
 		m.updateFocusStates()
 		return m, nil
 
@@ -199,6 +234,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorMessage = fmt.Sprintf("%s: %v", msg.Title, msg.Err)
 		if msg.Context != "" {
 			m.appState.SetError(msg.Context, m.errorMessage)
+			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
 		}
 		return m, nil
 	}
@@ -217,6 +253,13 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *MainPage) logSlowUpdate(start time.Time) {
+	elapsed := time.Since(start)
+	if elapsed > 16*time.Millisecond {
+		log.Printf("Slow update: %v", elapsed)
+	}
+}
+
 func (m *MainPage) toggleFocus() {
 	if m.focus == focusLeftPane {
 		m.focus = focusTabs
@@ -233,6 +276,7 @@ func (m *MainPage) updateFocusStates() {
 }
 
 func (m *MainPage) View() string {
+	snapshot := m.appState.Snapshot()
 
 	leftPaneWidth := m.width / 3
 	leftPane := ""
@@ -258,7 +302,7 @@ func (m *MainPage) View() string {
 	case "Kubernetes Contexts":
 		m.tabContent = m.contextList.View()
 	case "Deployments":
-		if !m.appStateLoaded || len(m.appState.SelectedContexts) == 0 {
+		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
 			m.tabContent = "No contexts selected. Go back to 'Kubernetes Contexts' tab and select contexts."
 		} else {
 			m.tabContent = m.deploymentList.View()
@@ -271,15 +315,15 @@ func (m *MainPage) View() string {
 	if m.errorMessage != "" {
 		errorBanner := m.renderErrorBanner()
 		m.tabContent = errorBanner + "\n\n" + m.tabContent
-	} else if len(m.appState.Errors) > 0 {
+	} else if len(snapshot.Errors) > 0 {
 		// Show summary of all errors
-		errorBanner := m.renderErrorSummary()
+		errorBanner := m.renderErrorSummary(snapshot.Errors)
 		m.tabContent = errorBanner + "\n\n" + m.tabContent
 	}
 
 	// Add loading indicator
-	if m.appState.IsAnyLoading() {
-		loadingMsg := m.renderLoadingIndicator()
+	if hasLoading(snapshot.LoadingStates) {
+		loadingMsg := m.renderLoadingIndicator(snapshot.LoadingStates)
 		m.tabContent = loadingMsg + "\n\n" + m.tabContent
 	}
 
@@ -289,13 +333,13 @@ func (m *MainPage) View() string {
 	tabs.WriteString("\n")
 	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Left).Render(m.tabContent))
 
-	fullView := lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()), m.renderStatusBar())
+	fullView := lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()), m.renderStatusBar(snapshot))
 
 	return fullView
 }
 
 // renderStatusBar
-func (m *MainPage) renderStatusBar() string {
+func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	// Palette and basic styles
 	p := styles.CatppuccinMocha()
 	leftStyle := lipgloss.NewStyle().Foreground(p.Rosewater).Padding(0, 1)
@@ -303,15 +347,15 @@ func (m *MainPage) renderStatusBar() string {
 	rightStyle := lipgloss.NewStyle().Foreground(p.Green).Padding(0, 1)
 
 	// Build dynamic status segments
-	selectedCtx := len(m.appState.SelectedContexts)
-	errCount := len(m.appState.Errors)
+	selectedCtx := len(snapshot.SelectedContexts)
+	errCount := len(snapshot.Errors)
 	loadingCount := 0
-	for _, l := range m.appState.LoadingDeployments {
+	for _, l := range snapshot.LoadingStates {
 		if l {
 			loadingCount++
 		}
 	}
-	depCount := len(m.appState.GetAllDeployments())
+	depCount := len(snapshot.Deployments)
 
 	focusStr := "Left Pane"
 	if m.focus == focusTabs {
@@ -366,8 +410,8 @@ func (m *MainPage) renderErrorBanner() string {
 }
 
 // renderErrorSummary creates a summary of all context errors
-func (m *MainPage) renderErrorSummary() string {
-	if len(m.appState.Errors) == 0 {
+func (m *MainPage) renderErrorSummary(errors map[string]string) string {
+	if len(errors) == 0 {
 		return ""
 	}
 
@@ -381,7 +425,7 @@ func (m *MainPage) renderErrorSummary() string {
 
 	var errorLines []string
 	errorLines = append(errorLines, "⚠ Errors encountered:")
-	for ctx, err := range m.appState.Errors {
+	for ctx, err := range errors {
 		errorLines = append(errorLines, fmt.Sprintf("  • %s: %s", ctx, err))
 	}
 	errorLines = append(errorLines, "(Press Ctrl+E to dismiss)")
@@ -390,7 +434,7 @@ func (m *MainPage) renderErrorSummary() string {
 }
 
 // renderLoadingIndicator shows which contexts are currently loading
-func (m *MainPage) renderLoadingIndicator() string {
+func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 	p := styles.CatppuccinMocha()
 	loadingStyle := lipgloss.NewStyle().
 		Foreground(p.Blue).
@@ -398,8 +442,8 @@ func (m *MainPage) renderLoadingIndicator() string {
 		Padding(0, 1)
 
 	var loadingContexts []string
-	for ctx, loading := range m.appState.LoadingDeployments {
-		if loading {
+	for ctx, isLoading := range loading {
+		if isLoading {
 			loadingContexts = append(loadingContexts, ctx)
 		}
 	}
@@ -412,23 +456,18 @@ func (m *MainPage) renderLoadingIndicator() string {
 	return loadingStyle.Render(msg)
 }
 
+func hasLoading(loading map[string]bool) bool {
+	for _, isLoading := range loading {
+		if isLoading {
+			return true
+		}
+	}
+
+	return false
+}
+
 func getContextPaneDimensions(w, h int) (cW, cH int) {
 	cW = w / 4
 	cH = h - 10
 	return cW, cH
-}
-
-// local helpers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

@@ -17,6 +17,7 @@ type contextList struct {
 	DefaultNamespace string
 	Selected         bool
 	IsCurrent        bool
+	IsLoading        bool
 }
 
 type ContextsInfo struct {
@@ -121,6 +122,35 @@ func (c *ContextsInfo) toggleSelection() tea.Cmd {
 	c.list.Select(idx)
 
 	return nil
+}
+
+func (c *ContextsInfo) SetLoadingStates(loading map[string]bool) {
+	items := c.list.Items()
+	updated := false
+
+	for idx, item := range items {
+		ctx, ok := item.(contextList)
+		if !ok {
+			continue
+		}
+
+		isLoading := false
+		if loading != nil {
+			isLoading = loading[ctx.Name]
+		}
+
+		if ctx.IsLoading == isLoading {
+			continue
+		}
+
+		ctx.IsLoading = isLoading
+		items[idx] = ctx
+		updated = true
+	}
+
+	if updated {
+		c.list.SetItems(items)
+	}
 }
 
 // getAllContextStates returns currently selected contexts and contexts that were deselected
@@ -238,11 +268,21 @@ func (cl contextList) Title() string {
 	if cl.Selected {
 		checkbox = "[x]"
 	}
+
+	status := ""
+	switch {
+	case cl.IsLoading:
+		status = "⏳"
+	case cl.Selected:
+		status = "✓"
+	}
+
 	star := ""
 	if cl.IsCurrent {
 		star = " ★"
 	}
-	return fmt.Sprintf("%s %s%s", checkbox, cl.Name, star)
+
+	return fmt.Sprintf("%s %s %s%s", checkbox, status, cl.Name, star)
 }
 
 func (cl contextList) Description() string {
