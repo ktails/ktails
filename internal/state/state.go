@@ -29,6 +29,14 @@ type AppState struct {
 	mu sync.RWMutex
 }
 
+// Snapshot captures a read-only view of application state data.
+type Snapshot struct {
+	SelectedContexts map[string]string
+	LoadingStates    map[string]bool
+	Errors           map[string]string
+	Deployments      []table.Row
+}
+
 func NewAppState() *AppState {
 	return &AppState{
 		SelectedContexts:   make(map[string]string),
@@ -50,6 +58,7 @@ func (a *AppState) AddContext(context, namespace string) {
 		a.Deployments[context] = []table.Row{}
 	}
 	a.deploymentsDirty = true
+	a.cachedAllDeployments = nil
 }
 
 // SetDeployments replaces deployment rows for a context
@@ -57,10 +66,11 @@ func (a *AppState) SetDeployments(context string, rows []table.Row) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.Deployments[context] = rows
+	a.Deployments[context] = cloneRows(rows)
 	a.LoadingDeployments[context] = false
 	delete(a.Errors, context)
 	a.deploymentsDirty = true
+	a.cachedAllDeployments = nil
 }
 
 // SetLoading marks a context as loading
@@ -83,32 +93,39 @@ func (a *AppState) SetError(context string, err string) {
 // GetAllDeployments returns all deployment rows from all selected contexts
 // Uses caching to avoid recomputing on every call
 func (a *AppState) GetAllDeployments() []table.Row {
+	snapshot := a.Snapshot()
+	return snapshot.Deployments
+}
+
+// Snapshot returns a read-only view of the current state using a batched read lock.
+func (a *AppState) Snapshot() Snapshot {
 	a.mu.RLock()
 	if !a.deploymentsDirty && a.cachedAllDeployments != nil {
-		defer a.mu.RUnlock()
-		return a.cachedAllDeployments
+		snapshot := Snapshot{
+			SelectedContexts: copyStringMap(a.SelectedContexts),
+			LoadingStates:    copyBoolMap(a.LoadingDeployments),
+			Errors:           copyStringMap(a.Errors),
+			Deployments:      cloneRows(a.cachedAllDeployments),
+		}
+		a.mu.RUnlock()
+		return snapshot
 	}
 	a.mu.RUnlock()
 
-	// Need to recompute
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Double-check after acquiring write lock
-	if !a.deploymentsDirty && a.cachedAllDeployments != nil {
-		return a.cachedAllDeployments
+	if a.deploymentsDirty || a.cachedAllDeployments == nil {
+		a.cachedAllDeployments = flattenDeployments(a.SelectedContexts, a.Deployments)
+		a.deploymentsDirty = false
 	}
 
-	var allRows []table.Row
-	for context := range a.SelectedContexts {
-		if rows, exists := a.Deployments[context]; exists {
-			allRows = append(allRows, rows...)
-		}
+	return Snapshot{
+		SelectedContexts: copyStringMap(a.SelectedContexts),
+		LoadingStates:    copyBoolMap(a.LoadingDeployments),
+		Errors:           copyStringMap(a.Errors),
+		Deployments:      cloneRows(a.cachedAllDeployments),
 	}
-
-	a.cachedAllDeployments = allRows
-	a.deploymentsDirty = false
-	return allRows
 }
 
 // IsAnyLoading checks if any context is loading
@@ -142,6 +159,7 @@ func (a *AppState) RemoveContext(context string) {
 	delete(a.LoadingDeployments, context)
 	delete(a.Errors, context)
 	a.deploymentsDirty = true
+	a.cachedAllDeployments = nil
 }
 
 // ClearErrors removes all error messages
@@ -162,4 +180,70 @@ func (a *AppState) GetErrors() map[string]string {
 		errors[k] = v
 	}
 	return errors
+}
+
+func copyStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return map[string]string{}
+	}
+
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func copyBoolMap(src map[string]bool) map[string]bool {
+	if len(src) == 0 {
+		return map[string]bool{}
+	}
+
+	dst := make(map[string]bool, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func flattenDeployments(selected map[string]string, deployments map[string][]table.Row) []table.Row {
+	if len(selected) == 0 {
+		return nil
+	}
+
+	var all []table.Row
+	for context := range selected {
+		rows, exists := deployments[context]
+		if !exists {
+			continue
+		}
+
+		for _, row := range rows {
+			cloned := make(table.Row, len(row))
+			copy(cloned, row)
+			all = append(all, cloned)
+		}
+	}
+
+	return all
+}
+
+func cloneRows(rows []table.Row) []table.Row {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	cloned := make([]table.Row, len(rows))
+	for i, row := range rows {
+		if len(row) == 0 {
+			cloned[i] = nil
+			continue
+		}
+
+		cells := make(table.Row, len(row))
+		copy(cells, row)
+		cloned[i] = cells
+	}
+
+	return cloned
 }
