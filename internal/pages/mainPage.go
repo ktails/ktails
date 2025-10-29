@@ -3,7 +3,9 @@ package pages
 
 import (
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,6 +83,9 @@ func (m *MainPage) Init() tea.Cmd {
 }
 
 func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	start := time.Now()
+	defer m.logSlowUpdate(start)
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		keypress := msg.String()
@@ -103,11 +108,29 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch keypress {
 		case "right", "tab":
-			m.activeTab = min(m.activeTab+1, len(m.tabs)-1)
+			next := m.activeTab + 1
+			if next >= len(m.tabs) {
+				return m, nil
+			}
+
+			nextTab := m.tabs[next]
+			if nextTab == "Deployments" {
+				snapshot := m.appState.Snapshot()
+				if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
+					return m, nil
+				}
+			}
+
+			m.activeTab = next
 			m.updateFocusStates()
 			return m, nil
 		case "left", "shift+tab":
-			m.activeTab = max(m.activeTab-1, 0)
+			prev := m.activeTab - 1
+			if prev < 0 {
+				return m, nil
+			}
+
+			m.activeTab = prev
 			m.updateFocusStates()
 			return m, nil
 		}
@@ -141,10 +164,12 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		snapshot := m.appState.Snapshot()
 		m.deploymentList.SetRows(snapshot.Deployments)
+		m.contextList.SetLoadingStates(snapshot.LoadingStates)
 
 		if len(snapshot.SelectedContexts) == 0 {
 			m.appStateLoaded = false
 			m.deploymentList.SetRows([]table.Row{})
+			m.contextList.SetLoadingStates(nil)
 			m.updateFocusStates()
 			return m, nil
 		}
@@ -164,6 +189,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
 		}
 
+		m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
+
 		m.appStateLoaded = true
 		m.updateFocusStates()
 
@@ -180,6 +207,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appState.SetError(msg.Context, errMsg)
 			m.errorMessage = errMsg
 			m.appState.SetLoading(msg.Context, false)
+			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
 			return m, nil
 		}
 
@@ -187,6 +215,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.appState.SetDeployments(msg.Context, msg.Rows)
 		snapshot := m.appState.Snapshot()
 		m.deploymentList.SetRows(snapshot.Deployments)
+		m.contextList.SetLoadingStates(snapshot.LoadingStates)
 		m.updateFocusStates()
 		return m, nil
 
@@ -205,6 +234,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorMessage = fmt.Sprintf("%s: %v", msg.Title, msg.Err)
 		if msg.Context != "" {
 			m.appState.SetError(msg.Context, m.errorMessage)
+			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
 		}
 		return m, nil
 	}
@@ -221,6 +251,13 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *MainPage) logSlowUpdate(start time.Time) {
+	elapsed := time.Since(start)
+	if elapsed > 16*time.Millisecond {
+		log.Printf("Slow update: %v", elapsed)
+	}
 }
 
 func (m *MainPage) toggleFocus() {
@@ -433,19 +470,4 @@ func getContextPaneDimensions(w, h int) (cW, cH int) {
 	cW = w / 4
 	cH = h - 10
 	return cW, cH
-}
-
-// local helpers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

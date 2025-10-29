@@ -7,11 +7,9 @@ import (
 	"github.com/ktails/ktails/internal/tui/cmds"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
-	"github.com/termkit/skeleton"
 )
 
 type PodPage struct {
-	s *skeleton.Skeleton
 	// Context name for this pod list
 	ContextName string
 	Namespace   string
@@ -64,7 +62,6 @@ func (p *PodPage) handlePodTableMsg(rows []table.Row) {
 }
 
 func (p *PodPage) loadPods() tea.Cmd {
-	p.s.TriggerUpdate()
 	return cmds.LoadPodInfoCmd(p.Client, p.ContextName, p.Namespace)
 }
 
