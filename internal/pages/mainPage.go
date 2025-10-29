@@ -295,8 +295,59 @@ func (m *MainPage) View() string {
 
 // renderStatusBar
 func (m *MainPage) renderStatusBar() string {
-	statusBar := styles.StatusBar.Width(m.width-2).Render("status bar")
-	return statusBar
+	// Palette and basic styles
+	p := styles.CatppuccinMocha()
+	leftStyle := lipgloss.NewStyle().Foreground(p.Rosewater).Padding(0, 1)
+	midStyle := lipgloss.NewStyle().Foreground(p.Sapphire).Bold(true)
+	rightStyle := lipgloss.NewStyle().Foreground(p.Green).Padding(0, 1)
+
+	// Build dynamic status segments
+	selectedCtx := len(m.appState.SelectedContexts)
+	errCount := len(m.appState.Errors)
+	loadingCount := 0
+	for _, l := range m.appState.LoadingDeployments {
+		if l {
+			loadingCount++
+		}
+	}
+	depCount := len(m.appState.GetAllDeployments())
+
+	focusStr := "Left Pane"
+	if m.focus == focusTabs {
+		focusStr = "Tabs"
+	}
+
+	// Left segment
+	left := leftStyle.Render(fmt.Sprintf("Contexts: %d", selectedCtx))
+
+	// Middle segment
+	mid := midStyle.Render(fmt.Sprintf("Tab: %s | Focus: %s", m.tabs[m.activeTab], focusStr))
+
+	// Right segment
+	rightBits := []string{}
+	if loadingCount > 0 {
+		rightBits = append(rightBits, fmt.Sprintf("⏳ %d loading", loadingCount))
+	} else if depCount > 0 {
+		rightBits = append(rightBits, fmt.Sprintf("Deployments: %d", depCount))
+	}
+	if errCount > 0 {
+		rightBits = append(rightBits, fmt.Sprintf("⚠ %d error(s)", errCount))
+	}
+	if len(rightBits) == 0 {
+		rightBits = append(rightBits, "Ready")
+	}
+	right := rightStyle.Render(strings.Join(rightBits, "  |  "))
+
+	// Layout across the full bar width
+	barWidth := m.width - 2
+	leftMid := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", mid)
+	spacerWidth := barWidth - lipgloss.Width(leftMid) - lipgloss.Width(right)
+	if spacerWidth < 0 {
+		spacerWidth = 0
+	}
+	line := leftMid + strings.Repeat(" ", spacerWidth) + right
+
+	return styles.StatusBar.Width(barWidth).Render(line)
 }
 
 // renderErrorBanner creates a styled error message banner

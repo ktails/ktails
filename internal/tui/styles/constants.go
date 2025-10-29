@@ -29,7 +29,7 @@ var (
 	WindowBlurStyle      = lipgloss.NewStyle().BorderForeground(blurColor).Padding(2, 0).Align(lipgloss.Center).Border(lipgloss.NormalBorder()).UnsetBorderTop()
 
 	// status bar
-	StatusBar = lipgloss.NewStyle().Background(CatppuccinLatte().Teal)
+	StatusBar = lipgloss.NewStyle()
 )
 
 func TabBorderWithBottom(left, middle, right string) lipgloss.Border {
