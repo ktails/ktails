@@ -29,7 +29,7 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 		v1.ListOptions{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments in namespace %s (context %s): %w", 
+		return nil, fmt.Errorf("failed to list deployments in namespace %s (context %s): %w",
 			namespace, kubeContextName, err)
 	}
 
@@ -37,7 +37,7 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 	deploymentInfoList := make([]DeploymentInfo, 0, len(deploymentList.Items))
 	for _, deployment := range deploymentList.Items {
 		age := formatDuration(time.Since(deployment.CreationTimestamp.Time))
-		
+
 		deploymentInfoList = append(deploymentInfoList, DeploymentInfo{
 			Name:          deployment.Name,
 			Age:           age,

@@ -10,12 +10,17 @@ import (
 	"github.com/ktails/ktails/internal/tui/msgs"
 )
 
+// LoadPodInfoCmd fetches pod information for a specific context and namespace
 func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 	return func() tea.Msg {
 		// Fetch pods for the context
 		pods, err := client.ListPodInfo(kubeContext, namespace)
 		if err != nil {
-			return nil
+			return msgs.PodTableMsg{
+				Context: kubeContext,
+				Rows:    nil,
+				Err:     err,
+			}
 		}
 
 		// Convert pods to table rows
@@ -29,22 +34,29 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 				pod.Age,
 			}
 		}
-		pt := msgs.PodTableMsg{Context: kubeContext, Rows: rows}
-		return pt
+		
+		return msgs.PodTableMsg{
+			Context: kubeContext,
+			Rows:    rows,
+			Err:     nil,
+		}
 	}
 }
 
+// LoadDeploymentInfoCmd fetches deployment information for a specific context and namespace
 func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 	return func() tea.Msg {
 		// Fetch deployments for the context
 		deployments, err := client.GetDeploymentInfo(kubeContext, namespace)
 		if err != nil {
 			return msgs.DeploymentTableMsg{
-				Err: err,
+				Context: kubeContext,
+				Rows:    nil,
+				Err:     err,
 			}
 		}
 
-		// Convert pods to table rows
+		// Convert deployments to table rows
 		rows := make([]table.Row, len(deployments))
 		for i, deployment := range deployments {
 			rows[i] = table.Row{
@@ -54,7 +66,11 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 				kubeContext,
 			}
 		}
-		pt := msgs.DeploymentTableMsg{Context: kubeContext, Rows: rows}
-		return pt
+		
+		return msgs.DeploymentTableMsg{
+			Context: kubeContext,
+			Rows:    rows,
+			Err:     nil,
+		}
 	}
 }

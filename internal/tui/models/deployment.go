@@ -6,11 +6,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/styles"
-	"github.com/termkit/skeleton"
 )
 
 type DeploymentPage struct {
-	Skel   *skeleton.Skeleton
 	Client *k8s.Client
 	table  table.Model
 	// share contextList

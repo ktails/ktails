@@ -27,6 +27,9 @@ var (
 	InactiveTabBlurStyle = lipgloss.NewStyle().Border(InactiveTabBorder, true).BorderForeground(blurColor).Padding(0, 1)
 	ActiveTabBlurStyle   = InactiveTabBlurStyle.Border(ActiveTabBorder, true)
 	WindowBlurStyle      = lipgloss.NewStyle().BorderForeground(blurColor).Padding(2, 0).Align(lipgloss.Center).Border(lipgloss.NormalBorder()).UnsetBorderTop()
+
+	// status bar
+	StatusBar = lipgloss.NewStyle()
 )
 
 func TabBorderWithBottom(left, middle, right string) lipgloss.Border {
