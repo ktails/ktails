@@ -31,34 +31,54 @@ func (p *PodPage) Init() tea.Cmd {
 	return nil
 }
 
-func (p *PodPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (p *PodPage) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
 			p.table, cmd = p.table.Update(msg)
-			return p, cmd
+			return cmd
 		case "down", "j":
 			p.table, cmd = p.table.Update(msg)
-			return p, cmd
+			return cmd
 		}
 	case msgs.ContextsSelectedMsg:
 		p.ContextName = msg.ContextName
 		p.Namespace = msg.DefaultNamespace
-		return p, p.loadPods()
+		return p.loadPods()
 	case msgs.PodTableMsg:
 		p.allRows = append(p.allRows, msg.Rows...)
 		p.handlePodTableMsg(p.allRows)
 
-		return p, nil
+		return nil
 	}
-	return p, nil
+
+	p.table, cmd = p.table.Update(msg)
+	return cmd
 }
 
 func (p *PodPage) handlePodTableMsg(rows []table.Row) {
-	p.table.Focus()
+	if p.Focused {
+		p.table.Focus()
+	} else {
+		p.table.Blur()
+	}
 	p.table.SetRows(rows)
+}
+
+func (p *PodPage) Reset() {
+	p.allRows = nil
+	p.table.SetRows(nil)
+}
+
+func (p *PodPage) SetFocused(f bool) {
+	p.Focused = f
+	if f {
+		p.table.Focus()
+	} else {
+		p.table.Blur()
+	}
 }
 
 func (p *PodPage) loadPods() tea.Cmd {
