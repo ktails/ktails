@@ -4,26 +4,26 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ktails/ktails/internal/k8s"
-	"github.com/ktails/ktails/internal/tui/cmds"
-	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
 
 type PodPage struct {
-	// Context name for this pod list
-	ContextName string
-	Namespace   string
-	Focused     bool
-	Client      *k8s.Client
-	PageTitle   string
-	table       table.Model
-	allRows     []table.Row
+	Client  *k8s.Client
+	Focused bool
+	table   table.Model
+
+	// Cache for view rendering
+	rows       []table.Row
+	rowsSet    bool
+	cachedView string
+	viewDirty  bool
 }
 
 func NewPodPageModel(client *k8s.Client) *PodPage {
 	return &PodPage{
-		Client: client,
-		table:  table.New(table.WithColumns(podTableColumns())),
+		Client:    client,
+		table:     table.New(table.WithColumns(podTableColumns())),
+		viewDirty: true,
 	}
 }
 
@@ -38,38 +38,43 @@ func (p *PodPage) Update(msg tea.Msg) tea.Cmd {
 		switch msg.String() {
 		case "up", "k":
 			p.table, cmd = p.table.Update(msg)
+			p.invalidateView()
 			return cmd
 		case "down", "j":
 			p.table, cmd = p.table.Update(msg)
+			p.invalidateView()
 			return cmd
 		}
-	case msgs.ContextsSelectedMsg:
-		p.ContextName = msg.ContextName
-		p.Namespace = msg.DefaultNamespace
-		return p.loadPods()
-	case msgs.PodTableMsg:
-		p.allRows = append(p.allRows, msg.Rows...)
-		p.handlePodTableMsg(p.allRows)
-
-		return nil
 	}
-
 	p.table, cmd = p.table.Update(msg)
+	p.invalidateView()
 	return cmd
 }
 
-func (p *PodPage) handlePodTableMsg(rows []table.Row) {
+func (p *PodPage) SetRows(rows []table.Row) {
+	if p.rowsSet && rowsEqual(rows, p.rows) {
+		return
+	}
+
+	cloned := cloneRows(rows)
+	p.rows = cloned
+	p.rowsSet = true
+	p.table.SetRows(cloned)
+
 	if p.Focused {
 		p.table.Focus()
 	} else {
 		p.table.Blur()
 	}
-	p.table.SetRows(rows)
+
+	p.invalidateView()
 }
 
 func (p *PodPage) Reset() {
-	p.allRows = nil
+	p.rows = nil
+	p.rowsSet = false
 	p.table.SetRows(nil)
+	p.invalidateView()
 }
 
 func (p *PodPage) SetFocused(f bool) {
@@ -79,13 +84,23 @@ func (p *PodPage) SetFocused(f bool) {
 	} else {
 		p.table.Blur()
 	}
-}
-
-func (p *PodPage) loadPods() tea.Cmd {
-	return cmds.LoadPodInfoCmd(p.Client, p.ContextName, p.Namespace)
+	p.invalidateView()
 }
 
 func (p *PodPage) View() string {
+	if p.cachedView != "" && !p.viewDirty {
+		return p.cachedView
+	}
+
 	p.table.SetStyles(styles.CatppuccinTableStyles())
-	return p.table.View()
+	view := p.table.View()
+	p.cachedView = view
+	p.viewDirty = false
+	return view
 }
+
+func (p *PodPage) invalidateView() {
+	p.viewDirty = true
+	p.cachedView = ""
+}
+

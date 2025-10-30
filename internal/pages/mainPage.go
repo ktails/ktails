@@ -156,59 +156,6 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		windowMsg.Width, windowMsg.Height = getContextPaneDimensions(m.width, m.height)
 		return m, m.contextList.Update(windowMsg)
 
-	case msgs.ContextsStateMsg:
-		// Clear previous errors when contexts change
-		m.errorMessage = ""
-
-		for _, contextName := range msg.Deselected {
-			m.appState.RemoveContext(contextName)
-		}
-
-		for _, ms := range msg.Selected {
-			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
-		}
-
-		snapshot := m.appState.Snapshot()
-		m.deploymentList.SetRows(snapshot.Deployments)
-		m.podList.Reset()
-		m.contextList.SetLoadingStates(snapshot.LoadingStates)
-
-		if len(snapshot.SelectedContexts) == 0 {
-			m.appStateLoaded = false
-			m.deploymentList.SetRows([]table.Row{})
-			m.contextList.SetLoadingStates(nil)
-			m.updateFocusStates()
-			return m, nil
-		}
-
-		// Switch to Deployments tab
-		for i, t := range m.tabs {
-			if t == "Deployments" {
-				m.activeTab = i
-				break
-			}
-		}
-
-		// Load data for all selected contexts
-		cmdSequence := []tea.Cmd{}
-		for context, namespace := range snapshot.SelectedContexts {
-			m.appState.SetLoading(context, true)
-			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
-			cmdSequence = append(cmdSequence, cmds.LoadPodInfoCmd(m.Client, context, namespace))
-
-		}
-
-		m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
-
-		m.appStateLoaded = true
-		m.updateFocusStates()
-
-		if len(cmdSequence) == 0 {
-			return m, nil
-		}
-
-		return m, tea.Batch(cmdSequence...)
-
 	case msgs.DeploymentTableMsg:
 		// Handle errors from deployment loading
 		if msg.Err != nil {
@@ -228,16 +175,78 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateFocusStates()
 		return m, nil
 
+	case msgs.ContextsStateMsg:
+		// Clear previous errors when contexts change
+		m.errorMessage = ""
+
+		for _, contextName := range msg.Deselected {
+			m.appState.RemoveContext(contextName)
+		}
+
+		for _, ms := range msg.Selected {
+			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
+		}
+
+		snapshot := m.appState.Snapshot()
+		m.deploymentList.SetRows(snapshot.Deployments)
+		m.podList.SetRows(snapshot.Pods) // Now we track pods in state too
+		m.contextList.SetLoadingStates(snapshot.LoadingStates)
+
+		if len(snapshot.SelectedContexts) == 0 {
+			m.appStateLoaded = false
+			m.deploymentList.SetRows([]table.Row{})
+			m.podList.SetRows([]table.Row{})
+			m.contextList.SetLoadingStates(nil)
+			m.updateFocusStates()
+			return m, nil
+		}
+
+		// Switch to Deployments tab
+		for i, t := range m.tabs {
+			if t == "Deployments" {
+				m.activeTab = i
+				break
+			}
+		}
+
+		// Load data for all selected contexts
+		cmdSequence := []tea.Cmd{}
+		for context, namespace := range snapshot.SelectedContexts {
+			m.appState.SetLoading(context, true)
+			m.appState.SetLoadingPods(context, true)
+			cmdSequence = append(cmdSequence,
+				cmds.LoadDeploymentInfoCmd(m.Client, context, namespace),
+				cmds.LoadPodInfoCmd(m.Client, context, namespace),
+			)
+		}
+
+		m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
+		m.appStateLoaded = true
+		m.updateFocusStates()
+
+		if len(cmdSequence) == 0 {
+			return m, nil
+		}
+
+		return m, tea.Batch(cmdSequence...)
+
 	case msgs.PodTableMsg:
 		// Handle errors from pod loading
 		if msg.Err != nil {
 			errMsg := fmt.Sprintf("Failed to load pods for context '%s': %v", msg.Context, msg.Err)
+			m.appState.SetError(msg.Context, errMsg)
 			m.errorMessage = errMsg
+			m.appState.SetLoadingPods(msg.Context, false)
+			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
 			return m, nil
 		}
-		// Success - forward to pod list
-		cmd := m.podList.Update(msg)
-		return m, cmd
+
+		// Success - update state
+		m.appState.SetPods(msg.Context, msg.Rows)
+		snapshot := m.appState.Snapshot()
+		m.podList.SetRows(snapshot.Pods)
+		m.contextList.SetLoadingStates(snapshot.LoadingStates)
+		return m, nil
 
 	case msgs.ErrorMsg:
 		// General error message
@@ -315,18 +324,29 @@ func (m *MainPage) View() string {
 		m.tabContent = m.contextList.View()
 	case "Deployments":
 		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-			m.tabContent = "No contexts selected. Go back to 'Kubernetes Contexts' tab and select contexts."
+			m.tabContent = styles.HelpBoxStyle().Render(
+				"No contexts selected\n\n" +
+					"Press Ctrl+T to focus contexts\n" +
+					"Space to select • Enter to load")
+
 		} else {
 			m.tabContent = m.deploymentList.View()
 		}
 	case "Pods":
 		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-			m.tabContent = "No contexts selected. Go back to 'Kubernetes Contexts' tab and select contexts."
+			m.tabContent = styles.HelpBoxStyle().Align(lipgloss.Center).Render(
+				"No contexts selected\n\n" +
+					"Press Ctrl+T to focus contexts\n" +
+					"Space to select • Enter to load")
+
 		} else {
 			m.tabContent = m.podList.View()
 		}
 	default:
-		m.tabContent = "More Info Coming Soon"
+		m.tabContent = styles.HelpBoxStyle().Render(
+			"No contexts selected\n\n" +
+				"Press Ctrl+T to focus contexts\n" +
+				"Space to select • Enter to load")
 	}
 
 	// Add error banner if there are errors
@@ -349,7 +369,7 @@ func (m *MainPage) View() string {
 	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
-	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Left).Render(m.tabContent))
+	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
 
 	fullView := lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()), m.renderStatusBar(snapshot))
 
