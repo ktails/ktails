@@ -135,9 +135,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded {
-			cmd := m.deploymentList.Update(msg)
-			return m, cmd
+		if m.appStateLoaded {
+			switch m.tabs[m.activeTab] {
+			case "Deployments":
+				cmd := m.deploymentList.Update(msg)
+				return m, cmd
+			case "Pods":
+				cmd := m.podList.Update(msg)
+				return m, cmd
+			}
 		}
 
 		return m, nil
@@ -164,6 +170,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		snapshot := m.appState.Snapshot()
 		m.deploymentList.SetRows(snapshot.Deployments)
+		m.podList.Reset()
 		m.contextList.SetLoadingStates(snapshot.LoadingStates)
 
 		if len(snapshot.SelectedContexts) == 0 {
@@ -187,6 +194,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for context, namespace := range snapshot.SelectedContexts {
 			m.appState.SetLoading(context, true)
 			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
+			cmdSequence = append(cmdSequence, cmds.LoadPodInfoCmd(m.Client, context, namespace))
+
 		}
 
 		m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
@@ -227,7 +236,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Success - forward to pod list
-		return m.podList.Update(msg)
+		cmd := m.podList.Update(msg)
+		return m, cmd
 
 	case msgs.ErrorMsg:
 		// General error message
@@ -273,6 +283,8 @@ func (m *MainPage) updateFocusStates() {
 	m.contextList.SetFocused(m.focus == focusLeftPane)
 	shouldFocusDeployments := m.focus == focusTabs && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded
 	m.deploymentList.SetFocused(shouldFocusDeployments)
+	shouldFocusPods := m.focus == focusTabs && m.tabs[m.activeTab] == "Pods" && m.appStateLoaded
+	m.podList.SetFocused(shouldFocusPods)
 }
 
 func (m *MainPage) View() string {
@@ -306,6 +318,12 @@ func (m *MainPage) View() string {
 			m.tabContent = "No contexts selected. Go back to 'Kubernetes Contexts' tab and select contexts."
 		} else {
 			m.tabContent = m.deploymentList.View()
+		}
+	case "Pods":
+		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
+			m.tabContent = "No contexts selected. Go back to 'Kubernetes Contexts' tab and select contexts."
+		} else {
+			m.tabContent = m.podList.View()
 		}
 	default:
 		m.tabContent = "More Info Coming Soon"
