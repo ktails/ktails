@@ -58,6 +58,7 @@ Sleep 500ms
 # Select another item
 Space
 Sleep 1.5s
+Enter 
 
 # Switch tabs
 Ctrl+T
