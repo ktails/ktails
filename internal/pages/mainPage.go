@@ -320,15 +320,12 @@ func (m *MainPage) View() string {
 	tabs := strings.Builder{}
 
 	switch m.tabs[m.activeTab] {
-	case "Kubernetes Contexts":
-		m.tabContent = m.contextList.View()
 	case "Deployments":
 		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
 			m.tabContent = styles.HelpBoxStyle().Render(
 				"No contexts selected\n\n" +
 					"Press Ctrl+T to focus contexts\n" +
 					"Space to select • Enter to load")
-
 		} else {
 			m.tabContent = m.deploymentList.View()
 		}
@@ -338,7 +335,6 @@ func (m *MainPage) View() string {
 				"No contexts selected\n\n" +
 					"Press Ctrl+T to focus contexts\n" +
 					"Space to select • Enter to load")
-
 		} else {
 			m.tabContent = m.podList.View()
 		}

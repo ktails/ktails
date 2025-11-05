@@ -103,4 +103,3 @@ func (p *PodPage) invalidateView() {
 	p.viewDirty = true
 	p.cachedView = ""
 }
-
