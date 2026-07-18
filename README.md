@@ -226,6 +226,27 @@ make fmt         # gofmt -w .
 make tidy        # go mod tidy
 ```
 
+### Releasing
+
+Releases are built and published automatically by [GoReleaser](https://goreleaser.com/) via
+`.github/workflows/release.yml`, triggered by pushing a `v*` tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+That builds Linux/macOS/Windows binaries (amd64/arm64) with the version, commit, and build date
+baked in (`./build/ktails version` or the packaged binary's `version` subcommand shows them), and
+publishes a GitHub Release with archives and checksums.
+
+To test the release build locally without publishing anything:
+
+```bash
+make release-check    # validate .goreleaser.yaml
+make release-dry-run  # build all targets into ./dist with a snapshot version
+```
+
 ### Adding a new resource tab
 
 1. Add list/detail fetchers in `internal/k8s/` returning `[]YourInfo` and `k8s.ResourceDetail`

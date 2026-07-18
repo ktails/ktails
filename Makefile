@@ -1,4 +1,4 @@
-.PHONY: build run debug test test-one lint fmt tidy clean
+.PHONY: build run debug test test-one lint fmt tidy clean release-check release-dry-run
 
 build:
 	go build -o ./build/ktails ./cmd/page-client
@@ -35,3 +35,12 @@ tidy:
 
 clean:
 	rm -f ktails
+	rm -rf build dist
+
+# Validates .goreleaser.yaml without building anything.
+release-check:
+	goreleaser check
+
+# Builds all release targets locally (snapshot version, no publishing) into ./dist.
+release-dry-run:
+	goreleaser release --snapshot --clean --skip=publish
