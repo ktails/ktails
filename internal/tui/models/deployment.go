@@ -19,6 +19,7 @@ type DeploymentPage struct {
 	rowsSet    bool
 	cachedView string
 	viewDirty  bool
+	focused    bool
 }
 
 func NewDeploymentPage(client *k8s.Client) *DeploymentPage {
@@ -35,19 +36,6 @@ func (d *DeploymentPage) Init() tea.Cmd {
 
 func (d *DeploymentPage) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			d.table, cmd = d.table.Update(msg)
-			d.invalidateView()
-			return cmd
-		case "down", "j":
-			d.table, cmd = d.table.Update(msg)
-			d.invalidateView()
-			return cmd
-		}
-	}
 	d.table, cmd = d.table.Update(msg)
 	d.invalidateView()
 	return cmd
@@ -62,7 +50,11 @@ func (d *DeploymentPage) SetRows(rows []table.Row) {
 	d.rows = cloned
 	d.rowsSet = true
 	d.table.SetRows(cloned)
-	d.table.Focus()
+	if d.focused {
+		d.table.Focus()
+	} else {
+		d.table.Blur()
+	}
 	d.invalidateView()
 }
 
@@ -79,11 +71,31 @@ func (d *DeploymentPage) View() string {
 }
 
 func (d *DeploymentPage) SetFocused(f bool) {
+	d.focused = f
 	if f {
 		d.table.Focus()
 	} else {
 		d.table.Blur()
 	}
+	d.invalidateView()
+}
+
+func (d *DeploymentPage) SetSize(w, h int) {
+	if w < 10 || h < 1 {
+		return
+	}
+	d.table.SetHeight(h)
+	avail := w - 4
+	nameW := avail * 40 / 100
+	ageW := avail * 15 / 100
+	replicasW := avail * 22 / 100
+	ctxW := avail - nameW - ageW - replicasW
+	d.table.SetColumns([]table.Column{
+		{Title: "Name", Width: nameW},
+		{Title: "Age", Width: ageW},
+		{Title: "ReadyReplicas", Width: replicasW},
+		{Title: "Context", Width: ctxW},
+	})
 	d.invalidateView()
 }
 

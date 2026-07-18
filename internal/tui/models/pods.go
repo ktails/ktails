@@ -33,19 +33,6 @@ func (p *PodPage) Init() tea.Cmd {
 
 func (p *PodPage) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			p.table, cmd = p.table.Update(msg)
-			p.invalidateView()
-			return cmd
-		case "down", "j":
-			p.table, cmd = p.table.Update(msg)
-			p.invalidateView()
-			return cmd
-		}
-	}
 	p.table, cmd = p.table.Update(msg)
 	p.invalidateView()
 	return cmd
@@ -97,6 +84,27 @@ func (p *PodPage) View() string {
 	p.cachedView = view
 	p.viewDirty = false
 	return view
+}
+
+func (p *PodPage) SetSize(w, h int) {
+	if w < 10 || h < 1 {
+		return
+	}
+	p.table.SetHeight(h)
+	avail := w - 4
+	nameW := avail * 38 / 100
+	nsW := avail * 22 / 100
+	statusW := avail * 15 / 100
+	restartsW := avail * 12 / 100
+	ageW := avail - nameW - nsW - statusW - restartsW
+	p.table.SetColumns([]table.Column{
+		{Title: "Name", Width: nameW},
+		{Title: "Namespace", Width: nsW},
+		{Title: "Status", Width: statusW},
+		{Title: "Restarts", Width: restartsW},
+		{Title: "Age", Width: ageW},
+	})
+	p.invalidateView()
 }
 
 func (p *PodPage) invalidateView() {

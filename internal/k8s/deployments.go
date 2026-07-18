@@ -15,6 +15,13 @@ type DeploymentInfo struct {
 	Status        []string
 }
 
+type DeploymentDetailInfo struct {
+	Name          string
+	Age           string
+	ReadyReplicas int32
+	Status        []string
+}
+
 // GetDeploymentInfo retrieves deployment information for a specific context and namespace
 func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]DeploymentInfo, error) {
 	// Get the appropriate client for this context
@@ -47,4 +54,27 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 	}
 
 	return deploymentInfoList, nil
+}
+
+func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName string) (DeploymentDetailInfo, error) {
+	d := DeploymentDetailInfo{}
+	clientset, err := c.GetClientForContext(kubeContextName)
+	if err != nil {
+		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
+	}
+
+	deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.Background(), deploymentName, v1.GetOptions{})
+	if err != nil {
+		return d, fmt.Errorf("failed to get deployment %s in namespace %s (context %s): %w",
+			deploymentName, namespace, kubeContextName, err)
+	}
+
+	d.Name = deployment.Name
+	d.Age = formatDuration(time.Since(deployment.CreationTimestamp.Time))
+	d.ReadyReplicas = deployment.Status.ReadyReplicas
+	for _, condition := range deployment.Status.Conditions {
+		d.Status = append(d.Status, fmt.Sprintf("%s=%s", condition.Type, condition.Status))
+	}
+
+	return d, nil
 }

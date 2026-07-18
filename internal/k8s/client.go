@@ -77,7 +77,6 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 		loadingRules,
 		&clientcmd.ConfigOverrides{},
 	).RawConfig()
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
 	}

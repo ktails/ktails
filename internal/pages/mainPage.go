@@ -49,8 +49,9 @@ type MainPage struct {
 	// k8s client
 	Client *k8s.Client
 
-	// Error display
+	// UI overlays
 	errorMessage string
+	showHelp     bool
 }
 
 func NewMainPageModel(c *k8s.Client) *MainPage {
@@ -71,6 +72,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 		appStateLoaded: false,
 		focus:          focusLeftPane,
 		errorMessage:   "",
+		showHelp:       false,
 	}
 
 	m.updateFocusStates()
@@ -89,30 +91,48 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		keypress := msg.String()
-		switch keypress {
-		case "ctrl+t":
-			m.toggleFocus()
-			return m, nil
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "ctrl+e":
-			// Clear error message
-			m.errorMessage = ""
+
+		// Help overlay is modal — only ? and esc pass through
+		if m.showHelp {
+			if keypress == "?" || keypress == "esc" {
+				m.showHelp = false
+			}
 			return m, nil
 		}
 
+		// Global keys
+		switch keypress {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "tab", "shift+tab":
+			m.toggleFocus()
+			return m, nil
+		case "esc":
+			// Peel dismissals one at a time: inline error first, then context errors
+			if m.errorMessage != "" {
+				m.errorMessage = ""
+			} else {
+				m.appState.ClearErrors()
+			}
+			return m, nil
+		case "?":
+			m.showHelp = true
+			return m, nil
+		}
+
+		// Context list keys
 		if m.focus == focusLeftPane {
 			cmd := m.contextList.Update(msg)
 			return m, cmd
 		}
 
+		// Tab navigation (tabs focused)
 		switch keypress {
-		case "right", "tab":
+		case "right", "]":
 			next := m.activeTab + 1
 			if next >= len(m.tabs) {
 				return m, nil
 			}
-
 			nextTab := m.tabs[next]
 			if nextTab == "Deployments" {
 				snapshot := m.appState.Snapshot()
@@ -120,21 +140,20 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-
 			m.activeTab = next
 			m.updateFocusStates()
 			return m, nil
-		case "left", "shift+tab":
+		case "left", "[":
 			prev := m.activeTab - 1
 			if prev < 0 {
 				return m, nil
 			}
-
 			m.activeTab = prev
 			m.updateFocusStates()
 			return m, nil
 		}
 
+		// Content keys forwarded to the active tab
 		if m.appStateLoaded {
 			switch m.tabs[m.activeTab] {
 			case "Deployments":
@@ -152,32 +171,42 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		windowMsg := tea.WindowSizeMsg{}
-		windowMsg.Width, windowMsg.Height = getContextPaneDimensions(m.width, m.height)
-		return m, m.contextList.Update(windowMsg)
+		ctxW, ctxH := getContextPaneDimensions(m.width, m.height)
+		ctxMsg := tea.WindowSizeMsg{Width: ctxW, Height: ctxH}
+
+		leftW := m.width / 3
+		tableW := m.width - leftW - 12
+		tableH := m.height - 16
+		if tableH < 1 {
+			tableH = 1
+		}
+		m.deploymentList.SetSize(tableW, tableH)
+		m.podList.SetSize(tableW, tableH)
+
+		return m, m.contextList.Update(ctxMsg)
 
 	case msgs.DeploymentTableMsg:
-		// Handle errors from deployment loading
 		if msg.Err != nil {
 			errMsg := fmt.Sprintf("Failed to load deployments for context '%s': %v", msg.Context, msg.Err)
 			m.appState.SetError(msg.Context, errMsg)
 			m.errorMessage = errMsg
 			m.appState.SetLoading(msg.Context, false)
-			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
+			{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
 			return m, nil
 		}
 
-		// Success - update state
 		m.appState.SetDeployments(msg.Context, msg.Rows)
 		snapshot := m.appState.Snapshot()
 		m.deploymentList.SetRows(snapshot.Deployments)
-		m.contextList.SetLoadingStates(snapshot.LoadingStates)
+		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
 		m.updateFocusStates()
 		return m, nil
 
 	case msgs.ContextsStateMsg:
-		// Clear previous errors when contexts change
 		m.errorMessage = ""
+
+		// Snapshot before mutations so we know which contexts were already present
+		prevSelected := m.appState.Snapshot().SelectedContexts
 
 		for _, contextName := range msg.Deselected {
 			m.appState.RemoveContext(contextName)
@@ -189,19 +218,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		snapshot := m.appState.Snapshot()
 		m.deploymentList.SetRows(snapshot.Deployments)
-		m.podList.SetRows(snapshot.Pods) // Now we track pods in state too
-		m.contextList.SetLoadingStates(snapshot.LoadingStates)
+		m.podList.SetRows(snapshot.Pods)
+		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
 
 		if len(snapshot.SelectedContexts) == 0 {
 			m.appStateLoaded = false
 			m.deploymentList.SetRows([]table.Row{})
 			m.podList.SetRows([]table.Row{})
-			m.contextList.SetLoadingStates(nil)
+			m.contextList.SetContextStates(nil, nil, nil)
 			m.updateFocusStates()
 			return m, nil
 		}
 
-		// Switch to Deployments tab
 		for i, t := range m.tabs {
 			if t == "Deployments" {
 				m.activeTab = i
@@ -209,9 +237,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Load data for all selected contexts
+		// Only load contexts that are genuinely new (not previously selected).
+		// Previously selected contexts that failed stay failed until the user
+		// explicitly deselects and re-selects them — that removes them from
+		// prevSelected and they appear here as new on the next Enter press.
 		cmdSequence := []tea.Cmd{}
 		for context, namespace := range snapshot.SelectedContexts {
+			if _, alreadyPresent := prevSelected[context]; alreadyPresent {
+				continue
+			}
 			m.appState.SetLoading(context, true)
 			m.appState.SetLoadingPods(context, true)
 			cmdSequence = append(cmdSequence,
@@ -220,7 +254,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 
-		m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
+		{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
 		m.appStateLoaded = true
 		m.updateFocusStates()
 
@@ -231,37 +265,40 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmdSequence...)
 
 	case msgs.PodTableMsg:
-		// Handle errors from pod loading
 		if msg.Err != nil {
 			errMsg := fmt.Sprintf("Failed to load pods for context '%s': %v", msg.Context, msg.Err)
 			m.appState.SetError(msg.Context, errMsg)
 			m.errorMessage = errMsg
 			m.appState.SetLoadingPods(msg.Context, false)
-			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
+			{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
 			return m, nil
 		}
 
-		// Success - update state
 		m.appState.SetPods(msg.Context, msg.Rows)
 		snapshot := m.appState.Snapshot()
 		m.podList.SetRows(snapshot.Pods)
-		m.contextList.SetLoadingStates(snapshot.LoadingStates)
+		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
 		return m, nil
 
 	case msgs.ErrorMsg:
-		// General error message
 		m.errorMessage = fmt.Sprintf("%s: %v", msg.Title, msg.Err)
 		if msg.Context != "" {
 			m.appState.SetError(msg.Context, m.errorMessage)
-			m.contextList.SetLoadingStates(m.appState.Snapshot().LoadingStates)
+			{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
 		}
 		return m, nil
 	}
 
-	// Forward to focused component
-	if m.focus == focusTabs && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded {
-		cmd := m.deploymentList.Update(msg)
-		return m, cmd
+	// Forward non-key messages to the focused component
+	if m.focus == focusTabs && m.appStateLoaded {
+		switch m.tabs[m.activeTab] {
+		case "Deployments":
+			cmd := m.deploymentList.Update(msg)
+			return m, cmd
+		case "Pods":
+			cmd := m.podList.Update(msg)
+			return m, cmd
+		}
 	}
 
 	if m.focus == focusLeftPane {
@@ -319,46 +356,27 @@ func (m *MainPage) View() string {
 	// Build tab content
 	tabs := strings.Builder{}
 
+	emptyMsg := "No contexts selected\n\nPress Tab to focus contexts\nSpace to select • Enter to load"
 	switch m.tabs[m.activeTab] {
 	case "Deployments":
 		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-			m.tabContent = styles.HelpBoxStyle().Render(
-				"No contexts selected\n\n" +
-					"Press Ctrl+T to focus contexts\n" +
-					"Space to select • Enter to load")
+			m.tabContent = styles.HelpBoxStyle().Render(emptyMsg)
 		} else {
 			m.tabContent = m.deploymentList.View()
 		}
 	case "Pods":
 		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-			m.tabContent = styles.HelpBoxStyle().Align(lipgloss.Center).Render(
-				"No contexts selected\n\n" +
-					"Press Ctrl+T to focus contexts\n" +
-					"Space to select • Enter to load")
+			m.tabContent = styles.HelpBoxStyle().Align(lipgloss.Center).Render(emptyMsg)
 		} else {
 			m.tabContent = m.podList.View()
 		}
 	default:
-		m.tabContent = styles.HelpBoxStyle().Render(
-			"No contexts selected\n\n" +
-				"Press Ctrl+T to focus contexts\n" +
-				"Space to select • Enter to load")
+		m.tabContent = styles.HelpBoxStyle().Render(emptyMsg)
 	}
 
-	// Add error banner if there are errors
-	if m.errorMessage != "" {
-		errorBanner := m.renderErrorBanner()
-		m.tabContent = errorBanner + "\n\n" + m.tabContent
-	} else if len(snapshot.Errors) > 0 {
-		// Show summary of all errors
-		errorBanner := m.renderErrorSummary(snapshot.Errors)
-		m.tabContent = errorBanner + "\n\n" + m.tabContent
-	}
-
-	// Add loading indicator
+	// Loading indicator (inline — it's brief and doesn't break layout)
 	if hasLoading(snapshot.LoadingStates) {
-		loadingMsg := m.renderLoadingIndicator(snapshot.LoadingStates)
-		m.tabContent = loadingMsg + "\n\n" + m.tabContent
+		m.tabContent = m.renderLoadingIndicator(snapshot.LoadingStates) + "\n\n" + m.tabContent
 	}
 
 	tabWidth := m.width - leftPaneWidth - 8
@@ -367,20 +385,31 @@ func (m *MainPage) View() string {
 	tabs.WriteString("\n")
 	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
 
-	fullView := lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()), m.renderStatusBar(snapshot))
+	fullView := lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()),
+		m.renderStatusBar(snapshot),
+	)
+
+	// Overlays rendered on top of the full view (help > error)
+	if m.showHelp {
+		return m.renderHelpOverlay()
+	}
+	if m.errorMessage != "" {
+		return m.renderErrorOverlay(m.errorMessage)
+	}
+	if len(snapshot.Errors) > 0 {
+		return m.renderErrorSummaryOverlay(snapshot.Errors)
+	}
 
 	return fullView
 }
 
-// renderStatusBar
 func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
-	// Palette and basic styles
 	p := styles.CatppuccinMocha()
 	leftStyle := lipgloss.NewStyle().Foreground(p.Rosewater).Padding(0, 1)
 	midStyle := lipgloss.NewStyle().Foreground(p.Sapphire).Bold(true)
 	rightStyle := lipgloss.NewStyle().Foreground(p.Green).Padding(0, 1)
 
-	// Build dynamic status segments
 	selectedCtx := len(snapshot.SelectedContexts)
 	errCount := len(snapshot.Errors)
 	loadingCount := 0
@@ -396,78 +425,131 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 		focusStr = "Tabs"
 	}
 
-	// Left segment
 	left := leftStyle.Render(fmt.Sprintf("Contexts: %d", selectedCtx))
-
-	// Middle segment
 	mid := midStyle.Render(fmt.Sprintf("Tab: %s | Focus: %s", m.tabs[m.activeTab], focusStr))
 
-	// Right segment
-	rightBits := []string{}
+	// Dynamic status bits (loading / count / errors)
+	var statusBits []string
 	if loadingCount > 0 {
-		rightBits = append(rightBits, fmt.Sprintf("⏳ %d loading", loadingCount))
+		statusBits = append(statusBits, fmt.Sprintf("⏳ %d loading", loadingCount))
 	} else if depCount > 0 {
-		rightBits = append(rightBits, fmt.Sprintf("Deployments: %d", depCount))
+		statusBits = append(statusBits, fmt.Sprintf("Deployments: %d", depCount))
 	}
 	if errCount > 0 {
-		rightBits = append(rightBits, fmt.Sprintf("⚠ %d error(s)", errCount))
+		statusBits = append(statusBits, fmt.Sprintf("⚠ %d error(s)", errCount))
 	}
-	if len(rightBits) == 0 {
-		rightBits = append(rightBits, "Ready")
+	if len(statusBits) == 0 {
+		statusBits = append(statusBits, "Ready")
 	}
-	right := rightStyle.Render(strings.Join(rightBits, "  |  "))
+	status := rightStyle.Render(strings.Join(statusBits, "  |  "))
 
-	// Layout across the full bar width
+	// Hints are a fixed, separate element anchored to the far right
+	hints := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Tab:focus  [ ]:tabs  ?:help  q:quit")
+
 	barWidth := m.width - 2
 	leftMid := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", mid)
-	spacerWidth := barWidth - lipgloss.Width(leftMid) - lipgloss.Width(right)
-	if spacerWidth < 0 {
-		spacerWidth = 0
+	rightSection := lipgloss.JoinHorizontal(lipgloss.Top, status, "   ", hints)
+	spacerWidth := barWidth - lipgloss.Width(leftMid) - lipgloss.Width(rightSection)
+	if spacerWidth < 1 {
+		spacerWidth = 1
 	}
-	line := leftMid + strings.Repeat(" ", spacerWidth) + right
+	line := leftMid + strings.Repeat(" ", spacerWidth) + rightSection
 
 	return styles.StatusBar.Width(barWidth).Render(line)
 }
 
-// renderErrorBanner creates a styled error message banner
-func (m *MainPage) renderErrorBanner() string {
+func (m *MainPage) renderHelpOverlay() string {
 	p := styles.CatppuccinMocha()
-	errorStyle := lipgloss.NewStyle().
-		Foreground(p.Red).
-		Background(p.Surface0).
-		Bold(true).
-		Padding(0, 1).
+
+	titleStyle := lipgloss.NewStyle().Foreground(p.Mauve).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(p.Blue).Bold(true).Width(22)
+	descStyle := lipgloss.NewStyle().Foreground(p.Text)
+	sepStyle := lipgloss.NewStyle().Foreground(p.Overlay0)
+	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(p.Red)
+		BorderForeground(p.Mauve).
+		Background(p.Mantle).
+		Padding(1, 3)
 
-	return errorStyle.Render("⚠ Error: " + m.errorMessage + " (Press Ctrl+E to dismiss)")
-}
-
-// renderErrorSummary creates a summary of all context errors
-func (m *MainPage) renderErrorSummary(errors map[string]string) string {
-	if len(errors) == 0 {
-		return ""
+	type binding struct{ key, desc string }
+	bindings := []binding{
+		{"Tab / Shift+Tab", "Switch pane focus"},
+		{"[ / ]", "Navigate tabs"},
+		{"← / →", "Navigate tabs (alias)"},
+		{"↑ / ↓   j / k", "Move up / down"},
+		{"Space", "Toggle context selection"},
+		{"Enter", "Confirm selection & load"},
+		{"Esc", "Close overlay / dismiss error"},
+		{"?", "Toggle this help"},
+		{"q / Ctrl+C", "Quit"},
 	}
 
-	p := styles.CatppuccinMocha()
-	errorStyle := lipgloss.NewStyle().
-		Foreground(p.Red).
-		Background(p.Surface0).
-		Padding(0, 1).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(p.Red)
+	var lines []string
+	lines = append(lines, titleStyle.Render("Keybindings"))
+	lines = append(lines, sepStyle.Render(strings.Repeat("─", 38)))
+	for _, b := range bindings {
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render(b.key),
+			descStyle.Render(b.desc),
+		))
+	}
 
-	var errorLines []string
-	errorLines = append(errorLines, "⚠ Errors encountered:")
+	box := boxStyle.Render(strings.Join(lines, "\n"))
+	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m *MainPage) renderErrorOverlay(msg string) string {
+	p := styles.CatppuccinMocha()
+	maxW := m.width - 16
+	if maxW < 40 {
+		maxW = 40
+	}
+	box := lipgloss.NewStyle().
+		Foreground(p.Text).
+		Background(p.Surface0).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(p.Red).
+		Padding(1, 3).
+		Width(maxW).
+		Align(lipgloss.Center)
+
+	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("⚠  Error")
+	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", maxW-2))
+	body := lipgloss.NewStyle().Foreground(p.Text).Render(msg)
+	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc to dismiss")
+
+	content := strings.Join([]string{title, sep, body, "", hint}, "\n")
+	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box.Render(content))
+}
+
+func (m *MainPage) renderErrorSummaryOverlay(errors map[string]string) string {
+	p := styles.CatppuccinMocha()
+	maxW := m.width - 16
+	if maxW < 40 {
+		maxW = 40
+	}
+	box := lipgloss.NewStyle().
+		Foreground(p.Text).
+		Background(p.Surface0).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(p.Red).
+		Padding(1, 3).
+		Width(maxW).
+		Align(lipgloss.Center)
+
+	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("⚠  Errors encountered")
+	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", maxW-2))
+	var bodyLines []string
 	for ctx, err := range errors {
-		errorLines = append(errorLines, fmt.Sprintf("  • %s: %s", ctx, err))
+		bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s", ctx, err))
 	}
-	errorLines = append(errorLines, "(Press Ctrl+E to dismiss)")
+	body := lipgloss.NewStyle().Foreground(p.Text).Render(strings.Join(bodyLines, "\n"))
+	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc to dismiss")
 
-	return errorStyle.Render(strings.Join(errorLines, "\n"))
+	content := strings.Join([]string{title, sep, body, "", hint}, "\n")
+	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box.Render(content))
 }
 
-// renderLoadingIndicator shows which contexts are currently loading
 func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 	p := styles.CatppuccinMocha()
 	loadingStyle := lipgloss.NewStyle().
@@ -486,8 +568,7 @@ func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 		return ""
 	}
 
-	msg := fmt.Sprintf("⏳ Loading: %s...", strings.Join(loadingContexts, ", "))
-	return loadingStyle.Render(msg)
+	return loadingStyle.Render(fmt.Sprintf("⏳ Loading: %s...", strings.Join(loadingContexts, ", ")))
 }
 
 func hasLoading(loading map[string]bool) bool {
@@ -496,7 +577,6 @@ func hasLoading(loading map[string]bool) bool {
 			return true
 		}
 	}
-
 	return false
 }
 

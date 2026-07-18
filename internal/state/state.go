@@ -13,7 +13,7 @@ type AppState struct {
 
 	// Deployment data per context
 	Deployments map[string][]table.Row // context -> rows
-	
+
 	// Pod data per context
 	Pods map[string][]table.Row // context -> rows
 
@@ -23,6 +23,9 @@ type AppState struct {
 
 	// Errors
 	Errors map[string]string // context -> error message
+
+	// Contexts that have completed at least one successful load cycle
+	LoadedContexts map[string]bool
 
 	// Cache for GetAllDeployments and GetAllPods
 	cachedAllDeployments []table.Row
@@ -35,11 +38,10 @@ type AppState struct {
 }
 
 // Snapshot captures a read-only view of application state data.
-// This pattern allows us to do a single batched read lock instead of
-// multiple individual reads, reducing lock contention and improving performance.
 type Snapshot struct {
 	SelectedContexts map[string]string
 	LoadingStates    map[string]bool // Combined deployment + pod loading
+	LoadedContexts   map[string]bool // Contexts with at least one successful load
 	Errors           map[string]string
 	Deployments      []table.Row
 	Pods             []table.Row
@@ -53,6 +55,7 @@ func NewAppState() *AppState {
 		LoadingDeployments: make(map[string]bool),
 		LoadingPods:        make(map[string]bool),
 		Errors:             make(map[string]string),
+		LoadedContexts:     make(map[string]bool),
 		deploymentsDirty:   true,
 		podsDirty:          true,
 	}
@@ -84,6 +87,7 @@ func (a *AppState) SetDeployments(context string, rows []table.Row) {
 
 	a.Deployments[context] = cloneRows(rows)
 	a.LoadingDeployments[context] = false
+	a.LoadedContexts[context] = true
 	delete(a.Errors, context)
 	a.deploymentsDirty = true
 	a.cachedAllDeployments = nil
@@ -153,6 +157,7 @@ func (a *AppState) Snapshot() Snapshot {
 		snapshot := Snapshot{
 			SelectedContexts: copyStringMap(a.SelectedContexts),
 			LoadingStates:    a.combinedLoadingStates(),
+			LoadedContexts:   copyBoolMap(a.LoadedContexts),
 			Errors:           copyStringMap(a.Errors),
 			Deployments:      cloneRows(a.cachedAllDeployments),
 			Pods:             cloneRows(a.cachedAllPods),
@@ -166,13 +171,11 @@ func (a *AppState) Snapshot() Snapshot {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Recompute deployments if dirty
 	if a.deploymentsDirty || a.cachedAllDeployments == nil {
 		a.cachedAllDeployments = flattenRows(a.SelectedContexts, a.Deployments)
 		a.deploymentsDirty = false
 	}
 
-	// Recompute pods if dirty
 	if a.podsDirty || a.cachedAllPods == nil {
 		a.cachedAllPods = flattenRows(a.SelectedContexts, a.Pods)
 		a.podsDirty = false
@@ -181,6 +184,7 @@ func (a *AppState) Snapshot() Snapshot {
 	return Snapshot{
 		SelectedContexts: copyStringMap(a.SelectedContexts),
 		LoadingStates:    a.combinedLoadingStates(),
+		LoadedContexts:   copyBoolMap(a.LoadedContexts),
 		Errors:           copyStringMap(a.Errors),
 		Deployments:      cloneRows(a.cachedAllDeployments),
 		Pods:             cloneRows(a.cachedAllPods),
@@ -239,6 +243,7 @@ func (a *AppState) RemoveContext(context string) {
 	delete(a.LoadingDeployments, context)
 	delete(a.LoadingPods, context)
 	delete(a.Errors, context)
+	delete(a.LoadedContexts, context)
 	a.deploymentsDirty = true
 	a.podsDirty = true
 	a.cachedAllDeployments = nil
@@ -269,7 +274,6 @@ func copyStringMap(src map[string]string) map[string]string {
 	if len(src) == 0 {
 		return map[string]string{}
 	}
-
 	dst := make(map[string]string, len(src))
 	for k, v := range src {
 		dst[k] = v
@@ -281,7 +285,6 @@ func copyBoolMap(src map[string]bool) map[string]bool {
 	if len(src) == 0 {
 		return map[string]bool{}
 	}
-
 	dst := make(map[string]bool, len(src))
 	for k, v := range src {
 		dst[k] = v
