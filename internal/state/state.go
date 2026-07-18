@@ -17,9 +17,13 @@ type AppState struct {
 	// Pod data per context
 	Pods map[string][]table.Row // context -> rows
 
+	// Service data per context
+	Services map[string][]table.Row // context -> rows
+
 	// Loading states
 	LoadingDeployments map[string]bool // context -> isLoading
 	LoadingPods        map[string]bool // context -> isLoading
+	LoadingServices    map[string]bool // context -> isLoading
 
 	// Errors
 	Errors map[string]string // context -> error message
@@ -27,11 +31,13 @@ type AppState struct {
 	// Contexts that have completed at least one successful load cycle
 	LoadedContexts map[string]bool
 
-	// Cache for GetAllDeployments and GetAllPods
+	// Cache for GetAllDeployments, GetAllPods, and GetAllServices
 	cachedAllDeployments []table.Row
 	cachedAllPods        []table.Row
+	cachedAllServices    []table.Row
 	deploymentsDirty     bool
 	podsDirty            bool
+	servicesDirty        bool
 
 	// Mutex to protect concurrent access
 	mu sync.RWMutex
@@ -40,11 +46,12 @@ type AppState struct {
 // Snapshot captures a read-only view of application state data.
 type Snapshot struct {
 	SelectedContexts map[string]string
-	LoadingStates    map[string]bool // Combined deployment + pod loading
+	LoadingStates    map[string]bool // Combined deployment + pod + service loading
 	LoadedContexts   map[string]bool // Contexts with at least one successful load
 	Errors           map[string]string
 	Deployments      []table.Row
 	Pods             []table.Row
+	Services         []table.Row
 }
 
 func NewAppState() *AppState {
@@ -52,12 +59,15 @@ func NewAppState() *AppState {
 		SelectedContexts:   make(map[string]string),
 		Deployments:        make(map[string][]table.Row),
 		Pods:               make(map[string][]table.Row),
+		Services:           make(map[string][]table.Row),
 		LoadingDeployments: make(map[string]bool),
 		LoadingPods:        make(map[string]bool),
+		LoadingServices:    make(map[string]bool),
 		Errors:             make(map[string]string),
 		LoadedContexts:     make(map[string]bool),
 		deploymentsDirty:   true,
 		podsDirty:          true,
+		servicesDirty:      true,
 	}
 }
 
@@ -67,17 +77,22 @@ func (a *AppState) AddContext(context, namespace string) {
 	defer a.mu.Unlock()
 
 	a.SelectedContexts[context] = namespace
-	// Initialize deployment and pod state for this context
+	// Initialize deployment, pod, and service state for this context
 	if _, exists := a.Deployments[context]; !exists {
 		a.Deployments[context] = []table.Row{}
 	}
 	if _, exists := a.Pods[context]; !exists {
 		a.Pods[context] = []table.Row{}
 	}
+	if _, exists := a.Services[context]; !exists {
+		a.Services[context] = []table.Row{}
+	}
 	a.deploymentsDirty = true
 	a.podsDirty = true
+	a.servicesDirty = true
 	a.cachedAllDeployments = nil
 	a.cachedAllPods = nil
+	a.cachedAllServices = nil
 }
 
 // SetDeployments replaces deployment rows for a context
@@ -105,6 +120,18 @@ func (a *AppState) SetPods(context string, rows []table.Row) {
 	a.cachedAllPods = nil
 }
 
+// SetServices replaces service rows for a context
+func (a *AppState) SetServices(context string, rows []table.Row) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.Services[context] = cloneRows(rows)
+	a.LoadingServices[context] = false
+	// Don't delete errors here - only clear if deployments/pods/services all succeed
+	a.servicesDirty = true
+	a.cachedAllServices = nil
+}
+
 // SetLoading marks a context as loading (for deployments)
 func (a *AppState) SetLoading(context string, loading bool) {
 	a.mu.Lock()
@@ -121,6 +148,14 @@ func (a *AppState) SetLoadingPods(context string, loading bool) {
 	a.LoadingPods[context] = loading
 }
 
+// SetLoadingServices marks a context as loading services
+func (a *AppState) SetLoadingServices(context string, loading bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.LoadingServices[context] = loading
+}
+
 // SetError stores an error for a context
 func (a *AppState) SetError(context string, err string) {
 	a.mu.Lock()
@@ -129,6 +164,7 @@ func (a *AppState) SetError(context string, err string) {
 	a.Errors[context] = err
 	a.LoadingDeployments[context] = false
 	a.LoadingPods[context] = false
+	a.LoadingServices[context] = false
 }
 
 // GetAllDeployments returns all deployment rows from all selected contexts
@@ -145,15 +181,23 @@ func (a *AppState) GetAllPods() []table.Row {
 	return snapshot.Pods
 }
 
+// GetAllServices returns all service rows from all selected contexts
+// Uses caching to avoid recomputing on every call
+func (a *AppState) GetAllServices() []table.Row {
+	snapshot := a.Snapshot()
+	return snapshot.Services
+}
+
 // Snapshot returns a read-only view of the current state using a batched read lock.
 func (a *AppState) Snapshot() Snapshot {
 	a.mu.RLock()
-	
+
 	// Check if we can use cached data
 	deploymentsClean := !a.deploymentsDirty && a.cachedAllDeployments != nil
 	podsClean := !a.podsDirty && a.cachedAllPods != nil
-	
-	if deploymentsClean && podsClean {
+	servicesClean := !a.servicesDirty && a.cachedAllServices != nil
+
+	if deploymentsClean && podsClean && servicesClean {
 		snapshot := Snapshot{
 			SelectedContexts: copyStringMap(a.SelectedContexts),
 			LoadingStates:    a.combinedLoadingStates(),
@@ -161,6 +205,7 @@ func (a *AppState) Snapshot() Snapshot {
 			Errors:           copyStringMap(a.Errors),
 			Deployments:      cloneRows(a.cachedAllDeployments),
 			Pods:             cloneRows(a.cachedAllPods),
+			Services:         cloneRows(a.cachedAllServices),
 		}
 		a.mu.RUnlock()
 		return snapshot
@@ -181,6 +226,11 @@ func (a *AppState) Snapshot() Snapshot {
 		a.podsDirty = false
 	}
 
+	if a.servicesDirty || a.cachedAllServices == nil {
+		a.cachedAllServices = flattenRows(a.SelectedContexts, a.Services)
+		a.servicesDirty = false
+	}
+
 	return Snapshot{
 		SelectedContexts: copyStringMap(a.SelectedContexts),
 		LoadingStates:    a.combinedLoadingStates(),
@@ -188,6 +238,7 @@ func (a *AppState) Snapshot() Snapshot {
 		Errors:           copyStringMap(a.Errors),
 		Deployments:      cloneRows(a.cachedAllDeployments),
 		Pods:             cloneRows(a.cachedAllPods),
+		Services:         cloneRows(a.cachedAllServices),
 	}
 }
 
@@ -195,12 +246,12 @@ func (a *AppState) Snapshot() Snapshot {
 // Must be called with lock held
 func (a *AppState) combinedLoadingStates() map[string]bool {
 	combined := make(map[string]bool)
-	
+
 	for ctx := range a.SelectedContexts {
-		// Context is loading if EITHER deployments OR pods are loading
-		combined[ctx] = a.LoadingDeployments[ctx] || a.LoadingPods[ctx]
+		// Context is loading if ANY resource type is loading
+		combined[ctx] = a.LoadingDeployments[ctx] || a.LoadingPods[ctx] || a.LoadingServices[ctx]
 	}
-	
+
 	return combined
 }
 
@@ -214,13 +265,19 @@ func (a *AppState) IsAnyLoading() bool {
 			return true
 		}
 	}
-	
+
 	for _, loading := range a.LoadingPods {
 		if loading {
 			return true
 		}
 	}
-	
+
+	for _, loading := range a.LoadingServices {
+		if loading {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -240,14 +297,18 @@ func (a *AppState) RemoveContext(context string) {
 	delete(a.SelectedContexts, context)
 	delete(a.Deployments, context)
 	delete(a.Pods, context)
+	delete(a.Services, context)
 	delete(a.LoadingDeployments, context)
 	delete(a.LoadingPods, context)
+	delete(a.LoadingServices, context)
 	delete(a.Errors, context)
 	delete(a.LoadedContexts, context)
 	a.deploymentsDirty = true
 	a.podsDirty = true
+	a.servicesDirty = true
 	a.cachedAllDeployments = nil
 	a.cachedAllPods = nil
+	a.cachedAllServices = nil
 }
 
 // ClearErrors removes all error messages

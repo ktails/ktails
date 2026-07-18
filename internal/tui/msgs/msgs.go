@@ -26,6 +26,13 @@ type DeploymentTableMsg struct {
 	Err     error // Error during deployment fetching
 }
 
+// ServiceTableMsg carries service data or errors from async operations
+type ServiceTableMsg struct {
+	Context string
+	Rows    []table.Row
+	Err     error // Error during service fetching
+}
+
 // ContextsStateMsg represents the current state of context selections
 type ContextsStateMsg struct {
 	Selected   []ContextsSelectedMsg

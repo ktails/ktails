@@ -44,6 +44,7 @@ type MainPage struct {
 	contextList      *models.ContextsInfo
 	deploymentList   *models.DeploymentPage
 	podList          *models.PodPage
+	svcList          *models.ServicePage
 	deploymentDetail *models.ResourceDetailPage
 	focus            focusTarget
 
@@ -67,6 +68,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 	ctxInfo := models.NewContextInfo(c)
 	depList := models.NewDeploymentPage(c)
 	pList := models.NewPodPageModel(c)
+	svcList := models.NewServicePageModel(c)
 	detailPage := models.NewResourceDetailPage()
 	tabs := styles.DefaultTabs
 	tabs = append(tabs, "svc")
@@ -79,6 +81,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 		contextList:      ctxInfo,
 		deploymentList:   depList,
 		podList:          pList,
+		svcList:          svcList,
 		deploymentDetail: detailPage,
 		appStateLoaded:   false,
 		focus:            focusLeftPane,
@@ -151,6 +154,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// Ctrl+R always jumps straight back into an already-open pane — unlike
+		// Enter, it never fetches, no matter where the list cursor now sits.
+		if keypress == "ctrl+r" && m.showDetail {
+			m.detailFocused = true
+			m.applyContentSizes()
+			m.updateFocusStates()
+			return m, nil
+		}
+
 		// Tab navigation (tabs focused) — switching tabs while the detail pane
 		// is open (but unfocused) is allowed; the pane is cross-cutting and
 		// stays put beneath whichever tab you land on.
@@ -180,10 +192,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Enter on a selected Deployment/Pod row (re)loads the detail pane for
-		// that row and gives it keyboard focus for scrolling.
+		// Enter on a selected Deployment/Pod/Service row (re)loads the detail
+		// pane for that row and gives it keyboard focus for scrolling.
 		if m.appStateLoaded && keypress == "enter" &&
-			(m.tabs[m.activeTab] == "Deployments" || m.tabs[m.activeTab] == "Pods") {
+			(m.tabs[m.activeTab] == "Deployments" || m.tabs[m.activeTab] == "Pods" || m.tabs[m.activeTab] == "svc") {
 			if cmd := m.openResourceDetail(m.tabs[m.activeTab]); cmd != nil {
 				return m, cmd
 			}
@@ -198,6 +210,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			case "Pods":
 				cmd := m.podList.Update(msg)
+				return m, cmd
+			case "svc":
+				cmd := m.svcList.Update(msg)
 				return m, cmd
 			}
 		}
@@ -267,12 +282,14 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		snapshot := m.appState.Snapshot()
 		m.deploymentList.SetRows(snapshot.Deployments)
 		m.podList.SetRows(snapshot.Pods)
+		m.svcList.SetRows(snapshot.Services)
 		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
 
 		if len(snapshot.SelectedContexts) == 0 {
 			m.appStateLoaded = false
 			m.deploymentList.SetRows([]table.Row{})
 			m.podList.SetRows([]table.Row{})
+			m.svcList.SetRows([]table.Row{})
 			m.contextList.SetContextStates(nil, nil, nil)
 			m.updateFocusStates()
 			return m, nil
@@ -296,9 +313,11 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.appState.SetLoading(context, true)
 			m.appState.SetLoadingPods(context, true)
+			m.appState.SetLoadingServices(context, true)
 			cmdSequence = append(cmdSequence,
 				cmds.LoadDeploymentInfoCmd(m.Client, context, namespace),
 				cmds.LoadPodInfoCmd(m.Client, context, namespace),
+				cmds.LoadServiceInfoCmd(m.Client, context, namespace),
 			)
 		}
 
@@ -334,6 +353,25 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
 		return m, nil
 
+	case msgs.ServiceTableMsg:
+		if msg.Err != nil {
+			errMsg := fmt.Sprintf("Failed to load services for context '%s': %v", msg.Context, msg.Err)
+			m.appState.SetError(msg.Context, errMsg)
+			m.errorMessage = errMsg
+			m.appState.SetLoadingServices(msg.Context, false)
+			{
+				s := m.appState.Snapshot()
+				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+			}
+			return m, nil
+		}
+
+		m.appState.SetServices(msg.Context, msg.Rows)
+		snapshot := m.appState.Snapshot()
+		m.svcList.SetRows(snapshot.Services)
+		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
+		return m, nil
+
 	case msgs.ErrorMsg:
 		m.errorMessage = fmt.Sprintf("%s: %v", msg.Title, msg.Err)
 		if msg.Context != "" {
@@ -354,6 +392,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			forwardCmds = append(forwardCmds, m.deploymentList.Update(msg))
 		case "Pods":
 			forwardCmds = append(forwardCmds, m.podList.Update(msg))
+		case "svc":
+			forwardCmds = append(forwardCmds, m.svcList.Update(msg))
 		}
 		if m.showDetail {
 			forwardCmds = append(forwardCmds, m.deploymentDetail.Update(msg))
@@ -394,6 +434,8 @@ func (m *MainPage) updateFocusStates() {
 	m.deploymentList.SetFocused(shouldFocusDeployments)
 	shouldFocusPods := listActive && m.tabs[m.activeTab] == "Pods" && m.appStateLoaded
 	m.podList.SetFocused(shouldFocusPods)
+	shouldFocusSvc := listActive && m.tabs[m.activeTab] == "svc" && m.appStateLoaded
+	m.svcList.SetFocused(shouldFocusSvc)
 	m.deploymentDetail.SetFocused(m.focus == focusTabs && m.detailFocused)
 }
 
@@ -418,11 +460,12 @@ func (m *MainPage) applyContentSizes() {
 	}
 	m.deploymentList.SetSize(m.tableW, listH)
 	m.podList.SetSize(m.tableW, listH)
+	m.svcList.SetSize(m.tableW, listH)
 	m.deploymentDetail.SetSize(m.tableW, detailH)
 }
 
 // openResourceDetail loads detail for the currently selected row on the given
-// top tab ("Deployments" or "Pods") into the shared bottom detail pane.
+// top tab ("Deployments", "Pods", or "svc") into the shared bottom detail pane.
 // Returns nil if there's no valid selection.
 func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 	var kind, name, ctxName, namespace string
@@ -440,7 +483,23 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 			return nil
 		}
 		kind, name, namespace, ctxName = "Pod", row[0], row[1], row[5]
+	case "svc":
+		row := m.svcList.SelectedRow()
+		if len(row) < 7 {
+			return nil
+		}
+		kind, name, namespace, ctxName = "Service", row[0], row[1], row[6]
 	default:
+		return nil
+	}
+
+	// Re-entering the row already shown in the pane just refocuses it instead
+	// of re-fetching — e.g. after Esc dropped back to the list to scroll/pick
+	// a row, Enter on that same row jumps straight back in.
+	if m.showDetail && m.deploymentDetail.Matches(kind, name, ctxName) {
+		m.detailFocused = true
+		m.applyContentSizes()
+		m.updateFocusStates()
 		return nil
 	}
 
@@ -450,10 +509,14 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 	m.applyContentSizes()
 	m.updateFocusStates()
 
-	if kind == "Pod" {
+	switch kind {
+	case "Pod":
 		return cmds.LoadPodDetailCmd(m.Client, ctxName, namespace, name)
+	case "Service":
+		return cmds.LoadServiceDetailCmd(m.Client, ctxName, namespace, name)
+	default:
+		return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
 	}
-	return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
 }
 
 func (m *MainPage) View() string {
@@ -494,6 +557,12 @@ func (m *MainPage) View() string {
 		} else {
 			m.tabContent = m.podList.View()
 		}
+	case "svc":
+		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
+			m.tabContent = styles.HelpBoxStyle().Align(lipgloss.Center).Render(emptyMsg)
+		} else {
+			m.tabContent = m.svcList.View()
+		}
 	default:
 		m.tabContent = styles.HelpBoxStyle().Render(emptyMsg)
 	}
@@ -507,17 +576,25 @@ func (m *MainPage) View() string {
 	// area is active in two, rather than being a peer tab of its own.
 	if m.showDetail {
 		p := styles.CatppuccinMocha()
-		dividerW := tabWidth
+		dividerW := m.tableW
 		if dividerW < 1 {
 			dividerW = 1
 		}
 		divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", dividerW))
-		m.tabContent = lipgloss.JoinVertical(lipgloss.Left,
+		joined := lipgloss.JoinVertical(lipgloss.Left,
 			m.tabContent,
 			divider,
 			m.deploymentDetail.Header(),
 			m.deploymentDetail.View(),
 		)
+		// Right-pad every line up to a uniform minimum width so the outer
+		// container's Align(Center) shifts the whole block by one constant
+		// amount instead of centering each line individually — the latter is
+		// what made YAML/status lines of varying length look raggedly
+		// centered. Only ever pads (never truncates/wraps) — table rows carry
+		// per-cell padding that already makes them wider than dividerW, and
+		// forcing a hard Width() there would word-wrap the header row.
+		m.tabContent = padLinesToMinWidth(joined, dividerW)
 	}
 
 	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
@@ -558,7 +635,16 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 			loadingCount++
 		}
 	}
-	depCount := len(snapshot.Deployments)
+	activeTabName := m.tabs[m.activeTab]
+	var activeCount int
+	switch activeTabName {
+	case "Deployments":
+		activeCount = len(snapshot.Deployments)
+	case "Pods":
+		activeCount = len(snapshot.Pods)
+	case "svc":
+		activeCount = len(snapshot.Services)
+	}
 
 	focusStr := "Left Pane"
 	if m.focus == focusTabs {
@@ -566,14 +652,15 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	}
 
 	left := leftStyle.Render(fmt.Sprintf("Contexts: %d", selectedCtx))
-	mid := midStyle.Render(fmt.Sprintf("Tab: %s | Focus: %s", m.tabs[m.activeTab], focusStr))
+	mid := midStyle.Render(fmt.Sprintf("Tab: %s | Focus: %s", activeTabName, focusStr))
 
-	// Dynamic status bits (loading / count / errors)
+	// Dynamic status bits (loading / count / errors) — count reflects
+	// whichever tab currently has focus, not always Deployments.
 	var statusBits []string
 	if loadingCount > 0 {
 		statusBits = append(statusBits, fmt.Sprintf("⏳ %d loading", loadingCount))
-	} else if depCount > 0 {
-		statusBits = append(statusBits, fmt.Sprintf("Deployments: %d", depCount))
+	} else if activeCount > 0 {
+		statusBits = append(statusBits, fmt.Sprintf("%s: %d", activeTabName, activeCount))
 	}
 	if errCount > 0 {
 		statusBits = append(statusBits, fmt.Sprintf("⚠ %d error(s)", errCount))
@@ -618,7 +705,8 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},
 		{"Space", "Toggle context selection"},
-		{"Enter", "Confirm selection & load / open + focus detail pane"},
+		{"Enter", "Confirm selection & load / open + focus detail pane (refocuses instantly if already loaded)"},
+		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
 		{"↑/↓ j/k PgUp/PgDn", "Scroll detail pane (while it has focus)"},
 		{"Home / End", "Jump to top / bottom of detail pane"},
 		{"Esc", "Unfocus detail pane, then close it / overlay / dismiss error"},
@@ -711,6 +799,19 @@ func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 	}
 
 	return loadingStyle.Render(fmt.Sprintf("⏳ Loading: %s...", strings.Join(loadingContexts, ", ")))
+}
+
+// padLinesToMinWidth right-pads every line of content with spaces so it is at
+// least width columns wide, without ever truncating or wrapping lines that
+// are already wider.
+func padLinesToMinWidth(content string, width int) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if pad := width - lipgloss.Width(line); pad > 0 {
+			lines[i] = line + strings.Repeat(" ", pad)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func hasLoading(loading map[string]bool) bool {

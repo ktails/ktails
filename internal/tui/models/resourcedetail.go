@@ -72,6 +72,12 @@ func (d *ResourceDetailPage) HasContent() bool {
 	return d.loaded || d.loading || d.errMsg != ""
 }
 
+// Matches reports whether the pane is already showing (or loading) the given
+// resource, so callers can refocus it instead of re-fetching.
+func (d *ResourceDetailPage) Matches(kind, name, context string) bool {
+	return d.HasContent() && d.kind == kind && d.name == name && d.context == context
+}
+
 // Header renders a one-line banner identifying the loaded resource and the
 // pane's own close hint, meant to sit above the scrollable viewport so the
 // pane reads as a distinct region rather than a peer tab.
@@ -85,7 +91,7 @@ func (d *ResourceDetailPage) Header() string {
 		label = "Detail"
 	}
 	return title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
-		hint.Render(fmt.Sprintf("(%s — ↑/↓ pgup/pgdn scroll, Home/End jump, Esc back)", d.context))
+		hint.Render(fmt.Sprintf("(%s — ↑/↓ pgup/pgdn scroll, Home/End jump, Esc back, Ctrl+R return)", d.context))
 }
 
 func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {

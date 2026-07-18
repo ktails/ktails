@@ -77,6 +77,39 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 	}
 }
 
+// LoadServiceInfoCmd fetches service information for a specific context and namespace
+func LoadServiceInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
+	return func() tea.Msg {
+		services, err := client.GetServiceInfo(kubeContext, namespace)
+		if err != nil {
+			return msgs.ServiceTableMsg{
+				Context: kubeContext,
+				Rows:    nil,
+				Err:     err,
+			}
+		}
+
+		rows := make([]table.Row, len(services))
+		for i, svc := range services {
+			rows[i] = table.Row{
+				svc.Name,
+				svc.Namespace,
+				svc.Type,
+				svc.ClusterIP,
+				svc.Ports,
+				svc.Age,
+				kubeContext, // hidden column, used by the detail pane
+			}
+		}
+
+		return msgs.ServiceTableMsg{
+			Context: kubeContext,
+			Rows:    rows,
+			Err:     nil,
+		}
+	}
+}
+
 // LoadDeploymentDetailCmd fetches detailed information for a single deployment
 func LoadDeploymentDetailCmd(client *k8s.Client, kubeContext, namespace, deploymentName string) tea.Cmd {
 	return func() tea.Msg {
@@ -92,6 +125,17 @@ func LoadDeploymentDetailCmd(client *k8s.Client, kubeContext, namespace, deploym
 func LoadPodDetailCmd(client *k8s.Client, kubeContext, namespace, podName string) tea.Cmd {
 	return func() tea.Msg {
 		detail, err := client.GetPodDetail(kubeContext, namespace, podName)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadServiceDetailCmd fetches detailed information for a single service
+func LoadServiceDetailCmd(client *k8s.Client, kubeContext, namespace, serviceName string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetServiceDetail(kubeContext, namespace, serviceName)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}

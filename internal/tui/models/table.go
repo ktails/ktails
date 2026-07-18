@@ -34,3 +34,15 @@ func deploymentTableColumns() []table.Column {
 		{Title: "Namespace", Width: 0}, // hidden, carries data for the detail panel
 	}
 }
+
+func svcTableColumns() []table.Column {
+	return []table.Column{
+		{Title: "Name", Width: 25},
+		{Title: "Namespace", Width: 15},
+		{Title: "Type", Width: 12},
+		{Title: "ClusterIP", Width: 15},
+		{Title: "Ports", Width: 18},
+		{Title: "Age", Width: 10},
+		{Title: "Context", Width: 0}, // hidden, carries data for the detail tab
+	}
+}
