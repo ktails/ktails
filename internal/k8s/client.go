@@ -28,15 +28,16 @@ type Client struct {
 
 // PodInfo contains pod metadata
 type PodInfo struct {
-	Name      string
-	Namespace string
-	Status    string
-	Restarts  int32
-	Age       string
-	Image     string
-	Container string
-	Node      string
-	Context   string
+	Name       string
+	Namespace  string
+	Status     string
+	Restarts   int32
+	Age        string
+	Image      string
+	Container  string
+	Containers []string
+	Node       string
+	Context    string
 }
 
 type ContextsInfo struct {
@@ -367,21 +368,26 @@ func (c *Client) podToPodInfo(pod *v1.Pod, kubeContext string) *PodInfo {
 	}
 
 	var image, container string
+	containers := make([]string, 0, len(pod.Spec.Containers))
 	if len(pod.Spec.Containers) > 0 {
 		container = pod.Spec.Containers[0].Name
 		image = pod.Spec.Containers[0].Image
 	}
+	for _, c := range pod.Spec.Containers {
+		containers = append(containers, c.Name)
+	}
 
 	return &PodInfo{
-		Name:      pod.Name,
-		Namespace: pod.Namespace,
-		Context:   kubeContext,
-		Status:    string(pod.Status.Phase),
-		Restarts:  restarts,
-		Age:       formatDuration(age),
-		Image:     image,
-		Container: container,
-		Node:      pod.Spec.NodeName,
+		Name:       pod.Name,
+		Namespace:  pod.Namespace,
+		Context:    kubeContext,
+		Status:     string(pod.Status.Phase),
+		Restarts:   restarts,
+		Age:        formatDuration(age),
+		Image:      image,
+		Container:  container,
+		Containers: containers,
+		Node:       pod.Spec.NodeName,
 	}
 }
 

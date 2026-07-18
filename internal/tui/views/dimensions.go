@@ -20,8 +20,11 @@ const (
 	minPaneWidth = 20
 	// defaultTopRightPaneHeight is the default height of the top right pane.
 	defaultTopRightPaneHeight = 15
-	// defaultLeftPaneWidth is the default width of the left pane.
-	defaultLeftPaneWidth = 40
+	// MaxLeftPaneWidth caps how wide the left (context list) pane is allowed
+	// to grow on wide terminals — its content (short context names) never
+	// needs a fixed fraction of a very wide window, so beyond this the extra
+	// space goes to the tab area instead.
+	MaxLeftPaneWidth = 40
 )
 
 func init() {
@@ -34,7 +37,7 @@ func init() {
 	if minPaneHeight > defaultTopRightPaneHeight {
 		panic("default top right pane height must not be lower than the overall minimum height")
 	}
-	if minPaneWidth > defaultLeftPaneWidth {
+	if minPaneWidth > MaxLeftPaneWidth {
 		panic("default left pane width must not be lower than the overall minimum width")
 	}
 }

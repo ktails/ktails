@@ -106,7 +106,8 @@ func (p *PodPage) SetSize(w, h int) {
 		{Title: "Status", Width: statusW},
 		{Title: "Restarts", Width: restartsW},
 		{Title: "Age", Width: ageW},
-		{Title: "Context", Width: 0}, // hidden, carries data for the detail tab
+		{Title: "Context", Width: 0},    // hidden, carries data for the detail tab
+		{Title: "Containers", Width: 0}, // hidden, comma-separated container names for the log pane
 	})
 	p.invalidateView()
 }
