@@ -9,6 +9,13 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+    groups:
+      # k8s.io/api, apimachinery, and client-go are released in lockstep and
+      # must share a version — separate PRs bumping them to different
+      # targets breaks module resolution (see PRs #34/#35/#37).
+      k8s-io:
+        patterns:
+          - "k8s.io/*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
