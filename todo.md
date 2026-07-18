@@ -14,56 +14,50 @@ Roadmap and planned features for KTails, organized by priority and version.
 
 ## v0.1.0 - Core Functionality
 
-Focus: Get the basics working - status bar, refresh, error handling, and basic log viewing.
+Focus: Get the basics working - status bar, refresh, error handling.
 
 ### 🔴 HIGH Priority
 
-- [ ] **Status Bar / Header** 
-  - Show current context per pane
-  - Display namespace being viewed
-  - Show follow mode on/off indicator
-  - Display last refresh timestamp
-  - Show match count when searching
+- [x] **Status Bar / Header**
+  - Show current context count
+  - Show active tab and its row count
+  - Show loading indicator per context
   - Make header persistent (always visible)
-  - Status: ❌ Not started
+  - Status: ✅ Done — `renderStatusBar` in `internal/pages/mainPage.go`
+  - Still open: namespace-per-pane display, last-refresh timestamp, search match count (no search mode exists yet)
 
-- [ ] **Error Handling & Display**
-  - Non-blocking error panel (bottom or overlay)
-  - Show actionable error messages
-  - Display hints for common issues (permissions, connectivity)
-  - Log errors to debug file when enabled
-  - Handle API errors gracefully
-  - Status: ❌ Not started (currently returns nil on errors)
+- [x] **Error Handling & Display**
+  - Non-blocking error banner (dismissible with `Esc`)
+  - Per-context error tracking and summary overlay
+  - Handle API errors gracefully (wrapped with `%w`, surfaced not swallowed)
+  - Status: ✅ Done — `state.AppState.Errors`, `renderErrorOverlay`/`renderErrorSummaryOverlay`
+  - Still open: hints for common issues (permissions, connectivity), debug-file error logging
 
 - [ ] **Manual Refresh**
-  - Press `r` to refresh current pod list
-  - Visual feedback during refresh (spinner/loading indicator)
+  - Press `r` to refresh the current tab's resource list
+  - Visual feedback during refresh (loading indicator already exists for initial load)
   - Preserve cursor position after refresh
-  - Status: ❌ Not started
+  - Status: ❌ Not started (only loads once on context selection)
 
 - [ ] **Basic Log Viewing**
-  - Press `Enter` on pod to view logs
-  - Display logs in dedicated pane
-  - Follow mode (tail -f behavior)
+  - Press a key on a pod to view its logs
+  - Display logs in a dedicated pane, with follow/tail-f mode
   - Scroll through logs with arrow keys
-  - Toggle follow mode with `f` key
-  - Status: ❌ Not started (this is the main feature!)
+  - Status: ❌ Not started — the app currently shows Pod *metadata and detail* (Status/Events/YAML via the Detail pane), not log streams
 
 ### 🟡 MEDIUM Priority
 
 - [ ] **Auto-Refresh**
   - Configurable refresh interval (default: 5s)
   - Subtle spinner in status bar during refresh
-  - Toggle auto-refresh with `a` key
-  - Pause auto-refresh when focused on certain panes
+  - Toggle auto-refresh with a key
   - Status: ❌ Not started
 
-- [ ] **Status Colors**
-  - Color code pod status (Running=green, Pending=yellow, Failed=red)
+- [x] **Status Colors**
+  - Color code Detail pane event types (Warning=yellow, Normal=green)
   - Highlight selected row with accent color
-  - Show focused pane with distinct border color
-  - Improve overall color consistency
-  - Status: ⚠️ Partially done (focus colors exist, status colors missing)
+  - Show focused pane with distinct border color/thickness
+  - Status: ✅ Done — Catppuccin palette used consistently; resource-table status text itself is not yet color-coded by phase (Running/Pending/Failed)
 
 ---
 
@@ -255,8 +249,20 @@ Focus: Production-ready stability and performance.
 - ✅ Catppuccin Mocha theme
 - ✅ Help mode (? key)
 - ✅ Basic keyboard navigation
-- ✅ Slice-based architecture for pod panes
 - ✅ Window resizing support
+
+### v0.0.2 - Deployments, Services & Resource Detail
+
+- ✅ Deployments tab (list + status)
+- ✅ Services (svc) tab (list + status)
+- ✅ Cross-cutting Detail pane — press `Enter` on any row in any of the three
+  tabs to see Status conditions, recent Events, and full YAML for that
+  resource, without it behaving like a peer tab
+- ✅ `Ctrl+R` to jump back into an already-open Detail pane without re-fetching;
+  `Enter` refocuses instantly when re-entering the same row
+- ✅ Per-context error banner + summary overlay
+- ✅ Status bar with live per-tab row counts and loading indicator
+- ✅ Small-terminal guard (resize prompt below 80x24)
 
 ---
 
@@ -281,9 +287,10 @@ These are ideas for future consideration, not committed to any version:
 
 Track current bugs and limitations:
 
-- ⚠️ No error feedback when API calls fail (returns nil)
-- ⚠️ Window resize sometimes miscalculates pane sizes
-- ⚠️ No way to remove a pod pane once added
+- ⚠️ No manual refresh — resource lists load once on context selection and don't update
+- ⚠️ Resource table rows aren't color-coded by status/phase (Running/Pending/Failed)
+- ⚠️ No log viewing yet — Pod detail shows metadata/Status/Events/YAML, not log streams
+- ⚠️ No way to deselect/remove a single loaded context's resources without deselecting the context itself
 - ⚠️ Context switching modifies global k8s client state (not thread-safe)
 
 ---

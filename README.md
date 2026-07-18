@@ -1,226 +1,271 @@
 # KTails
 
-A beautiful, terminal-based Kubernetes pod log viewer built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A terminal-based Kubernetes resource browser built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+
+Browse Deployments, Pods, and Services across multiple contexts at once, then drill into any
+resource's live Status, Events, and YAML — all without leaving the terminal.
 
 ## Features
 
-### Currently Implemented ✅
-
-- **Multi-Context Support** - View pods from multiple Kubernetes contexts simultaneously
-- **Interactive TUI** - Clean, keyboard-driven interface with focus management
-- **Context Switching** - Easy selection and switching between Kubernetes contexts
-- **Pod Listing** - View detailed pod information (name, namespace, status, restarts, age, image, container, node)
-- **Multi-Selection** - Select multiple contexts to view their pods side-by-side
-- **Beautiful Theming** - Catppuccin Mocha color scheme with focus-aware styling
-- **Tab Navigation** - Cycle through contexts and pod panes with Tab/Shift+Tab
-- **Help Mode** - Press `?` for keyboard shortcuts and help
-
-### In Development 🚧
-
-See [TODO.md](./todo.md) for planned features.
+- **Multi-Context Support** — select several kubeconfig contexts and view their resources side by side
+- **Three resource tabs** — Deployments, Pods, and svc (Services), each backed by live cluster data
+- **Cross-cutting Detail pane** — press `Enter` on any row (in any of the three tabs) to open a bottom
+  split-pane showing that resource's Status conditions, recent Events, and full YAML
+- **Fast re-entry** — `Ctrl+R` jumps back into an already-open Detail pane without re-fetching;
+  re-pressing `Enter` on the same row also refocuses instantly instead of reloading
+- **Multi-Selection** — select multiple contexts to load and view their resources together
+- **Beautiful theming** — Catppuccin Mocha color scheme with focus-aware styling throughout
+- **Small-terminal guard** — below 80x24 the app shows a "resize your terminal" message instead of
+  rendering a broken layout
+- **Help overlay** — press `?` for the full keybinding reference
 
 ## Installation
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 - kubectl configured with access to your Kubernetes clusters
 - Valid kubeconfig file (default: `~/.kube/config`)
 
-### Build from Source
+### Build from source
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/ktails.git
+git clone https://github.com/ktails/ktails.git
 cd ktails
 
-# Build the binary
-go build -o ktails cmd/test-client/main.go
-
-# Run
-./ktails
+make build      # -> ./build/ktails
+./build/ktails
 ```
 
-### Debug Mode
-
-Enable debug logging to troubleshoot issues:
+Or run directly without building a binary:
 
 ```bash
-KTAILS_DEBUG=1 ./ktails
-# Logs will be written to messages.log
+make run
+```
+
+### Debug mode
+
+```bash
+make debug      # sets KTAILS_DEBUG=1
 ```
 
 ## Usage
 
-### Basic Usage
+KTails starts on the context list. Select one or more contexts, load them, and browse their
+Deployments, Pods, and Services. Press `Enter` on any row to see its full detail.
 
-```bash
-# Start ktails
-./ktails
-
-# It will automatically use your default kubeconfig
-# Or specify a custom kubeconfig path (future feature)
-```
-
-### Keyboard Shortcuts
+### Keyboard shortcuts
 
 #### Global
 
-- `q` or `Ctrl+C` - Quit the application
-- `?` - Toggle help screen
-- `Tab` - Cycle forward through panes
-- `Shift+Tab` - Cycle backward through panes
+| Key | Action |
+|---|---|
+| `q` / `Ctrl+C` | Quit |
+| `Tab` / `Shift+Tab` | Switch focus between the context list and the tab area |
+| `?` | Toggle the help overlay |
+| `Esc` | Peel back one layer: unfocus Detail pane → close Detail pane → dismiss error → clear context errors |
 
-#### Context Pane (Left)
+#### Context list (left pane)
 
-- `↑/↓` - Navigate through contexts
-- `Space` - Toggle selection (select multiple contexts)
-- `Enter` - Load pods for selected context(s)
-- `Esc` - Clear all selections
-- `/` - Filter contexts (builtin list filter)
+| Key | Action |
+|---|---|
+| `↑/↓` `j/k` | Move selection |
+| `Space` | Toggle a context's selection |
+| `Enter` | Confirm selection and load Deployments/Pods/Services for all selected contexts |
 
-#### Pod Pane (Right)
+#### Tab area (Deployments / Pods / svc)
 
-- `↑/↓` - Navigate through pod list
-- `j/k` - Vim-style navigation (alternative to arrows)
+| Key | Action |
+|---|---|
+| `[` / `]` or `←` / `→` | Switch tabs (cross-cutting Detail pane stays open across tab switches) |
+| `↑/↓` `j/k` | Move the row cursor |
+| `Enter` | Open (or refresh) the Detail pane for the selected row, and focus it |
 
-## Project Structure
+#### Detail pane (once focused, via `Enter`)
+
+| Key | Action |
+|---|---|
+| `↑/↓` `j/k` `PgUp/PgDn` | Scroll |
+| `Home`/`g` · `End`/`G` | Jump to top / bottom |
+| `Esc` | Return focus to the row list (pane stays open) |
+| `Esc` again | Close the pane |
+| `Ctrl+R` | Jump back into the pane instantly, without re-fetching |
+
+## Project layout
 
 ```
 ktails/
 ├── cmd/
-│   └── test-client/
-│       └── main.go          # Entry point
+│   └── page-client/
+│       └── main.go              # entry point
 ├── internal/
-│   ├── config/
-│   │   └── config.go        # Configuration management
-│   ├── k8s/
-│   │   └── client.go        # Kubernetes client wrapper
+│   ├── config/                  # configuration management
+│   ├── k8s/                     # Kubernetes client + per-resource data fetching
+│   │   ├── client.go            #   context/pod listing, shared Client type
+│   │   ├── deployments.go       #   Deployment list + detail (Status/Events/YAML)
+│   │   ├── services.go          #   Service list + detail
+│   │   └── detail.go            #   shared ResourceDetail type + event lookup
+│   ├── state/
+│   │   └── state.go             # AppState: per-context rows, loading flags, snapshot
+│   ├── pages/
+│   │   └── mainPage.go          # top-level Bubble Tea model (Update/View, layout, focus)
 │   └── tui/
-│       ├── tui.go           # Main TUI orchestration
-│       ├── cmds/
-│       │   └── cmds.go      # Bubble Tea commands
-│       ├── models/
-│       │   ├── contexts.go  # Context list model
-│       │   ├── pods.go      # Pod table model
-│       │   └── table.go     # Table column definitions
-│       ├── msgs/
-│       │   └── msgs.go      # Bubble Tea messages
-│       ├── styles/
-│       │   └── style.go     # Catppuccin theme and styles
-│       └── views/
-│           └── panes.go     # Layout management
+│       ├── cmds/                # tea.Cmd constructors that call into internal/k8s
+│       ├── msgs/                # tea.Msg types carrying results back to mainPage
+│       ├── models/               # per-tab sub-models (table wrappers, detail pane)
+│       │   ├── contexts.go      #   context list (left pane)
+│       │   ├── deployment.go    #   Deployments table
+│       │   ├── pods.go          #   Pods table
+│       │   ├── services.go      #   Services table
+│       │   └── resourcedetail.go #  cross-cutting Status/Events/YAML pane
+│       ├── styles/              # Catppuccin palette + shared lipgloss styles
+│       └── views/                # layout helpers (panes, tab headers, min-size constants)
 └── README.md
 ```
 
 ## Architecture
 
-KTails follows the [Elm Architecture](https://guide.elm-lang.org/architecture/) via Bubble Tea:
+KTails follows the [Elm Architecture](https://guide.elm-lang.org/architecture/) via Bubble Tea: a
+single root `MainPage` model owns `Update`/`View`, delegating per-tab rendering to sub-models and
+per-resource data fetching to `internal/k8s`.
 
-1. **Model** - Application state (contexts, pods, focus, dimensions)
-2. **Update** - State transitions based on messages (keyboard, data loading)
-3. **View** - Render the current state to the terminal
+### Data flow
 
-### Key Components
+```mermaid
+flowchart LR
+    subgraph UI["internal/pages · internal/tui"]
+        MainPage["MainPage\n(Update / View)"]
+        Models["Sub-models\n(contexts, deployment,\npods, services,\nresourcedetail)"]
+    end
+    subgraph Data["internal/k8s"]
+        Client["k8s.Client"]
+    end
+    Cluster[("Kubernetes\nAPI server")]
 
-- **SimpleTui** - Root model managing mode, focus, and layout
-- **ContextsInfo** - Context list with multi-select capability
-- **Pods** - Pod table with filtering and navigation
-- **K8s Client** - Wraps kubectl operations for context switching and pod listing
+    KeyMsg["tea.KeyMsg\n(user input)"] --> MainPage
+    MainPage -- "dispatches" --> Cmds["tui/cmds\n(tea.Cmd)"]
+    Cmds -- "calls" --> Client
+    Client -- "watches/lists" --> Cluster
+    Cluster -- "results" --> Client
+    Client --> Cmds
+    Cmds -- "tui/msgs\n(tea.Msg)" --> MainPage
+    MainPage --> AppState["state.AppState\n(per-context rows,\nloading flags)"]
+    AppState --> MainPage
+    MainPage -- "renders via" --> Models
+    Models -- "View() string" --> MainPage
+    MainPage -- "final frame" --> Terminal[["terminal"]]
+```
 
-## Configuration
+### Layout
 
-Configuration is managed via `internal/config/config.go`. Future features will include:
+The screen is split into a left context pane and a right tab area; the Detail pane is not a fourth
+tab — it's a bottom split that any of the three tabs can open, and it persists across tab switches.
 
-- Themes (dark/light)
-- Auto-follow logs
-- Max log lines
-- Refresh intervals
-- Recent pod history
+```mermaid
+flowchart TB
+    subgraph Screen["Terminal window"]
+        direction LR
+        Left["Contexts\n(left pane)"]
+        subgraph Right["Tab area"]
+            direction TB
+            TabHeaders["Deployments │ Pods │ svc"]
+            List["active tab's table\n(rows for selected contexts)"]
+            Divider["── divider ──"]
+            Detail["Detail pane\n(Status / Events / YAML)\nopened via Enter, closed via Esc"]
+            TabHeaders --> List --> Divider --> Detail
+        end
+        Left --- Right
+    end
+    Status["status bar\n(context count, active tab's row count, hints)"]
+    Screen --> Status
+```
+
+### Focus state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> LeftPaneFocus
+    LeftPaneFocus --> TabsFocus: Tab
+    TabsFocus --> LeftPaneFocus: Tab
+
+    state TabsFocus {
+        [*] --> ListFocus
+        ListFocus --> DetailFocus: Enter (opens/refreshes pane)
+        DetailFocus --> ListFocus: Esc
+        ListFocus --> DetailFocus: Ctrl+R (pane already open)
+        DetailFocus --> ClosedPane: Esc (from ListFocus, pane open)
+        ClosedPane --> ListFocus
+    }
+```
+
+### Key components
+
+- **`pages.MainPage`** — the root model; owns window dimensions, tab/focus state, and composes the
+  final frame from its sub-models each render
+- **`state.AppState`** — holds per-context Deployment/Pod/Service rows, loading flags, and errors;
+  exposes a cached `Snapshot()` for cheap reads during render
+- **`models.ContextsInfo`** — the left-pane context list with multi-select
+- **`models.DeploymentPage` / `PodPage` / `ServicePage`** — thin wrappers around `bubbles/table` for
+  each resource tab
+- **`models.ResourceDetailPage`** — the shared, cross-cutting Detail pane (a `bubbles/viewport`
+  showing Status/Events/YAML), reused regardless of which tab opened it
+- **`k8s.Client`** — wraps `client-go`, supporting multiple contexts and both list (`GetDeploymentInfo`,
+  `ListPodInfo`, `GetServiceInfo`) and single-resource detail (`GetDeploymentDetail`, `GetPodDetail`,
+  `GetServiceDetail`) calls, the latter returning a common `k8s.ResourceDetail`
 
 ## Development
 
-### Running Tests
-
 ```bash
-go test ./...
+make build       # go build -o ./build/ktails ./cmd/page-client
+make run         # go run ./cmd/page-client
+make debug       # KTAILS_DEBUG=1 go run ./cmd/page-client
+make test        # go test ./...
+make test-one pkg=./internal/... name=TestFoo
+make lint        # go vet ./... (+ staticcheck if installed)
+make fmt         # gofmt -w .
+make tidy        # go mod tidy
 ```
 
-### Code Formatting
+### Adding a new resource tab
 
-```bash
-# Format all Go files
-go fmt ./...
-
-# Or use gofmt directly
-gofmt -w .
-```
-
-### Adding a New Feature
-
-1. Define the message type in `internal/tui/msgs/`
-2. Add command in `internal/tui/cmds/`
-3. Update model in appropriate `internal/tui/models/` file
-4. Handle message in `internal/tui/tui.go` Update()
-5. Update view rendering if needed
+1. Add list/detail fetchers in `internal/k8s/` returning `[]YourInfo` and `k8s.ResourceDetail`
+2. Add `YourResourceTableMsg` in `internal/tui/msgs/` and `LoadYourResourceInfoCmd`/`LoadYourResourceDetailCmd` in `internal/tui/cmds/`
+3. Add a table model in `internal/tui/models/` (mirror `services.go`), with a hidden `Context`
+   column so the Detail pane knows which cluster to query
+4. Wire it into `state.AppState` (rows map, loading flag, snapshot field)
+5. Add the tab to `pages.MainPage`: tab list, `Enter` handling in `openResourceDetail`, `View()`
+   case, and `applyContentSizes`/focus-state wiring
 
 ## Dependencies
 
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
-- [Bubbles](https://github.com/charmbracelet/bubbles) - TUI components (table, list)
-- [Lip Gloss](https://github.com/charmbracelet/lipgloss) - Styling and layout
-- [client-go](https://github.com/kubernetes/client-go) - Kubernetes client library
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
+- [Bubbles](https://github.com/charmbracelet/bubbles) — TUI components (table, list, viewport)
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss) — styling and layout
+- [client-go](https://github.com/kubernetes/client-go) — Kubernetes client library
+- [sigs.k8s.io/yaml](https://github.com/kubernetes-sigs/yaml) — YAML rendering for the Detail pane
 
 ## Roadmap
 
-See [TODO.md](./todo.md) for detailed roadmap and planned features.
-
-### Short Term (v0.1.0)
-
-- [ ] Status bar with context/namespace info
-- [ ] Manual refresh (r key)
-- [ ] Error display panel
-- [ ] Basic log viewing
-
-### Medium Term (v0.2.0)
-
-- [ ] Search mode (S key)
-- [ ] Auto-refresh with interval
-- [ ] Sort pods by name/status/restarts
-- [ ] Log filtering and search
-
-### Long Term (v1.0.0)
-
-- [ ] Log export
-- [ ] Multiple log panes
-- [ ] Metrics integration
-- [ ] Configuration file support
+See [todo.md](./todo.md) for the detailed backlog.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome — please open a Pull Request.
 
-### Guidelines
-
-1. Follow Go best practices and idioms
-2. Run `go fmt` before committing
-3. Add tests for new features
-4. Update documentation as needed
-5. Keep commits atomic and well-described
+1. Follow Go best practices and idioms (see `AGENTS.md` for house conventions)
+2. Run `make fmt` and `make lint` before committing
+3. Update documentation for user-facing changes
+4. Keep commits atomic and well-described
 
 ## License
 
- GNU GENERAL PUBLIC LICENSE V3
+GNU GENERAL PUBLIC LICENSE v3
 
 ## Acknowledgments
 
 - Inspired by [k9s](https://k9scli.io/) and similar Kubernetes TUI tools
-- Built with the amazing [Charm](https://charm.sh/) TUI libraries
+- Built with the [Charm](https://charm.sh/) TUI libraries
 - Uses the [Catppuccin](https://github.com/catppuccin/catppuccin) color scheme
-
-## Screenshots
-
-_Coming soon - Add screenshots of the TUI in action_
 
 ## Troubleshooting
 
@@ -228,21 +273,19 @@ _Coming soon - Add screenshots of the TUI in action_
 
 - Verify your kubeconfig is valid: `kubectl config view`
 - Check context access: `kubectl config get-contexts`
-- Enable debug mode: `KTAILS_DEBUG=1 ./ktails`
+- Enable debug mode: `make debug`
 
 ### Connection errors
 
 - Ensure you can connect to your clusters: `kubectl cluster-info`
 - Check your kubeconfig file permissions
-- Verify network connectivity to Kubernetes API servers
+- Verify network connectivity to the Kubernetes API servers
+
+### Terminal too small
+
+- KTails requires at least an 80x24 terminal; below that it shows a resize prompt instead of the UI
 
 ### Application crashes
 
 - Enable debug mode to see detailed logs
-- Check `messages.log` for error details
 - Report issues on GitHub with log output
-
-## Support
-
-- GitHub Issues: [Report bugs or request features](https://github.com/yourusername/ktails/issues)
-- Discussions: [Ask questions and share ideas](https://github.com/yourusername/ktails/discussions)

@@ -1,147 +1,56 @@
 # KTails - Priority Improvements
 
-## 🚀 Performance & State Management
+Most of the items originally tracked here have since been implemented. Kept for history, with each
+marked against the current codebase, plus a fresh list of what's actually still open.
 
-### 1. Eliminate Duplicate AppState
-**Problem:** You have two identical `AppState` implementations:
-- `internal/pages/state.go` 
-- `internal/state/state.go`
+## ✅ Previously Tracked, Now Done
 
-**Fix:** Delete `internal/pages/state.go` and use only `internal/state/state.go`. Update imports in `mainPage.go`.
+1. **Duplicate AppState** — resolved; only `internal/state/state.go` exists now, `mainPage.go` uses
+   it exclusively.
+2. **Table re-render optimization** — `rowsSet`/`viewDirty` caching exists on `DeploymentPage`,
+   `PodPage`, and `ServicePage`; `SetRows` no-ops when rows are unchanged (`rowsEqual`).
+3. **Batched lock reads** — `AppState.Snapshot()` does this, with a cached-fast-path under an
+   `RLock` and a recompute-path under a full `Lock`.
+4. **Parallel context loading** — `tea.Batch(cmdSequence...)` in `mainPage.go`'s
+   `ContextsStateMsg` handler.
+5. **Loading state visibility** — status bar shows `⏳ N loading`; per-context loading also
+   reflected in the context list itself.
+6. **Empty state messages** — "No contexts selected / Press Tab to focus contexts / Space to
+   select • Enter to load" shown per tab.
+7. **Error recovery on success** — `AppState.SetDeployments` deletes the context's error on a
+   successful load.
+8. **Keyboard hints in status bar** — `Tab:focus [ ]:tabs ?:help q:quit` rendered faint on the
+   right of the status bar.
+9. **Remove unused code** — `cmd/test-client` no longer exists (only `cmd/page-client`); `PodPage`
+   is fully integrated as the Pods tab.
+10. **Focus indicator polish** — `LeftPane` (double border, focused) vs `LeftPaneBlur` (normal
+    border, blurred); same pattern for `WindowStyle`/`WindowBlurStyle`.
+11. **Tab switching gating** — the Deployments tab refuses to activate until contexts are loaded
+    (`mainPage.go`, the `nextTab == "Deployments"` check in tab navigation).
+12. **Update timing measurement** — `logSlowUpdate` logs any `Update()` call over 16ms.
 
-### 2. Optimize Table Rendering
-**Current Issue:** Table re-renders completely on every update.
+## 🎯 Actually Open Now
 
-**Improvements:**
-- Only call `SetRows()` when data actually changes
-- Cache the rendered table view when data hasn't changed
-- Use `deploymentsDirty` flag pattern for table rendering too
+1. **Color-code resource status** — Deployments/Pods/Services table rows aren't colored by
+   phase/status (Running=green, Pending=yellow, Failed=red as originally suggested). The Detail
+   pane already does this for Events (Warning=yellow, Normal=green) — extend the same treatment to
+   the list tables.
 
-### 3. Reduce Lock Contention
-**Problem:** Heavy mutex usage in AppState for reads.
+2. **Manual + auto refresh** — resource lists load once on context selection and never update.
+   Worth adding a refresh key and/or a polling interval, reusing the existing
+   `LoadDeploymentInfoCmd`/`LoadPodInfoCmd`/`LoadServiceInfoCmd` commands.
 
-**Fix:**
-```go
-// Use RWMutex more effectively - batch reads
-func (a *AppState) GetState() (contexts map[string]string, deployments []table.Row, loading bool) {
-    a.mu.RLock()
-    defer a.mu.RUnlock()
-    // Return everything in one call
-}
-```
+3. **Extend tab gating to Pods/svc** — only the Deployments tab currently blocks switching-in
+   before contexts are loaded; Pods and svc don't have the same guard (harmless today since they
+   just show the empty-state message, but inconsistent).
 
-### 4. Async Loading Improvements
-**Current:** All contexts load sequentially in `tea.Sequence()`
+4. **Per-context resource removal** — no way to drop just one selected context's rows without
+   deselecting the context in the left pane (which reloads everything on reselection).
 
-**Better:**
-```go
-// Load contexts in parallel
-return tea.Batch(cmdSequence...)
-```
+5. **Test coverage** — no `_test.go` files exist yet anywhere in `internal/`. The layout-height
+   reconciliation logic in `mainPage.go` (`lineCount`/measure-and-correct in `View()`) and the
+   `k8s.ResourceDetail` YAML/Events rendering are both good first candidates — they're pure
+   functions once given synthetic input, no live cluster needed.
 
----
-
-## ✨ Minimal Polish
-
-### 5. Loading State Visibility
-**Add:** Simple spinner next to context name while loading
-```go
-"⏳ context-name" // when loading
-"✓ context-name"  // when done
-```
-
-### 6. Empty State Messages
-**Current:** Shows "No contexts selected..." but unclear
-
-**Better:**
-```go
-if !m.appStateLoaded {
-    return styles.HelpStyle.Render(
-        "No contexts selected\n\n" +
-        "Press Ctrl+T to focus context list\n" +
-        "Use Space to select, Enter to load"
-    )
-}
-```
-
-### 7. Error Recovery
-**Add:** Auto-clear errors after viewing deployments for different context
-```go
-case msgs.DeploymentTableMsg:
-    if msg.Err == nil {
-        // Success - clear this context's error
-        delete(m.appState.Errors, msg.Context)
-    }
-```
-
-### 8. Keyboard Hints in Status Bar
-**Current:** Status bar shows state, but no action hints
-
-**Add:**
-```go
-hints := "Ctrl+T:Focus  Ctrl+E:Clear Errors  q:Quit"
-rightBits = append(rightBits, lipgloss.NewStyle().Faint(true).Render(hints))
-```
-
----
-
-## 🎯 Quick Wins (< 30 min each)
-
-### 9. Remove Unused Code
-- `internal/tui/models/pods.go` - skeleton import unused
-- `cmd/test-client/main.go` exists but use `cmd/page-client/main.go`
-- `PodPage` is defined but never integrated into main view
-
-### 10. Focus Indicator Polish
-**Current:** Hard to see which pane is focused
-
-**Add border thickness differentiation:**
-```go
-// Focused border = double line
-LeftPane = lipgloss.NewStyle().Border(lipgloss.DoubleBorder(), true)
-// Blurred border = normal line  
-LeftPaneBlur = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true)
-```
-
-### 11. Tab Switching Without Content
-**Current:** Can switch to "Deployments" tab even with no contexts selected
-
-**Fix:**
-```go
-case "right", "tab":
-    if m.activeTab+1 >= len(m.tabs) {
-        return m, nil // Don't wrap
-    }
-    // Only allow switch if content ready
-    if m.tabs[m.activeTab+1] == "Deployments" && !m.appStateLoaded {
-        return m, nil // Block switch
-    }
-    m.activeTab++
-```
-
----
-
-## 📊 Measurement Suggestions
-
-Add simple timing to see impact:
-```go
-// In mainPage.go Update()
-start := time.Now()
-defer func() {
-    if time.Since(start) > 16*time.Millisecond {
-        log.Printf("Slow update: %v", time.Since(start))
-    }
-}()
-```
-
----
-
-## Impact Priority
-
-1. **Fix #1** (duplicate AppState) - ⚡ Immediate cleanup
-2. **Fix #4** (parallel loading) - ⚡ Noticeable speed boost
-3. **Fix #6** (empty states) - ✨ Much better UX
-4. **Fix #8** (keyboard hints) - ✨ Reduces confusion
-5. **Fix #2** (table caching) - ⚡ Smoother rendering
-
-Start with these 5 and you'll have a noticeably snappier, more polished app.
+6. **Log viewing** — still the biggest gap relative to the original "log viewer" framing: Pods
+   currently expose metadata/Status/Events/YAML via the Detail pane, not log streams.
