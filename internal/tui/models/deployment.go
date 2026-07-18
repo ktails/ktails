@@ -90,7 +90,10 @@ func (d *DeploymentPage) SetSize(w, h int) {
 		return
 	}
 	d.table.SetHeight(h)
-	avail := w - 4
+	// bubbles/table pads each visible column by 2 (Padding(0,1)); budget that
+	// in so the rendered row never exceeds w.
+	const visibleCols = 4
+	avail := w - visibleCols*2
 	nameW := avail * 40 / 100
 	ageW := avail * 15 / 100
 	replicasW := avail * 22 / 100

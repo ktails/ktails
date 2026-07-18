@@ -91,7 +91,10 @@ func (p *PodPage) SetSize(w, h int) {
 		return
 	}
 	p.table.SetHeight(h)
-	avail := w - 4
+	// bubbles/table pads each visible column by 2 (Padding(0,1)); budget that
+	// in so the rendered row never exceeds w.
+	const visibleCols = 5
+	avail := w - visibleCols*2
 	nameW := avail * 38 / 100
 	nsW := avail * 22 / 100
 	statusW := avail * 15 / 100

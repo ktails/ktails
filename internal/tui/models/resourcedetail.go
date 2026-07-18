@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
@@ -80,8 +81,10 @@ func (d *ResourceDetailPage) Matches(kind, name, context string) bool {
 
 // Header renders a one-line banner identifying the loaded resource and the
 // pane's own close hint, meant to sit above the scrollable viewport so the
-// pane reads as a distinct region rather than a peer tab.
-func (d *ResourceDetailPage) Header() string {
+// pane reads as a distinct region rather than a peer tab. width caps the
+// line so it never becomes the widest line in the pane at narrow terminal
+// sizes — an unbounded line here forced the whole block to wrap.
+func (d *ResourceDetailPage) Header(width int) string {
 	p := styles.CatppuccinMocha()
 	title := lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true)
@@ -90,8 +93,12 @@ func (d *ResourceDetailPage) Header() string {
 	if label == ": " {
 		label = "Detail"
 	}
-	return title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
+	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
 		hint.Render(fmt.Sprintf("(%s — ↑/↓ pgup/pgdn scroll, Home/End jump, Esc back, Ctrl+R return)", d.context))
+	if width <= 0 {
+		return full
+	}
+	return ansi.Truncate(full, width, "…")
 }
 
 func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {

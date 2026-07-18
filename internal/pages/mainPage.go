@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/state"
 	"github.com/ktails/ktails/internal/tui/cmds"
@@ -453,7 +454,7 @@ func (m *MainPage) applyContentSizes() {
 		if detailH < 6 {
 			detailH = 6
 		}
-		listH = m.tableH - detailH - 1 // 1 line reserved for the divider/banner
+		listH = m.tableH - detailH - 2 // 2 lines reserved: the divider and the pane header
 		if listH < 3 {
 			listH = 3
 		}
@@ -520,6 +521,10 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 }
 
 func (m *MainPage) View() string {
+	if m.width < views.MinContentWidth || m.height < views.MinHeight {
+		return m.renderTooSmallOverlay()
+	}
+
 	snapshot := m.appState.Snapshot()
 
 	leftPaneWidth := m.width / 3
@@ -527,14 +532,18 @@ func (m *MainPage) View() string {
 	tabBlur := false
 	tabBottom := styles.WindowStyle
 
+	// Starting guess for the left pane's height; reconciled exactly against
+	// the right side's actual rendered height below (see rightLines/leftLines).
+	leftPaneHeight := m.height - 5
+
 	switch m.focus {
 	case focusLeftPane:
-		leftPane = views.RenderLeftPane(m.contextList.View(), leftPaneWidth, m.height-10)
+		leftPane = views.RenderLeftPane(m.contextList.View(), leftPaneWidth, leftPaneHeight)
 		tabBlur = true
 		tabBottom = styles.WindowBlurStyle
 
 	case focusTabs:
-		leftPane = views.RenderLeftPaneBlur(m.contextList.View(), leftPaneWidth, m.height-10)
+		leftPane = views.RenderLeftPaneBlur(m.contextList.View(), leftPaneWidth, leftPaneHeight)
 		tabBlur = false
 		tabBottom = styles.WindowStyle
 	}
@@ -576,7 +585,15 @@ func (m *MainPage) View() string {
 	// area is active in two, rather than being a peer tab of its own.
 	if m.showDetail {
 		p := styles.CatppuccinMocha()
-		dividerW := m.tableW
+		// RenderTabHeaders divides tabWidth by len(tabs) with integer
+		// division, so the box's real rendered width can be up to
+		// len(tabs)-1 characters narrower than tableW depending on the exact
+		// window width. Pad target width safely under that so this block
+		// never gets word-wrapped by the outer container — a wrap here (not
+		// just a truncation) adds a physical line, which is what threw the
+		// left/right pane heights out of sync at some window widths.
+		const tabRoundingSafetyMargin = 2 // len(m.tabs)-1, the max rounding loss from tabWidth/len(tabs)
+		dividerW := m.tableW - tabRoundingSafetyMargin
 		if dividerW < 1 {
 			dividerW = 1
 		}
@@ -584,7 +601,7 @@ func (m *MainPage) View() string {
 		joined := lipgloss.JoinVertical(lipgloss.Left,
 			m.tabContent,
 			divider,
-			m.deploymentDetail.Header(),
+			m.deploymentDetail.Header(dividerW),
 			m.deploymentDetail.View(),
 		)
 		// Right-pad every line up to a uniform minimum width so the outer
@@ -601,6 +618,31 @@ func (m *MainPage) View() string {
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
 	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
+
+	// lipgloss's Height()+Border()+Padding() frame math doesn't add up to a
+	// fixed constant across every width/content combination — real content
+	// (wrapped context names, table rows) can shift each side's natural
+	// rendered height by a line or two in either direction depending on the
+	// exact terminal size. Rather than trust a derived constant, measure both
+	// blocks and, if they differ, bump the shorter one's declared height by
+	// the exact gap and re-render it — guaranteeing the two borders land on
+	// the same row regardless of any wrapping quirk on either side.
+	rightLines := lineCount(tabs.String())
+	leftLines := lineCount(leftPane)
+	if gap := rightLines - leftLines; gap > 0 {
+		leftPaneHeight += gap
+		switch m.focus {
+		case focusLeftPane:
+			leftPane = views.RenderLeftPane(m.contextList.View(), leftPaneWidth, leftPaneHeight)
+		case focusTabs:
+			leftPane = views.RenderLeftPaneBlur(m.contextList.View(), leftPaneWidth, leftPaneHeight)
+		}
+	} else if gap < 0 {
+		tabs.Reset()
+		tabs.WriteString(tabHeaders)
+		tabs.WriteString("\n")
+		tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8 - gap).Align(lipgloss.Center).Render(m.tabContent))
+	}
 
 	fullView := lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()),
@@ -728,6 +770,35 @@ func (m *MainPage) renderHelpOverlay() string {
 	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
 }
 
+// renderTooSmallOverlay replaces the whole TUI with a plain message when the
+// terminal is below views.MinContentWidth x views.MinHeight — below that, the
+// real layout doesn't have room to render without breaking, so we don't try.
+func (m *MainPage) renderTooSmallOverlay() string {
+	p := styles.CatppuccinMocha()
+	msg := fmt.Sprintf(
+		"Terminal window is too small\n\nCurrent size: %d x %d\nMinimum size: %d x %d\n\nPlease resize your terminal",
+		m.width, m.height, views.MinContentWidth, views.MinHeight,
+	)
+	body := lipgloss.NewStyle().Foreground(p.Text).Align(lipgloss.Center).Render(msg)
+
+	// Below a certain point there isn't even room for the box border/padding
+	// — fall back to bare text rather than let lipgloss mangle it further.
+	if m.width < 20 || m.height < 6 {
+		return body
+	}
+
+	box := lipgloss.NewStyle().
+		Foreground(p.Text).
+		Background(p.Surface0).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(p.Yellow).
+		Padding(1, 3).
+		Align(lipgloss.Center).
+		Render(body)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
 func (m *MainPage) renderErrorOverlay(msg string) string {
 	p := styles.CatppuccinMocha()
 	maxW := m.width - 16
@@ -807,11 +878,22 @@ func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 func padLinesToMinWidth(content string, width int) string {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		if pad := width - lipgloss.Width(line); pad > 0 {
+		switch pad := width - lipgloss.Width(line); {
+		case pad > 0:
 			lines[i] = line + strings.Repeat(" ", pad)
+		case pad < 0:
+			// Safety net: a line snuck past width (e.g. table cell padding
+			// overhead) — truncate rather than let lipgloss word-wrap it,
+			// which is what produced the ragged/centered look before.
+			lines[i] = ansi.Truncate(line, width, "")
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// lineCount returns the number of lines in a rendered lipgloss block.
+func lineCount(s string) int {
+	return strings.Count(s, "\n") + 1
 }
 
 func hasLoading(loading map[string]bool) bool {

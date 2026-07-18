@@ -88,7 +88,10 @@ func (s *ServicePage) SetSize(w, h int) {
 		return
 	}
 	s.table.SetHeight(h)
-	avail := w - 4
+	// bubbles/table pads each visible column by 2 (Padding(0,1)); budget that
+	// in so the rendered row never exceeds w.
+	const visibleCols = 6
+	avail := w - visibleCols*2
 	nameW := avail * 28 / 100
 	nsW := avail * 18 / 100
 	typeW := avail * 14 / 100
