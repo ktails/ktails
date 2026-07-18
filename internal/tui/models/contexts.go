@@ -35,7 +35,7 @@ func (cl contextList) FilterValue() string { return cl.Name }
 type contextDelegate struct{}
 
 func (d contextDelegate) Height() int                             { return 2 }
-func (d contextDelegate) Spacing() int                           { return 0 }
+func (d contextDelegate) Spacing() int                            { return 0 }
 func (d contextDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
 func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
