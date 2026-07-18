@@ -32,9 +32,10 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 				pod.Status,
 				strconv.FormatInt(int64(pod.Restarts), 10),
 				pod.Age,
+				pod.Context, // hidden column, used by the detail tab
 			}
 		}
-		
+
 		return msgs.PodTableMsg{
 			Context: kubeContext,
 			Rows:    rows,
@@ -64,13 +65,36 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 				deployment.Age,
 				strconv.Itoa(int(deployment.ReadyReplicas)),
 				kubeContext,
+				deployment.Namespace, // hidden column, used by the detail panel
 			}
 		}
-		
+
 		return msgs.DeploymentTableMsg{
 			Context: kubeContext,
 			Rows:    rows,
 			Err:     nil,
 		}
+	}
+}
+
+// LoadDeploymentDetailCmd fetches detailed information for a single deployment
+func LoadDeploymentDetailCmd(client *k8s.Client, kubeContext, namespace, deploymentName string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetDeploymentDetail(kubeContext, namespace, deploymentName)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadPodDetailCmd fetches detailed information for a single pod
+func LoadPodDetailCmd(client *k8s.Client, kubeContext, namespace, podName string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetPodDetail(kubeContext, namespace, podName)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
 	}
 }

@@ -103,8 +103,14 @@ func (p *PodPage) SetSize(w, h int) {
 		{Title: "Status", Width: statusW},
 		{Title: "Restarts", Width: restartsW},
 		{Title: "Age", Width: ageW},
+		{Title: "Context", Width: 0}, // hidden, carries data for the detail tab
 	})
 	p.invalidateView()
+}
+
+// SelectedRow returns the currently highlighted table row, or nil if there are no rows.
+func (p *PodPage) SelectedRow() table.Row {
+	return p.table.SelectedRow()
 }
 
 func (p *PodPage) invalidateView() {

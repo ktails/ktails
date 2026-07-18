@@ -6,17 +6,12 @@ import (
 	"time"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
 
 type DeploymentInfo struct {
 	Name          string
-	Age           string
-	ReadyReplicas int32
-	Status        []string
-}
-
-type DeploymentDetailInfo struct {
-	Name          string
+	Namespace     string
 	Age           string
 	ReadyReplicas int32
 	Status        []string
@@ -47,6 +42,7 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 
 		deploymentInfoList = append(deploymentInfoList, DeploymentInfo{
 			Name:          deployment.Name,
+			Namespace:     deployment.Namespace,
 			Age:           age,
 			ReadyReplicas: deployment.Status.ReadyReplicas,
 			Status:        []string{}, // You can add status conditions here if needed
@@ -56,8 +52,9 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 	return deploymentInfoList, nil
 }
 
-func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName string) (DeploymentDetailInfo, error) {
-	d := DeploymentDetailInfo{}
+// GetDeploymentDetail fetches a single deployment's status, rendered YAML, and recent events.
+func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName string) (ResourceDetail, error) {
+	d := ResourceDetail{Kind: "Deployment"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
@@ -70,10 +67,24 @@ func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName 
 	}
 
 	d.Name = deployment.Name
+	d.Namespace = deployment.Namespace
 	d.Age = formatDuration(time.Since(deployment.CreationTimestamp.Time))
-	d.ReadyReplicas = deployment.Status.ReadyReplicas
+	d.Summary = fmt.Sprintf("Ready Replicas: %d", deployment.Status.ReadyReplicas)
 	for _, condition := range deployment.Status.Conditions {
-		d.Status = append(d.Status, fmt.Sprintf("%s=%s", condition.Type, condition.Status))
+		d.Status = append(d.Status, formatCondition(string(condition.Type), string(condition.Status), condition.Reason, condition.Message))
+	}
+
+	// Render clean YAML the way `kubectl get -o yaml` would, minus noisy managed fields.
+	deployment.ManagedFields = nil
+	deployment.TypeMeta = v1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"}
+	if yamlBytes, yamlErr := yaml.Marshal(deployment); yamlErr == nil {
+		d.YAML = string(yamlBytes)
+	} else {
+		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
+	}
+
+	if events, err := c.getEvents(kubeContextName, namespace, "Deployment", deploymentName); err == nil {
+		d.Events = events
 	}
 
 	return d, nil

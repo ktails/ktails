@@ -41,10 +41,11 @@ type MainPage struct {
 	appStateLoaded bool
 
 	// base models
-	contextList    *models.ContextsInfo
-	deploymentList *models.DeploymentPage
-	podList        *models.PodPage
-	focus          focusTarget
+	contextList      *models.ContextsInfo
+	deploymentList   *models.DeploymentPage
+	podList          *models.PodPage
+	deploymentDetail *models.ResourceDetailPage
+	focus            focusTarget
 
 	// k8s client
 	Client *k8s.Client
@@ -52,27 +53,37 @@ type MainPage struct {
 	// UI overlays
 	errorMessage string
 	showHelp     bool
+
+	// Detail pane — a cross-cutting bottom split opened by Enter from
+	// Deployments or Pods. It's not a peer tab: it stays put, splitting
+	// whichever top tab's content area you're currently on.
+	showDetail    bool
+	detailFocused bool
+
+	tableW, tableH int
 }
 
 func NewMainPageModel(c *k8s.Client) *MainPage {
 	ctxInfo := models.NewContextInfo(c)
 	depList := models.NewDeploymentPage(c)
 	pList := models.NewPodPageModel(c)
+	detailPage := models.NewResourceDetailPage()
 	tabs := styles.DefaultTabs
 	tabs = append(tabs, "svc")
 
 	m := &MainPage{
-		Client:         c,
-		appState:       state.NewAppState(),
-		tabs:           tabs,
-		tabContent:     "",
-		contextList:    ctxInfo,
-		deploymentList: depList,
-		podList:        pList,
-		appStateLoaded: false,
-		focus:          focusLeftPane,
-		errorMessage:   "",
-		showHelp:       false,
+		Client:           c,
+		appState:         state.NewAppState(),
+		tabs:             tabs,
+		tabContent:       "",
+		contextList:      ctxInfo,
+		deploymentList:   depList,
+		podList:          pList,
+		deploymentDetail: detailPage,
+		appStateLoaded:   false,
+		focus:            focusLeftPane,
+		errorMessage:     "",
+		showHelp:         false,
 	}
 
 	m.updateFocusStates()
@@ -108,8 +119,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleFocus()
 			return m, nil
 		case "esc":
-			// Peel dismissals one at a time: inline error first, then context errors
-			if m.errorMessage != "" {
+			// Peel dismissals one at a time: unfocus the detail pane, then close
+			// it, then inline error, then context errors.
+			if m.detailFocused {
+				m.detailFocused = false
+				m.updateFocusStates()
+			} else if m.showDetail {
+				m.showDetail = false
+				m.applyContentSizes()
+			} else if m.errorMessage != "" {
 				m.errorMessage = ""
 			} else {
 				m.appState.ClearErrors()
@@ -126,7 +144,16 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Tab navigation (tabs focused)
+		// While the detail pane has keyboard focus, it captures everything
+		// (arrows/j-k/pgup/pgdn/g/G) until Esc hands focus back to the list.
+		if m.detailFocused {
+			cmd := m.deploymentDetail.Update(msg)
+			return m, cmd
+		}
+
+		// Tab navigation (tabs focused) — switching tabs while the detail pane
+		// is open (but unfocused) is allowed; the pane is cross-cutting and
+		// stays put beneath whichever tab you land on.
 		switch keypress {
 		case "right", "]":
 			next := m.activeTab + 1
@@ -150,6 +177,16 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.activeTab = prev
 			m.updateFocusStates()
+			return m, nil
+		}
+
+		// Enter on a selected Deployment/Pod row (re)loads the detail pane for
+		// that row and gives it keyboard focus for scrolling.
+		if m.appStateLoaded && keypress == "enter" &&
+			(m.tabs[m.activeTab] == "Deployments" || m.tabs[m.activeTab] == "Pods") {
+			if cmd := m.openResourceDetail(m.tabs[m.activeTab]); cmd != nil {
+				return m, cmd
+			}
 			return m, nil
 		}
 
@@ -180,10 +217,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if tableH < 1 {
 			tableH = 1
 		}
-		m.deploymentList.SetSize(tableW, tableH)
-		m.podList.SetSize(tableW, tableH)
+		m.tableW, m.tableH = tableW, tableH
+		m.applyContentSizes()
 
 		return m, m.contextList.Update(ctxMsg)
+
+	case msgs.ResourceDetailMsg:
+		if msg.Err != nil {
+			m.deploymentDetail.SetError(msg.Err.Error())
+			return m, nil
+		}
+		m.deploymentDetail.SetDetail(msg.Detail)
+		return m, nil
 
 	case msgs.DeploymentTableMsg:
 		if msg.Err != nil {
@@ -191,7 +236,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appState.SetError(msg.Context, errMsg)
 			m.errorMessage = errMsg
 			m.appState.SetLoading(msg.Context, false)
-			{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
+			{
+				s := m.appState.Snapshot()
+				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+			}
 			return m, nil
 		}
 
@@ -254,7 +302,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 
-		{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
+		{
+			s := m.appState.Snapshot()
+			m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+		}
 		m.appStateLoaded = true
 		m.updateFocusStates()
 
@@ -270,7 +321,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appState.SetError(msg.Context, errMsg)
 			m.errorMessage = errMsg
 			m.appState.SetLoadingPods(msg.Context, false)
-			{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
+			{
+				s := m.appState.Snapshot()
+				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+			}
 			return m, nil
 		}
 
@@ -284,20 +338,28 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorMessage = fmt.Sprintf("%s: %v", msg.Title, msg.Err)
 		if msg.Context != "" {
 			m.appState.SetError(msg.Context, m.errorMessage)
-			{ s := m.appState.Snapshot(); m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts) }
+			{
+				s := m.appState.Snapshot()
+				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+			}
 		}
 		return m, nil
 	}
 
-	// Forward non-key messages to the focused component
+	// Forward non-key messages to the focused component(s)
 	if m.focus == focusTabs && m.appStateLoaded {
+		var forwardCmds []tea.Cmd
 		switch m.tabs[m.activeTab] {
 		case "Deployments":
-			cmd := m.deploymentList.Update(msg)
-			return m, cmd
+			forwardCmds = append(forwardCmds, m.deploymentList.Update(msg))
 		case "Pods":
-			cmd := m.podList.Update(msg)
-			return m, cmd
+			forwardCmds = append(forwardCmds, m.podList.Update(msg))
+		}
+		if m.showDetail {
+			forwardCmds = append(forwardCmds, m.deploymentDetail.Update(msg))
+		}
+		if len(forwardCmds) > 0 {
+			return m, tea.Batch(forwardCmds...)
 		}
 	}
 
@@ -327,10 +389,71 @@ func (m *MainPage) toggleFocus() {
 
 func (m *MainPage) updateFocusStates() {
 	m.contextList.SetFocused(m.focus == focusLeftPane)
-	shouldFocusDeployments := m.focus == focusTabs && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded
+	listActive := m.focus == focusTabs && !m.detailFocused
+	shouldFocusDeployments := listActive && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded
 	m.deploymentList.SetFocused(shouldFocusDeployments)
-	shouldFocusPods := m.focus == focusTabs && m.tabs[m.activeTab] == "Pods" && m.appStateLoaded
+	shouldFocusPods := listActive && m.tabs[m.activeTab] == "Pods" && m.appStateLoaded
 	m.podList.SetFocused(shouldFocusPods)
+	m.deploymentDetail.SetFocused(m.focus == focusTabs && m.detailFocused)
+}
+
+// detailPaneHeightPercent is the share of the tab content area given to the
+// detail pane, out of the remainder after list rows.
+const detailPaneHeightPercent = 45
+
+// applyContentSizes resizes the Deployments/Pods lists and the detail pane to
+// split the tab content area in two whenever the detail pane is open.
+func (m *MainPage) applyContentSizes() {
+	listH := m.tableH
+	detailH := 0
+	if m.showDetail {
+		detailH = m.tableH * detailPaneHeightPercent / 100
+		if detailH < 6 {
+			detailH = 6
+		}
+		listH = m.tableH - detailH - 1 // 1 line reserved for the divider/banner
+		if listH < 3 {
+			listH = 3
+		}
+	}
+	m.deploymentList.SetSize(m.tableW, listH)
+	m.podList.SetSize(m.tableW, listH)
+	m.deploymentDetail.SetSize(m.tableW, detailH)
+}
+
+// openResourceDetail loads detail for the currently selected row on the given
+// top tab ("Deployments" or "Pods") into the shared bottom detail pane.
+// Returns nil if there's no valid selection.
+func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
+	var kind, name, ctxName, namespace string
+
+	switch sourceTab {
+	case "Deployments":
+		row := m.deploymentList.SelectedRow()
+		if len(row) < 5 {
+			return nil
+		}
+		kind, name, ctxName, namespace = "Deployment", row[0], row[3], row[4]
+	case "Pods":
+		row := m.podList.SelectedRow()
+		if len(row) < 6 {
+			return nil
+		}
+		kind, name, namespace, ctxName = "Pod", row[0], row[1], row[5]
+	default:
+		return nil
+	}
+
+	m.deploymentDetail.StartLoading(kind, name, ctxName)
+	m.showDetail = true
+	m.detailFocused = true
+	m.applyContentSizes()
+	m.updateFocusStates()
+
+	if kind == "Pod" {
+		return cmds.LoadPodDetailCmd(m.Client, ctxName, namespace, name)
+	}
+	return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
 }
 
 func (m *MainPage) View() string {
@@ -355,6 +478,7 @@ func (m *MainPage) View() string {
 
 	// Build tab content
 	tabs := strings.Builder{}
+	tabWidth := m.width - leftPaneWidth - 8
 
 	emptyMsg := "No contexts selected\n\nPress Tab to focus contexts\nSpace to select • Enter to load"
 	switch m.tabs[m.activeTab] {
@@ -379,7 +503,23 @@ func (m *MainPage) View() string {
 		m.tabContent = m.renderLoadingIndicator(snapshot.LoadingStates) + "\n\n" + m.tabContent
 	}
 
-	tabWidth := m.width - leftPaneWidth - 8
+	// The detail pane is cross-cutting: it splits whichever top tab's content
+	// area is active in two, rather than being a peer tab of its own.
+	if m.showDetail {
+		p := styles.CatppuccinMocha()
+		dividerW := tabWidth
+		if dividerW < 1 {
+			dividerW = 1
+		}
+		divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", dividerW))
+		m.tabContent = lipgloss.JoinVertical(lipgloss.Left,
+			m.tabContent,
+			divider,
+			m.deploymentDetail.Header(),
+			m.deploymentDetail.View(),
+		)
+	}
+
 	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
@@ -478,8 +618,10 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},
 		{"Space", "Toggle context selection"},
-		{"Enter", "Confirm selection & load"},
-		{"Esc", "Close overlay / dismiss error"},
+		{"Enter", "Confirm selection & load / open + focus detail pane"},
+		{"↑/↓ j/k PgUp/PgDn", "Scroll detail pane (while it has focus)"},
+		{"Home / End", "Jump to top / bottom of detail pane"},
+		{"Esc", "Unfocus detail pane, then close it / overlay / dismiss error"},
 		{"?", "Toggle this help"},
 		{"q / Ctrl+C", "Quit"},
 	}

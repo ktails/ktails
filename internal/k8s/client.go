@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/yaml"
 )
 
 // Client wraps Kubernetes client operations with support for multiple contexts
@@ -307,6 +308,55 @@ func (c *Client) GetPodInfo(kubeContext, namespace, podName string) (*PodInfo, e
 	return c.podToPodInfo(pod, kubeContext), nil
 }
 
+// GetPodDetail fetches a single pod's status, rendered YAML, and recent events.
+func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceDetail, error) {
+	d := ResourceDetail{Kind: "Pod"}
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
+	if err != nil {
+		return d, fmt.Errorf("failed to get pod %s in namespace %s (context %s): %w", podName, namespace, kubeContext, err)
+	}
+
+	var restarts int32
+	for _, cs := range pod.Status.ContainerStatuses {
+		restarts += cs.RestartCount
+	}
+
+	d.Name = pod.Name
+	d.Namespace = pod.Namespace
+	d.Age = formatDuration(time.Since(pod.CreationTimestamp.Time))
+	d.Summary = fmt.Sprintf("Phase: %s  Restarts: %d  Node: %s", pod.Status.Phase, restarts, pod.Spec.NodeName)
+	for _, condition := range pod.Status.Conditions {
+		d.Status = append(d.Status, formatCondition(string(condition.Type), string(condition.Status), condition.Reason, condition.Message))
+	}
+
+	if len(pod.Status.ContainerStatuses) > 0 {
+		d.Status = append(d.Status, "", "Containers:")
+		for _, cs := range pod.Status.ContainerStatuses {
+			d.Status = append(d.Status, fmt.Sprintf("  %s: %s  ready=%t restarts=%d image=%s",
+				cs.Name, containerStateString(cs.State), cs.Ready, cs.RestartCount, cs.Image))
+		}
+	}
+
+	pod.ManagedFields = nil
+	pod.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}
+	if yamlBytes, yamlErr := yaml.Marshal(pod); yamlErr == nil {
+		d.YAML = string(yamlBytes)
+	} else {
+		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
+	}
+
+	if events, err := c.getEvents(kubeContext, namespace, "Pod", podName); err == nil {
+		d.Events = events
+	}
+
+	return d, nil
+}
+
 // podToPodInfo converts a pod object to PodInfo
 func (c *Client) podToPodInfo(pod *v1.Pod, kubeContext string) *PodInfo {
 	age := time.Since(pod.CreationTimestamp.Time)
@@ -347,6 +397,32 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 	}
 	return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
+}
+
+// formatCondition renders a status condition, omitting the reason/message
+// parenthetical when both are empty (common for healthy conditions).
+func formatCondition(condType, status, reason, message string) string {
+	if reason == "" && message == "" {
+		return fmt.Sprintf("%s=%s", condType, status)
+	}
+	return fmt.Sprintf("%s=%s (%s: %s)", condType, status, reason, message)
+}
+
+// containerStateString summarizes a container's current state for display.
+func containerStateString(state v1.ContainerState) string {
+	switch {
+	case state.Running != nil:
+		return fmt.Sprintf("Running (started %s ago)", formatDuration(time.Since(state.Running.StartedAt.Time)))
+	case state.Waiting != nil:
+		if state.Waiting.Message != "" {
+			return fmt.Sprintf("Waiting (%s: %s)", state.Waiting.Reason, state.Waiting.Message)
+		}
+		return fmt.Sprintf("Waiting (%s)", state.Waiting.Reason)
+	case state.Terminated != nil:
+		return fmt.Sprintf("Terminated (%s, exit %d)", state.Terminated.Reason, state.Terminated.ExitCode)
+	default:
+		return "Unknown"
+	}
 }
 
 // StreamLogs streams logs from a pod

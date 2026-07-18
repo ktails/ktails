@@ -21,6 +21,7 @@ func podTableColumns() []table.Column {
 		{Title: "Status", Width: 10},
 		{Title: "Restarts", Width: 10},
 		{Title: "Age", Width: 10},
+		{Title: "Context", Width: 0}, // hidden, carries data for the detail tab
 	}
 }
 
@@ -30,5 +31,6 @@ func deploymentTableColumns() []table.Column {
 		{Title: "Age", Width: 10},
 		{Title: "ReadyReplicas", Width: 15},
 		{Title: "Contexts", Width: 12},
+		{Title: "Namespace", Width: 0}, // hidden, carries data for the detail panel
 	}
 }

@@ -70,6 +70,11 @@ func (d *DeploymentPage) View() string {
 	return view
 }
 
+// SelectedRow returns the currently highlighted table row, or nil if there are no rows.
+func (d *DeploymentPage) SelectedRow() table.Row {
+	return d.table.SelectedRow()
+}
+
 func (d *DeploymentPage) SetFocused(f bool) {
 	d.focused = f
 	if f {
@@ -95,6 +100,7 @@ func (d *DeploymentPage) SetSize(w, h int) {
 		{Title: "Age", Width: ageW},
 		{Title: "ReadyReplicas", Width: replicasW},
 		{Title: "Context", Width: ctxW},
+		{Title: "Namespace", Width: 0}, // hidden, carries data for the detail panel
 	})
 	d.invalidateView()
 }

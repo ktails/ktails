@@ -1,7 +1,10 @@
 // Package msgs holds tea.Msg messages for routing k8s info to pages
 package msgs
 
-import "github.com/charmbracelet/bubbles/table"
+import (
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/ktails/ktails/internal/k8s"
+)
 
 // PodTableMsg carries pod data or errors from async operations
 type PodTableMsg struct {
@@ -27,6 +30,14 @@ type DeploymentTableMsg struct {
 type ContextsStateMsg struct {
 	Selected   []ContextsSelectedMsg
 	Deselected []string // context names to remove
+}
+
+// ResourceDetailMsg carries a single resource's (Deployment, Pod, ...) detail
+// data or an error from an async fetch, for the Detail tab.
+type ResourceDetailMsg struct {
+	Context string
+	Detail  k8s.ResourceDetail
+	Err     error
 }
 
 // ErrorMsg is a general error message for displaying errors to users
