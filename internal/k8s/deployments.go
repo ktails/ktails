@@ -10,11 +10,12 @@ import (
 )
 
 type DeploymentInfo struct {
-	Name          string
-	Namespace     string
-	Age           string
-	ReadyReplicas int32
-	Status        []string
+	Name            string
+	Namespace       string
+	Age             string
+	ReadyReplicas   int32
+	DesiredReplicas int32
+	Status          []string
 }
 
 // GetDeploymentInfo retrieves deployment information for a specific context and namespace
@@ -40,12 +41,19 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 	for _, deployment := range deploymentList.Items {
 		age := formatDuration(time.Since(deployment.CreationTimestamp.Time))
 
+		// Spec.Replicas is nil when unset, which the Kubernetes API defaults to 1.
+		desiredReplicas := int32(1)
+		if deployment.Spec.Replicas != nil {
+			desiredReplicas = *deployment.Spec.Replicas
+		}
+
 		deploymentInfoList = append(deploymentInfoList, DeploymentInfo{
-			Name:          deployment.Name,
-			Namespace:     deployment.Namespace,
-			Age:           age,
-			ReadyReplicas: deployment.Status.ReadyReplicas,
-			Status:        []string{}, // You can add status conditions here if needed
+			Name:            deployment.Name,
+			Namespace:       deployment.Namespace,
+			Age:             age,
+			ReadyReplicas:   deployment.Status.ReadyReplicas,
+			DesiredReplicas: desiredReplicas,
+			Status:          []string{}, // You can add status conditions here if needed
 		})
 	}
 

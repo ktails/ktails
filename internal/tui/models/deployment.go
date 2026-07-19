@@ -49,13 +49,29 @@ func (d *DeploymentPage) SetRows(rows []table.Row) {
 	cloned := cloneRows(rows)
 	d.rows = cloned
 	d.rowsSet = true
-	d.table.SetRows(cloned)
+	d.pushDisplayRows()
 	if d.focused {
 		d.table.Focus()
 	} else {
 		d.table.Blur()
 	}
 	d.invalidateView()
+}
+
+// pushDisplayRows rebuilds the table's rows from d.rows (the raw fetched
+// data), coloring the ready/desired replica cell to reflect deployment
+// health. Called whenever raw rows change.
+func (d *DeploymentPage) pushDisplayRows() {
+	display := make([]table.Row, len(d.rows))
+	for i, row := range d.rows {
+		copied := make(table.Row, len(row))
+		copy(copied, row)
+		if len(copied) > 2 {
+			copied[2] = colorReplicaCell(copied[2])
+		}
+		display[i] = copied
+	}
+	d.table.SetRows(display)
 }
 
 func (d *DeploymentPage) View() string {
