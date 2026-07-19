@@ -1,11 +1,107 @@
 package models
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
+
+// statusRawColumn is the index of the Status field within a raw (un-prefixed)
+// Pods row, matching the column order built in cmds.LoadPodInfoCmd.
+const statusRawColumn = 2
+
+// statusColIndex is the index of the Status column within podTableColumns
+// (and the columns SetSize rebuilds), used to locate its rendered span.
+const statusColIndex = 3
+
+// statusColor maps a pod phase (PodInfo.Status) to its Catppuccin Mocha
+// status color, per the Status Colors spec: Running=Green, Pending=Yellow,
+// Failed/Unknown=Red, Succeeded=Overlay1 (dim). Unrecognized phases are
+// left uncolored.
+func statusColor(status string) (lipgloss.Color, bool) {
+	p := styles.CatppuccinMocha()
+	switch status {
+	case "Running":
+		return p.Green, true
+	case "Pending":
+		return p.Yellow, true
+	case "Failed", "Unknown":
+		return p.Red, true
+	case "Succeeded":
+		return p.Overlay1, true
+	default:
+		return "", false
+	}
+}
+
+// statusCellSpan returns the visual column range [left, left+width) that the
+// rendered Status cell occupies within a table row line, accounting for the
+// Padding(0,1) bubbles/table applies to every visible cell. Columns with
+// Width <= 0 are hidden and skipped entirely by bubbles/table's renderer, so
+// they contribute nothing to the offset. Returns left == -1 if the Status
+// column isn't currently visible.
+func statusCellSpan(cols []table.Column) (left, width int) {
+	for i, col := range cols {
+		if col.Width <= 0 {
+			continue
+		}
+		cellWidth := col.Width + 2
+		if i == statusColIndex {
+			return left, cellWidth
+		}
+		left += cellWidth
+	}
+	return -1, 0
+}
+
+// colorizeStatusColumn recolors the Status cell of each data row in an
+// already-rendered table view, by phase (see statusColor).
+//
+// bubbles/table applies one Styles.Cell uniformly to every cell with no
+// per-cell hook, so per-cell color has to be embedded in the cell's content
+// string. But bubbles/table truncates/pads cell values with go-runewidth
+// *before* handing them to lipgloss, and go-runewidth counts ANSI escape
+// bytes as visible width — embedding a lipgloss-colored string directly into
+// a table.Row value gets its escape codes sliced apart on anything but very
+// wide columns, corrupting the row (verified: a colored 7-char "Running"
+// value in a 10-wide column renders as garbled escape bytes and an
+// unwanted "…").
+//
+// So instead this recolors the plain text bubbles/table already rendered
+// and padded correctly, using the ansi package's escape-aware Cut/Strip,
+// which also keeps any style already active at that point in the line
+// (e.g. the current row's Selected background) correctly reopened after.
+//
+// headerLines is the number of lines the header (and its border) occupies
+// at the top of view, before the first data row.
+func colorizeStatusColumn(view string, cols []table.Column, rows []table.Row, headerLines int) string {
+	left, width := statusCellSpan(cols)
+	if left < 0 {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	for i, row := range rows {
+		li := i + headerLines
+		if li >= len(lines) || len(row) <= statusRawColumn {
+			continue
+		}
+		col, ok := statusColor(row[statusRawColumn])
+		if !ok {
+			continue
+		}
+		line := lines[li]
+		prefix := ansi.Cut(line, 0, left)
+		cell := ansi.Strip(ansi.Cut(line, left, left+width))
+		suffix := ansi.Cut(line, left+width, len(line))
+		lines[li] = prefix + lipgloss.NewStyle().Foreground(col).Render(cell) + suffix
+	}
+	return strings.Join(lines, "\n")
+}
 
 type PodPage struct {
 	Client  *k8s.Client
@@ -161,8 +257,10 @@ func (p *PodPage) View() string {
 		return p.cachedView
 	}
 
-	p.table.SetStyles(styles.CatppuccinTableStyles())
-	view := p.table.View()
+	tableStyles := styles.CatppuccinTableStyles()
+	p.table.SetStyles(tableStyles)
+	headerLines := lipgloss.Height(tableStyles.Header.Render("Status"))
+	view := colorizeStatusColumn(p.table.View(), p.table.Columns(), p.rows, headerLines)
 	p.cachedView = view
 	p.viewDirty = false
 	return view
