@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ktails/ktails/internal/config"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/pages"
 	"github.com/ktails/ktails/utils"
@@ -35,7 +36,13 @@ func main() {
 	}
 	fmt.Println("✅ Client created successfully")
 
-	mp := pages.NewMainPageModel(client)
+	cfg, err := config.Load("")
+	if err != nil {
+		fmt.Printf("❌ Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	mp := pages.NewMainPageModel(client, cfg.Preferences.RefreshInterval)
 
 	p := tea.NewProgram(mp, tea.WithAltScreen())
 	if r, err := p.Run(); err != nil {
