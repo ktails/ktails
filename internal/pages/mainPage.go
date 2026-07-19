@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -315,6 +314,29 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Ctrl+W toggles wide mode on the active tab's table (sticky per tab,
+		// reset on resize); Shift+Left/Right scroll one column at a time while
+		// wide mode is on. Both are a no-op outside the three resource tabs.
+		if m.appStateLoaded {
+			switch keypress {
+			case "ctrl+w":
+				if t := m.activeResourceTable(); t != nil {
+					t.ToggleWideMode()
+				}
+				return m, nil
+			case "shift+left":
+				if t := m.activeResourceTable(); t != nil && t.WideMode() {
+					t.ScrollLeft()
+				}
+				return m, nil
+			case "shift+right":
+				if t := m.activeResourceTable(); t != nil && t.WideMode() {
+					t.ScrollRight()
+				}
+				return m, nil
+			}
+		}
+
 		// Content keys forwarded to the active tab
 		if m.appStateLoaded {
 			switch m.tabs[m.activeTab] {
@@ -432,9 +454,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if len(snapshot.SelectedContexts) == 0 {
 			m.appStateLoaded = false
-			m.deploymentList.SetRows([]table.Row{})
-			m.podList.SetRows([]table.Row{})
-			m.svcList.SetRows([]table.Row{})
+			m.deploymentList.SetRows([]msgs.RowData{})
+			m.podList.SetRows([]msgs.RowData{})
+			m.svcList.SetRows([]msgs.RowData{})
 			m.contextList.SetContextStates(nil, nil, nil)
 			m.updateFocusStates()
 			return m, nil
@@ -636,22 +658,31 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 	switch sourceTab {
 	case "Deployments":
 		row := m.deploymentList.SelectedRow()
-		if len(row) < 5 {
+		if row == nil {
 			return nil
 		}
-		kind, name, ctxName, namespace = "Deployment", row[0], row[3], row[4]
+		kind = "Deployment"
+		name, _ = row[msgs.DeployKeyName].(string)
+		ctxName, _ = row[msgs.DeployKeyContext].(string)
+		namespace, _ = row[msgs.DeployKeyNamespace].(string)
 	case "Pods":
 		row := m.podList.SelectedRow()
-		if len(row) < 6 {
+		if row == nil {
 			return nil
 		}
-		kind, name, namespace, ctxName = "Pod", row[0], row[1], row[5]
+		kind = "Pod"
+		name, _ = row[msgs.PodKeyName].(string)
+		namespace, _ = row[msgs.PodKeyNamespace].(string)
+		ctxName, _ = row[msgs.PodKeyContext].(string)
 	case "svc":
 		row := m.svcList.SelectedRow()
-		if len(row) < 7 {
+		if row == nil {
 			return nil
 		}
-		kind, name, namespace, ctxName = "Service", row[0], row[1], row[6]
+		kind = "Service"
+		name, _ = row[msgs.SvcKeyName].(string)
+		namespace, _ = row[msgs.SvcKeyNamespace].(string)
+		ctxName, _ = row[msgs.SvcKeyContext].(string)
 	default:
 		return nil
 	}
@@ -680,6 +711,31 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 	default:
 		return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
 	}
+}
+
+// wideModeTable is implemented identically by DeploymentPage/PodPage/
+// ServicePage — the Ctrl+W wide-mode toggle and Shift+Left/Right column
+// scroll operate on whichever of the three is the active tab.
+type wideModeTable interface {
+	ToggleWideMode()
+	WideMode() bool
+	ScrollLeft()
+	ScrollRight()
+	ScrollStatus() (offset, total int, ok bool)
+}
+
+// activeResourceTable returns the active tab's table as a wideModeTable, or
+// nil if the active tab isn't one of the three resource tables.
+func (m *MainPage) activeResourceTable() wideModeTable {
+	switch m.tabs[m.activeTab] {
+	case "Deployments":
+		return m.deploymentList
+	case "Pods":
+		return m.podList
+	case "svc":
+		return m.svcList
+	}
+	return nil
 }
 
 // refreshActiveTab re-fetches the active tab's resource type for every
@@ -729,14 +785,17 @@ type podLogTarget struct {
 
 // podLogTargets expands the given raw Pods-table rows into one target per
 // container (all containers of each pod are tailed — decision #4).
-func podLogTargets(rows []table.Row) []podLogTarget {
+func podLogTargets(rows []msgs.RowData) []podLogTarget {
 	var targets []podLogTarget
 	for _, row := range rows {
-		if len(row) < 7 || row[6] == "" {
+		containers, _ := row[msgs.PodKeyContainers].(string)
+		if containers == "" {
 			continue
 		}
-		name, namespace, ctxName := row[0], row[1], row[5]
-		for _, container := range strings.Split(row[6], ",") {
+		name, _ := row[msgs.PodKeyName].(string)
+		namespace, _ := row[msgs.PodKeyNamespace].(string)
+		ctxName, _ := row[msgs.PodKeyContext].(string)
+		for _, container := range strings.Split(containers, ",") {
 			targets = append(targets, podLogTarget{
 				key:       ctxName + "/" + namespace + "/" + name + "/" + container,
 				context:   ctxName,
@@ -755,7 +814,7 @@ func podLogTargets(rows []table.Row) []podLogTarget {
 // present are opened, sources no longer targeted are closed, and unchanged
 // sources are left running untouched. An empty target set closes the pane.
 func (m *MainPage) openPodLogs() tea.Cmd {
-	var rows []table.Row
+	var rows []msgs.RowData
 	if keys := m.podList.CheckedKeys(); len(keys) > 0 {
 		for _, key := range keys {
 			if row := m.podList.CheckedRow(key); row != nil {
@@ -1060,6 +1119,11 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	if activeTabName == "Pods" {
 		if checkedCount := len(m.podList.CheckedKeys()); checkedCount > 0 {
 			statusBits = append(statusBits, fmt.Sprintf("☑ %d checked · l: open merged · Ctrl+X: clear", checkedCount))
+		}
+	}
+	if t := m.activeResourceTable(); t != nil {
+		if offset, total, ok := t.ScrollStatus(); ok {
+			statusBits = append(statusBits, fmt.Sprintf("◂ col %d/%d ▸", offset, total))
 		}
 	}
 	if len(statusBits) == 0 {

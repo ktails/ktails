@@ -1,9 +1,9 @@
 package models
 
-import "github.com/charmbracelet/bubbles/table"
+import "github.com/ktails/ktails/internal/tui/msgs"
 
 // Helper functions (shared with deployment.go - consider moving to shared utils)
-func rowsEqual(a, b []table.Row) bool {
+func rowsEqual(a, b []msgs.RowData) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -13,8 +13,8 @@ func rowsEqual(a, b []table.Row) bool {
 			return false
 		}
 
-		for j := range a[i] {
-			if a[i][j] != b[i][j] {
+		for k, v := range a[i] {
+			if bv, ok := b[i][k]; !ok || bv != v {
 				return false
 			}
 		}
@@ -23,20 +23,22 @@ func rowsEqual(a, b []table.Row) bool {
 	return true
 }
 
-func cloneRows(rows []table.Row) []table.Row {
+func cloneRows(rows []msgs.RowData) []msgs.RowData {
 	if len(rows) == 0 {
-		return make([]table.Row, 0)
+		return make([]msgs.RowData, 0)
 	}
 
-	cloned := make([]table.Row, len(rows))
+	cloned := make([]msgs.RowData, len(rows))
 	for i := range rows {
 		if len(rows[i]) == 0 {
 			cloned[i] = nil
 			continue
 		}
 
-		cells := make(table.Row, len(rows[i]))
-		copy(cells, rows[i])
+		cells := make(msgs.RowData, len(rows[i]))
+		for k, v := range rows[i] {
+			cells[k] = v
+		}
 		cloned[i] = cells
 	}
 

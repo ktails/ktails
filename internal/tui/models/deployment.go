@@ -2,30 +2,37 @@
 package models
 
 import (
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
 
 type DeploymentPage struct {
 	Client *k8s.Client
-	table  table.Model
+	table  btable.Model
 	// share contextList
 	ContextName string
 	Namespace   string
 
-	rows       []table.Row
+	rows       []msgs.RowData
 	rowsSet    bool
 	cachedView string
 	viewDirty  bool
 	focused    bool
+
+	wideMode     bool
+	tableW       int
+	tableH       int
+	wideColCount int
+	scrollable   bool
 }
 
 func NewDeploymentPage(client *k8s.Client) *DeploymentPage {
 	return &DeploymentPage{
 		Client:    client,
-		table:     table.New(table.WithColumns(deploymentTableColumns())),
+		table:     newBubbleTable(deploymentNarrowColumns()),
 		viewDirty: true,
 	}
 }
@@ -41,37 +48,92 @@ func (d *DeploymentPage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func (d *DeploymentPage) SetRows(rows []table.Row) {
+func (d *DeploymentPage) SetRows(rows []msgs.RowData) {
 	if d.rowsSet && rowsEqual(rows, d.rows) {
 		return
 	}
 
-	cloned := cloneRows(rows)
-	d.rows = cloned
+	d.rows = cloneRows(rows)
 	d.rowsSet = true
+	d.applyColumns()
 	d.pushDisplayRows()
 	if d.focused {
-		d.table.Focus()
+		d.table = d.table.Focused(true)
 	} else {
-		d.table.Blur()
+		d.table = d.table.Focused(false)
 	}
 	d.invalidateView()
 }
 
 // pushDisplayRows rebuilds the table's rows from d.rows (the raw fetched
-// data), coloring the ready/desired replica cell to reflect deployment
-// health. Called whenever raw rows change.
+// data), coloring the ready/desired replica cell via StyledCell to reflect
+// deployment health. Called whenever raw rows change.
 func (d *DeploymentPage) pushDisplayRows() {
-	display := make([]table.Row, len(d.rows))
+	display := make([]btable.Row, len(d.rows))
 	for i, row := range d.rows {
-		copied := make(table.Row, len(row))
-		copy(copied, row)
-		if len(copied) > 2 {
-			copied[2] = colorReplicaCell(copied[2])
-		}
-		display[i] = copied
+		display[i] = btable.NewRow(btable.RowData{
+			msgs.DeployKeyName:      row[msgs.DeployKeyName],
+			msgs.DeployKeyAge:       row[msgs.DeployKeyAge],
+			msgs.DeployKeyReplicas:  btable.NewStyledCellWithStyleFunc(row[msgs.DeployKeyReplicas], replicaCellStyle),
+			msgs.DeployKeyContext:   row[msgs.DeployKeyContext],
+			msgs.DeployKeyNamespace: row[msgs.DeployKeyNamespace],
+		})
 	}
-	d.table.SetRows(display)
+	d.table = d.table.WithRows(display)
+}
+
+// applyColumns rebuilds the column set for the current mode (narrow/wide),
+// auto-fitting wide-mode widths to d.rows — called on every SetRows/ToggleWideMode.
+func (d *DeploymentPage) applyColumns() {
+	var cols []btable.Column
+	if d.wideMode {
+		cols = deploymentWideColumns(d.rows)
+	} else {
+		cols = deploymentNarrowColumns()
+	}
+	d.wideColCount = len(cols)
+	d.scrollable = d.wideMode && totalColumnsWidth(cols) > d.tableW
+	d.table = d.table.WithColumns(cols)
+	// See PodPage.applyColumns: WithTargetWidth must be cleared in wide mode
+	// or bubble-table forces totalWidth to it, silently disabling scroll.
+	if d.wideMode {
+		d.table = d.table.WithTargetWidth(0).WithMaxTotalWidth(d.tableW)
+	} else {
+		d.table = d.table.WithTargetWidth(d.tableW).WithMaxTotalWidth(d.tableW)
+	}
+}
+
+// ToggleWideMode flips wide mode for this tab (sticky until the next
+// resize) and rebuilds columns to fit the current data.
+func (d *DeploymentPage) ToggleWideMode() {
+	d.wideMode = !d.wideMode
+	d.applyColumns()
+	d.pushDisplayRows()
+	d.invalidateView()
+}
+
+func (d *DeploymentPage) WideMode() bool {
+	return d.wideMode
+}
+
+// ScrollStatus reports the current horizontal scroll position for the
+// status bar's "◂ col N/M ▸" indicator. ok is false when the indicator
+// should be hidden.
+func (d *DeploymentPage) ScrollStatus() (offset, total int, ok bool) {
+	if !d.wideMode || !d.scrollable {
+		return 0, 0, false
+	}
+	return d.table.GetHorizontalScrollColumnOffset() + 1, d.wideColCount, true
+}
+
+func (d *DeploymentPage) ScrollLeft() {
+	d.table = d.table.ScrollLeft()
+	d.invalidateView()
+}
+
+func (d *DeploymentPage) ScrollRight() {
+	d.table = d.table.ScrollRight()
+	d.invalidateView()
 }
 
 func (d *DeploymentPage) View() string {
@@ -79,25 +141,25 @@ func (d *DeploymentPage) View() string {
 		return d.cachedView
 	}
 
-	d.table.SetStyles(styles.CatppuccinTableStyles())
 	view := d.table.View()
 	d.cachedView = view
 	d.viewDirty = false
 	return view
 }
 
-// SelectedRow returns the currently highlighted table row, or nil if there are no rows.
-func (d *DeploymentPage) SelectedRow() table.Row {
-	return d.table.SelectedRow()
+// SelectedRow returns the raw (un-prefixed) row currently under the cursor,
+// or nil if there are no rows.
+func (d *DeploymentPage) SelectedRow() msgs.RowData {
+	idx := d.table.GetHighlightedRowIndex()
+	if idx < 0 || idx >= len(d.rows) {
+		return nil
+	}
+	return d.rows[idx]
 }
 
 func (d *DeploymentPage) SetFocused(f bool) {
 	d.focused = f
-	if f {
-		d.table.Focus()
-	} else {
-		d.table.Blur()
-	}
+	d.table = d.table.Focused(f)
 	d.invalidateView()
 }
 
@@ -105,22 +167,23 @@ func (d *DeploymentPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
-	d.table.SetHeight(h)
-	// bubbles/table pads each visible column by 2 (Padding(0,1)); budget that
-	// in so the rendered row never exceeds w.
-	const visibleCols = 4
-	avail := w - visibleCols*2
-	nameW := avail * 40 / 100
-	ageW := avail * 15 / 100
-	replicasW := avail * 22 / 100
-	ctxW := avail - nameW - ageW - replicasW
-	d.table.SetColumns([]table.Column{
-		{Title: "Name", Width: nameW},
-		{Title: "Age", Width: ageW},
-		{Title: "ReadyReplicas", Width: replicasW},
-		{Title: "Context", Width: ctxW},
-		{Title: "Namespace", Width: 0}, // hidden, carries data for the detail panel
-	})
+	prevIdx := d.table.GetHighlightedRowIndex()
+	d.tableW, d.tableH = w, h
+	d.wideMode = false
+
+	st := styles.CatppuccinBubbleTableStyle()
+	d.table = newBubbleTable(deploymentNarrowColumns()).
+		WithMinimumHeight(h).
+		WithTargetWidth(w).
+		WithMaxTotalWidth(w).
+		HeaderStyle(st.Header).
+		HighlightStyle(st.Highlight).
+		WithBaseStyle(st.Base).
+		Focused(d.focused)
+	d.wideColCount = len(deploymentNarrowColumns())
+	d.scrollable = false
+	d.pushDisplayRows()
+	d.table = d.table.WithHighlightedRow(prevIdx)
 	d.invalidateView()
 }
 
