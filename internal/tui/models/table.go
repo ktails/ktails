@@ -1,6 +1,13 @@
 package models
 
-import "github.com/charmbracelet/bubbles/table"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/ktails/ktails/internal/tui/styles"
+)
 
 // func contextTableColumns() []table.Column {
 // 	return []table.Column{
@@ -35,6 +42,34 @@ func deploymentTableColumns() []table.Column {
 		{Title: "Contexts", Width: 12},
 		{Title: "Namespace", Width: 0}, // hidden, carries data for the detail panel
 	}
+}
+
+// colorReplicaCell colors a "ready/desired" replica cell (as produced by
+// LoadDeploymentInfoCmd): green when fully ready, yellow when partially
+// ready, red when zero replicas are ready but some are desired.
+func colorReplicaCell(cell string) string {
+	ready, desired, ok := strings.Cut(cell, "/")
+	if !ok {
+		return cell
+	}
+	readyN, err := strconv.Atoi(ready)
+	if err != nil {
+		return cell
+	}
+	desiredN, err := strconv.Atoi(desired)
+	if err != nil {
+		return cell
+	}
+
+	p := styles.CatppuccinMocha()
+	color := p.Red
+	switch {
+	case readyN == desiredN:
+		color = p.Green
+	case readyN > 0:
+		color = p.Yellow
+	}
+	return lipgloss.NewStyle().Foreground(color).Render(cell)
 }
 
 func svcTableColumns() []table.Column {

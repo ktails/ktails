@@ -82,7 +82,7 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 			rows[i] = table.Row{
 				deployment.Name,
 				deployment.Age,
-				strconv.Itoa(int(deployment.ReadyReplicas)),
+				strconv.Itoa(int(deployment.ReadyReplicas)) + "/" + strconv.Itoa(int(deployment.DesiredReplicas)),
 				kubeContext,
 				deployment.Namespace, // hidden column, used by the detail panel
 			}
