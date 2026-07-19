@@ -23,6 +23,10 @@ const (
 	PodKeyAge        = "age"
 	PodKeyContext    = "context"    // hidden, used by the detail tab
 	PodKeyContainers = "containers" // hidden, comma-separated, used by the log pane
+	PodKeyNode       = "node"       // wide mode only
+	PodKeyNodeIP     = "nodeIP"     // wide mode only
+	PodKeyPodIP      = "podIP"      // wide mode only
+	PodKeyReady      = "ready"      // wide mode only, "ready/total" containers
 )
 
 // Column keys for Deployments rows (see cmds.LoadDeploymentInfoCmd).
@@ -32,17 +36,24 @@ const (
 	DeployKeyReplicas  = "replicas"
 	DeployKeyContext   = "context"
 	DeployKeyNamespace = "namespace" // hidden, used by the detail panel
+	DeployKeyStrategy  = "strategy"  // wide mode only
+	DeployKeyAvailable = "available" // wide mode only
+	DeployKeyUpdated   = "updated"   // wide mode only
+	DeployKeySelector  = "selector"  // wide mode only
 )
 
 // Column keys for svc rows (see cmds.LoadServiceInfoCmd).
 const (
-	SvcKeyName      = "name"
-	SvcKeyNamespace = "namespace"
-	SvcKeyType      = "type"
-	SvcKeyClusterIP = "clusterIP"
-	SvcKeyPorts     = "ports"
-	SvcKeyAge       = "age"
-	SvcKeyContext   = "context" // hidden, used by the detail tab
+	SvcKeyName        = "name"
+	SvcKeyNamespace   = "namespace"
+	SvcKeyType        = "type"
+	SvcKeyClusterIP   = "clusterIP"
+	SvcKeyPorts       = "ports"
+	SvcKeyAge         = "age"
+	SvcKeyContext     = "context"     // hidden, used by the detail tab
+	SvcKeySelector    = "selector"    // wide mode only
+	SvcKeyExternalIP  = "externalIP"  // wide mode only
+	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "…" until lazily fetched
 )
 
 // PodTableMsg carries pod data or errors from async operations
@@ -70,6 +81,17 @@ type ServiceTableMsg struct {
 	Context string
 	Rows    []RowData
 	Err     error // Error during service fetching
+}
+
+// ServiceEndpointsMsg carries lazily-fetched Endpoint IPs (service name ->
+// IP list) for every service in one context+namespace, or an error. Fetched
+// once per context+namespace the first time svc wide mode turns on — see
+// cmds.LoadServiceEndpointsCmd.
+type ServiceEndpointsMsg struct {
+	Context   string
+	Namespace string
+	Endpoints map[string][]string
+	Err       error
 }
 
 // ContextsStateMsg represents the current state of context selections

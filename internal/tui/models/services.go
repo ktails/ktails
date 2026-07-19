@@ -67,13 +67,16 @@ func (s *ServicePage) pushDisplayRows() {
 	display := make([]btable.Row, len(s.rows))
 	for i, row := range s.rows {
 		display[i] = btable.NewRow(btable.RowData{
-			msgs.SvcKeyName:      row[msgs.SvcKeyName],
-			msgs.SvcKeyNamespace: row[msgs.SvcKeyNamespace],
-			msgs.SvcKeyType:      row[msgs.SvcKeyType],
-			msgs.SvcKeyClusterIP: row[msgs.SvcKeyClusterIP],
-			msgs.SvcKeyPorts:     row[msgs.SvcKeyPorts],
-			msgs.SvcKeyAge:       row[msgs.SvcKeyAge],
-			msgs.SvcKeyContext:   row[msgs.SvcKeyContext],
+			msgs.SvcKeyName:        row[msgs.SvcKeyName],
+			msgs.SvcKeyNamespace:   row[msgs.SvcKeyNamespace],
+			msgs.SvcKeyType:        row[msgs.SvcKeyType],
+			msgs.SvcKeyClusterIP:   row[msgs.SvcKeyClusterIP],
+			msgs.SvcKeyPorts:       row[msgs.SvcKeyPorts],
+			msgs.SvcKeyAge:         row[msgs.SvcKeyAge],
+			msgs.SvcKeyContext:     row[msgs.SvcKeyContext],
+			msgs.SvcKeySelector:    row[msgs.SvcKeySelector],
+			msgs.SvcKeyExternalIP:  row[msgs.SvcKeyExternalIP],
+			msgs.SvcKeyEndpointIPs: row[msgs.SvcKeyEndpointIPs],
 		})
 	}
 	s.table = s.table.WithRows(display)

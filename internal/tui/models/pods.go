@@ -108,6 +108,10 @@ func (p *PodPage) pushDisplayRows() {
 			msgs.PodKeyAge:        row[msgs.PodKeyAge],
 			msgs.PodKeyContext:    row[msgs.PodKeyContext],
 			msgs.PodKeyContainers: row[msgs.PodKeyContainers],
+			msgs.PodKeyNode:       row[msgs.PodKeyNode],
+			msgs.PodKeyNodeIP:     row[msgs.PodKeyNodeIP],
+			msgs.PodKeyPodIP:      row[msgs.PodKeyPodIP],
+			msgs.PodKeyReady:      row[msgs.PodKeyReady],
 		})
 	}
 	p.table = p.table.WithRows(display)

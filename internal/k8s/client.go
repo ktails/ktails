@@ -28,16 +28,19 @@ type Client struct {
 
 // PodInfo contains pod metadata
 type PodInfo struct {
-	Name       string
-	Namespace  string
-	Status     string
-	Restarts   int32
-	Age        string
-	Image      string
-	Container  string
-	Containers []string
-	Node       string
-	Context    string
+	Name            string
+	Namespace       string
+	Status          string
+	Restarts        int32
+	Age             string
+	Image           string
+	Container       string
+	Containers      []string
+	Node            string
+	NodeIP          string
+	PodIP           string
+	ReadyContainers string // e.g. "2/3", ready vs total container statuses
+	Context         string
 }
 
 type ContextsInfo struct {
@@ -377,17 +380,28 @@ func (c *Client) podToPodInfo(pod *v1.Pod, kubeContext string) *PodInfo {
 		containers = append(containers, c.Name)
 	}
 
+	var readyCount int
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Ready {
+			readyCount++
+		}
+	}
+	readyContainers := fmt.Sprintf("%d/%d", readyCount, len(pod.Status.ContainerStatuses))
+
 	return &PodInfo{
-		Name:       pod.Name,
-		Namespace:  pod.Namespace,
-		Context:    kubeContext,
-		Status:     string(pod.Status.Phase),
-		Restarts:   restarts,
-		Age:        formatDuration(age),
-		Image:      image,
-		Container:  container,
-		Containers: containers,
-		Node:       pod.Spec.NodeName,
+		Name:            pod.Name,
+		Namespace:       pod.Namespace,
+		Context:         kubeContext,
+		Status:          string(pod.Status.Phase),
+		Restarts:        restarts,
+		Age:             formatDuration(age),
+		Image:           image,
+		Container:       container,
+		Containers:      containers,
+		Node:            pod.Spec.NodeName,
+		NodeIP:          pod.Status.HostIP,
+		PodIP:           pod.Status.PodIP,
+		ReadyContainers: readyContainers,
 	}
 }
 

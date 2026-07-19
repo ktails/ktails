@@ -2,6 +2,8 @@
 package state
 
 import (
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/ktails/ktails/internal/tui/msgs"
@@ -30,6 +32,17 @@ type AppState struct {
 
 	// Contexts that have completed at least one successful load cycle
 	LoadedContexts map[string]bool
+
+	// serviceEndpoints holds lazily-fetched Endpoint IPs per context
+	// (service name -> IPs), keyed the same way as Services.
+	serviceEndpoints map[string]map[string][]string
+
+	// serviceEndpointsFetchedNS records the namespace endpoints were last
+	// fetched for, per context — used to tell whether a fetch is still
+	// needed for the context's *current* namespace (see
+	// NeedsServiceEndpoints/MarkServiceEndpointsRequested) without
+	// refetching on every Ctrl+W toggle or refresh.
+	serviceEndpointsFetchedNS map[string]string
 
 	// Cache for GetAllDeployments, GetAllPods, and GetAllServices
 	cachedAllDeployments []msgs.RowData
@@ -68,6 +81,9 @@ func NewAppState() *AppState {
 		deploymentsDirty:   true,
 		podsDirty:          true,
 		servicesDirty:      true,
+
+		serviceEndpoints:          make(map[string]map[string][]string),
+		serviceEndpointsFetchedNS: make(map[string]string),
 	}
 }
 
@@ -76,6 +92,12 @@ func (a *AppState) AddContext(context, namespace string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if prevNS, exists := a.SelectedContexts[context]; exists && prevNS != namespace {
+		// Namespace changed under the same context — the fetched Endpoint
+		// IPs (and the "already fetched" mark) belong to the old namespace.
+		delete(a.serviceEndpoints, context)
+		delete(a.serviceEndpointsFetchedNS, context)
+	}
 	a.SelectedContexts[context] = namespace
 	// Initialize deployment, pod, and service state for this context
 	if _, exists := a.Deployments[context]; !exists {
@@ -120,16 +142,91 @@ func (a *AppState) SetPods(context string, rows []msgs.RowData) {
 	a.cachedAllPods = nil
 }
 
-// SetServices replaces service rows for a context
+// SetServices replaces service rows for a context. If Endpoint IPs were
+// already fetched for this context's current namespace, they're reapplied
+// here so a manual/auto refresh doesn't blank the column back to the
+// "fetching" placeholder — LoadServiceEndpointsCmd only ever runs once per
+// context+namespace (see NeedsServiceEndpoints).
 func (a *AppState) SetServices(context string, rows []msgs.RowData) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.Services[context] = cloneRows(rows)
+	cloned := cloneRows(rows)
+	if endpoints, ok := a.serviceEndpoints[context]; ok {
+		applyServiceEndpoints(cloned, endpoints)
+	}
+	a.Services[context] = cloned
 	a.LoadingServices[context] = false
 	// Don't delete errors here - only clear if deployments/pods/services all succeed
 	a.servicesDirty = true
 	a.cachedAllServices = nil
+}
+
+// NeedsServiceEndpoints reports whether Endpoint IPs still need fetching for
+// this context's given namespace — false once fetched (or requested) for
+// that exact namespace, true again if the namespace has since changed.
+func (a *AppState) NeedsServiceEndpoints(context, namespace string) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	return a.serviceEndpointsFetchedNS[context] != namespace
+}
+
+// MarkServiceEndpointsRequested records that a fetch for this
+// context+namespace is in flight (or done), so a second Ctrl+W toggle before
+// the first fetch resolves doesn't dispatch a duplicate request.
+func (a *AppState) MarkServiceEndpointsRequested(context, namespace string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.serviceEndpointsFetchedNS[context] = namespace
+}
+
+// ClearServiceEndpointsRequested un-marks a context's fetch, letting the next
+// Ctrl+W toggle retry — used when a fetch comes back with an error.
+func (a *AppState) ClearServiceEndpointsRequested(context string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	delete(a.serviceEndpointsFetchedNS, context)
+}
+
+// SetServiceEndpoints stores a resolved Endpoint IPs fetch for a
+// context+namespace and patches it into that context's already-loaded
+// Services rows (matched by service name), leaving every other row field
+// untouched.
+func (a *AppState) SetServiceEndpoints(context, namespace string, endpoints map[string][]string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.serviceEndpoints[context] = endpoints
+	a.serviceEndpointsFetchedNS[context] = namespace
+
+	applyServiceEndpoints(a.Services[context], endpoints)
+	a.servicesDirty = true
+	a.cachedAllServices = nil
+}
+
+// applyServiceEndpoints sets msgs.SvcKeyEndpointIPs on each row in place from
+// endpoints (service name -> IPs).
+func applyServiceEndpoints(rows []msgs.RowData, endpoints map[string][]string) {
+	for _, row := range rows {
+		name, _ := row[msgs.SvcKeyName].(string)
+		row[msgs.SvcKeyEndpointIPs] = formatEndpointIPs(endpoints[name])
+	}
+}
+
+// formatEndpointIPs renders a service's endpoint IPs as a sorted,
+// deterministic comma-separated list, "-" when the service currently has no
+// endpoints (e.g. no matching/ready pods).
+func formatEndpointIPs(ips []string) string {
+	if len(ips) == 0 {
+		return "-"
+	}
+	sorted := make([]string, len(ips))
+	copy(sorted, ips)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ",")
 }
 
 // SetLoading marks a context as loading (for deployments)
@@ -303,6 +400,8 @@ func (a *AppState) RemoveContext(context string) {
 	delete(a.LoadingServices, context)
 	delete(a.Errors, context)
 	delete(a.LoadedContexts, context)
+	delete(a.serviceEndpoints, context)
+	delete(a.serviceEndpointsFetchedNS, context)
 	a.deploymentsDirty = true
 	a.podsDirty = true
 	a.servicesDirty = true

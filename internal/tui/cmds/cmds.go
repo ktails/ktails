@@ -51,6 +51,10 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 				msgs.PodKeyAge:        pod.Age,
 				msgs.PodKeyContext:    pod.Context,                       // hidden, used by the detail tab
 				msgs.PodKeyContainers: strings.Join(pod.Containers, ","), // hidden, used by the log pane
+				msgs.PodKeyNode:       pod.Node,
+				msgs.PodKeyNodeIP:     pod.NodeIP,
+				msgs.PodKeyPodIP:      pod.PodIP,
+				msgs.PodKeyReady:      pod.ReadyContainers,
 			}
 		}
 
@@ -84,6 +88,10 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 				msgs.DeployKeyReplicas:  strconv.Itoa(int(deployment.ReadyReplicas)) + "/" + strconv.Itoa(int(deployment.DesiredReplicas)),
 				msgs.DeployKeyContext:   kubeContext,
 				msgs.DeployKeyNamespace: deployment.Namespace, // hidden, used by the detail panel
+				msgs.DeployKeyStrategy:  deployment.Strategy,
+				msgs.DeployKeyAvailable: strconv.FormatInt(int64(deployment.AvailableReplicas), 10),
+				msgs.DeployKeyUpdated:   strconv.FormatInt(int64(deployment.UpdatedReplicas), 10),
+				msgs.DeployKeySelector:  deployment.Selector,
 			}
 		}
 
@@ -110,13 +118,16 @@ func LoadServiceInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.C
 		rows := make([]msgs.RowData, len(services))
 		for i, svc := range services {
 			rows[i] = msgs.RowData{
-				msgs.SvcKeyName:      svc.Name,
-				msgs.SvcKeyNamespace: svc.Namespace,
-				msgs.SvcKeyType:      svc.Type,
-				msgs.SvcKeyClusterIP: svc.ClusterIP,
-				msgs.SvcKeyPorts:     svc.Ports,
-				msgs.SvcKeyAge:       svc.Age,
-				msgs.SvcKeyContext:   kubeContext, // hidden, used by the detail tab
+				msgs.SvcKeyName:        svc.Name,
+				msgs.SvcKeyNamespace:   svc.Namespace,
+				msgs.SvcKeyType:        svc.Type,
+				msgs.SvcKeyClusterIP:   svc.ClusterIP,
+				msgs.SvcKeyPorts:       svc.Ports,
+				msgs.SvcKeyAge:         svc.Age,
+				msgs.SvcKeyContext:     kubeContext, // hidden, used by the detail tab
+				msgs.SvcKeySelector:    svc.Selector,
+				msgs.SvcKeyExternalIP:  svc.ExternalIP,
+				msgs.SvcKeyEndpointIPs: endpointIPsPlaceholder, // replaced once LoadServiceEndpointsCmd resolves
 			}
 		}
 
@@ -125,6 +136,25 @@ func LoadServiceInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.C
 			Rows:    rows,
 			Err:     nil,
 		}
+	}
+}
+
+// endpointIPsPlaceholder is shown in the Endpoint IPs wide-mode column until
+// LoadServiceEndpointsCmd's lazy fetch resolves for that context+namespace.
+const endpointIPsPlaceholder = "…"
+
+// LoadServiceEndpointsCmd fetches Endpoint IPs for every service in one
+// context+namespace via a single EndpointSlices list call. It's triggered
+// lazily (see mainPage.go's Ctrl+W handling for the svc tab), not folded
+// into LoadServiceInfoCmd/refresh, so it only ever runs once per
+// context+namespace until that namespace's selection changes.
+func LoadServiceEndpointsCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
+	return func() tea.Msg {
+		endpoints, err := client.GetServiceEndpoints(kubeContext, namespace)
+		if err != nil {
+			return msgs.ServiceEndpointsMsg{Context: kubeContext, Namespace: namespace, Err: err}
+		}
+		return msgs.ServiceEndpointsMsg{Context: kubeContext, Namespace: namespace, Endpoints: endpoints}
 	}
 }
 
