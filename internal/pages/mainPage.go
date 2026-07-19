@@ -58,6 +58,13 @@ type MainPage struct {
 	errorMessage string
 	showHelp     bool
 
+	// Auto-refresh — a self-rescheduling tick that reruns refreshActiveTab on
+	// an interval. Paused (tick still reschedules, but the refresh is skipped)
+	// while the Detail or Log pane is open, since a background reorder under a
+	// pinned pane is more disruptive than helpful.
+	autoRefresh     bool
+	refreshInterval time.Duration
+
 	// Detail pane — a cross-cutting bottom split opened by Enter from
 	// Deployments or Pods. It's not a peer tab: it stays put, splitting
 	// whichever top tab's content area you're currently on.
@@ -90,7 +97,10 @@ type logStreamState struct {
 	generation int
 }
 
-func NewMainPageModel(c *k8s.Client) *MainPage {
+// NewMainPageModel builds the top-level page model. refreshIntervalSeconds is
+// config.Preferences.RefreshInterval — the auto-refresh tick period; values
+// below 1 fall back to 5s (the same default as config.DefaultConfig).
+func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
 	ctxInfo := models.NewContextInfo(c)
 	depList := models.NewDeploymentPage(c)
 	pList := models.NewPodPageModel(c)
@@ -99,6 +109,10 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 	logPage := models.NewLogPage()
 	tabs := styles.DefaultTabs
 	tabs = append(tabs, "svc")
+
+	if refreshIntervalSeconds < 1 {
+		refreshIntervalSeconds = 5
+	}
 
 	m := &MainPage{
 		Client:           c,
@@ -116,6 +130,8 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 		focus:            focusLeftPane,
 		errorMessage:     "",
 		showHelp:         false,
+		autoRefresh:      true,
+		refreshInterval:  time.Duration(refreshIntervalSeconds) * time.Second,
 	}
 
 	m.updateFocusStates()
@@ -124,7 +140,17 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 
 func (m *MainPage) Init() tea.Cmd {
 	m.contextList.Init()
-	return nil
+	return m.refreshTickCmd()
+}
+
+// refreshTickCmd schedules the next RefreshTickMsg one refreshInterval from
+// now — the standard bubbletea self-rescheduling tick pattern. Scheduled
+// unconditionally, even while auto-refresh is paused or toggled off, so it's
+// always running in the background and ready to pick refreshing back up.
+func (m *MainPage) refreshTickCmd() tea.Cmd {
+	return tea.Tick(m.refreshInterval, func(time.Time) tea.Msg {
+		return msgs.RefreshTickMsg{}
+	})
 }
 
 func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -175,6 +201,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "?":
 			m.showHelp = true
+			return m, nil
+		case "R":
+			m.autoRefresh = !m.autoRefresh
 			return m, nil
 		}
 
@@ -498,6 +527,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case msgs.RefreshTickMsg:
+		// Always reschedule, even when auto-refresh is off or paused, so it
+		// resumes on its own the moment the pane closes / it's toggled back on.
+		next := m.refreshTickCmd()
+		if !m.autoRefresh || m.showDetail || m.showLogs || !m.appStateLoaded {
+			return m, next
+		}
+		if cmd := m.refreshActiveTab(); cmd != nil {
+			return m, tea.Batch(cmd, next)
+		}
+		return m, next
 	}
 
 	// Forward non-key messages to the focused component(s)
@@ -1055,6 +1096,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"r", "Refresh the active tab's resource list across all selected contexts"},
 		{"c (log pane focused)", "Isolate one source's view, or return to the full merge"},
 		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
+		{"R", "Toggle auto-refresh on/off"},
 		{"↑/↓ j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
 		{"Home / End", "Jump to top / bottom of detail/log pane"},
 		{"Esc", "Unfocus detail/log pane, then close it / overlay / dismiss error"},

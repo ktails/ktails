@@ -82,3 +82,8 @@ type LogStreamClosedMsg struct {
 	Generation int
 	Err        error
 }
+
+// RefreshTickMsg fires on the auto-refresh interval, self-rescheduled by
+// whoever handles it. It carries nothing — its only job is to trigger the
+// same per-tab refresh path manual refresh uses.
+type RefreshTickMsg struct{}
