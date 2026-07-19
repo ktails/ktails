@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	v1 "k8s.io/api/core/v1"
 
@@ -42,16 +41,16 @@ func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 		}
 
 		// Convert pods to table rows
-		rows := make([]table.Row, len(pods))
+		rows := make([]msgs.RowData, len(pods))
 		for i, pod := range pods {
-			rows[i] = table.Row{
-				pod.Name,
-				pod.Namespace,
-				pod.Status,
-				strconv.FormatInt(int64(pod.Restarts), 10),
-				pod.Age,
-				pod.Context,                       // hidden column, used by the detail tab
-				strings.Join(pod.Containers, ","), // hidden column, used by the log pane
+			rows[i] = msgs.RowData{
+				msgs.PodKeyName:       pod.Name,
+				msgs.PodKeyNamespace:  pod.Namespace,
+				msgs.PodKeyStatus:     pod.Status,
+				msgs.PodKeyRestarts:   strconv.FormatInt(int64(pod.Restarts), 10),
+				msgs.PodKeyAge:        pod.Age,
+				msgs.PodKeyContext:    pod.Context,                       // hidden, used by the detail tab
+				msgs.PodKeyContainers: strings.Join(pod.Containers, ","), // hidden, used by the log pane
 			}
 		}
 
@@ -77,14 +76,14 @@ func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) te
 		}
 
 		// Convert deployments to table rows
-		rows := make([]table.Row, len(deployments))
+		rows := make([]msgs.RowData, len(deployments))
 		for i, deployment := range deployments {
-			rows[i] = table.Row{
-				deployment.Name,
-				deployment.Age,
-				strconv.Itoa(int(deployment.ReadyReplicas)) + "/" + strconv.Itoa(int(deployment.DesiredReplicas)),
-				kubeContext,
-				deployment.Namespace, // hidden column, used by the detail panel
+			rows[i] = msgs.RowData{
+				msgs.DeployKeyName:      deployment.Name,
+				msgs.DeployKeyAge:       deployment.Age,
+				msgs.DeployKeyReplicas:  strconv.Itoa(int(deployment.ReadyReplicas)) + "/" + strconv.Itoa(int(deployment.DesiredReplicas)),
+				msgs.DeployKeyContext:   kubeContext,
+				msgs.DeployKeyNamespace: deployment.Namespace, // hidden, used by the detail panel
 			}
 		}
 
@@ -108,16 +107,16 @@ func LoadServiceInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.C
 			}
 		}
 
-		rows := make([]table.Row, len(services))
+		rows := make([]msgs.RowData, len(services))
 		for i, svc := range services {
-			rows[i] = table.Row{
-				svc.Name,
-				svc.Namespace,
-				svc.Type,
-				svc.ClusterIP,
-				svc.Ports,
-				svc.Age,
-				kubeContext, // hidden column, used by the detail pane
+			rows[i] = msgs.RowData{
+				msgs.SvcKeyName:      svc.Name,
+				msgs.SvcKeyNamespace: svc.Namespace,
+				msgs.SvcKeyType:      svc.Type,
+				msgs.SvcKeyClusterIP: svc.ClusterIP,
+				msgs.SvcKeyPorts:     svc.Ports,
+				msgs.SvcKeyAge:       svc.Age,
+				msgs.SvcKeyContext:   kubeContext, // hidden, used by the detail tab
 			}
 		}
 

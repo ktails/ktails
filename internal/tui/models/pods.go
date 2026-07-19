@@ -1,115 +1,20 @@
 package models
 
 import (
-	"strings"
-
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
-
-// statusRawColumn is the index of the Status field within a raw (un-prefixed)
-// Pods row, matching the column order built in cmds.LoadPodInfoCmd.
-const statusRawColumn = 2
-
-// statusColIndex is the index of the Status column within podTableColumns
-// (and the columns SetSize rebuilds), used to locate its rendered span.
-const statusColIndex = 3
-
-// statusColor maps a pod phase (PodInfo.Status) to its Catppuccin Mocha
-// status color, per the Status Colors spec: Running=Green, Pending=Yellow,
-// Failed/Unknown=Red, Succeeded=Overlay1 (dim). Unrecognized phases are
-// left uncolored.
-func statusColor(status string) (lipgloss.Color, bool) {
-	p := styles.CatppuccinMocha()
-	switch status {
-	case "Running":
-		return p.Green, true
-	case "Pending":
-		return p.Yellow, true
-	case "Failed", "Unknown":
-		return p.Red, true
-	case "Succeeded":
-		return p.Overlay1, true
-	default:
-		return "", false
-	}
-}
-
-// statusCellSpan returns the visual column range [left, left+width) that the
-// rendered Status cell occupies within a table row line, accounting for the
-// Padding(0,1) bubbles/table applies to every visible cell. Columns with
-// Width <= 0 are hidden and skipped entirely by bubbles/table's renderer, so
-// they contribute nothing to the offset. Returns left == -1 if the Status
-// column isn't currently visible.
-func statusCellSpan(cols []table.Column) (left, width int) {
-	for i, col := range cols {
-		if col.Width <= 0 {
-			continue
-		}
-		cellWidth := col.Width + 2
-		if i == statusColIndex {
-			return left, cellWidth
-		}
-		left += cellWidth
-	}
-	return -1, 0
-}
-
-// colorizeStatusColumn recolors the Status cell of each data row in an
-// already-rendered table view, by phase (see statusColor).
-//
-// bubbles/table applies one Styles.Cell uniformly to every cell with no
-// per-cell hook, so per-cell color has to be embedded in the cell's content
-// string. But bubbles/table truncates/pads cell values with go-runewidth
-// *before* handing them to lipgloss, and go-runewidth counts ANSI escape
-// bytes as visible width — embedding a lipgloss-colored string directly into
-// a table.Row value gets its escape codes sliced apart on anything but very
-// wide columns, corrupting the row (verified: a colored 7-char "Running"
-// value in a 10-wide column renders as garbled escape bytes and an
-// unwanted "…").
-//
-// So instead this recolors the plain text bubbles/table already rendered
-// and padded correctly, using the ansi package's escape-aware Cut/Strip,
-// which also keeps any style already active at that point in the line
-// (e.g. the current row's Selected background) correctly reopened after.
-//
-// headerLines is the number of lines the header (and its border) occupies
-// at the top of view, before the first data row.
-func colorizeStatusColumn(view string, cols []table.Column, rows []table.Row, headerLines int) string {
-	left, width := statusCellSpan(cols)
-	if left < 0 {
-		return view
-	}
-	lines := strings.Split(view, "\n")
-	for i, row := range rows {
-		li := i + headerLines
-		if li >= len(lines) || len(row) <= statusRawColumn {
-			continue
-		}
-		col, ok := statusColor(row[statusRawColumn])
-		if !ok {
-			continue
-		}
-		line := lines[li]
-		prefix := ansi.Cut(line, 0, left)
-		cell := ansi.Strip(ansi.Cut(line, left, left+width))
-		suffix := ansi.Cut(line, left+width, len(line))
-		lines[li] = prefix + lipgloss.NewStyle().Foreground(col).Render(cell) + suffix
-	}
-	return strings.Join(lines, "\n")
-}
 
 type PodPage struct {
 	Client  *k8s.Client
 	Focused bool
-	table   table.Model
+	table   btable.Model
 
 	// Cache for view rendering
-	rows       []table.Row
+	rows       []msgs.RowData
 	rowsSet    bool
 	cachedView string
 	viewDirty  bool
@@ -118,25 +23,40 @@ type PodPage struct {
 	// PodRowKey. Persists across SetRows/reopening the log pane until
 	// explicitly cleared.
 	checkedPods map[string]bool
+
+	// wideMode is sticky per tab (this is the Pods tab's own instance) and
+	// only reset on resize — see SetSize.
+	wideMode     bool
+	tableW       int
+	tableH       int
+	wideColCount int
+	scrollable   bool
 }
 
 func NewPodPageModel(client *k8s.Client) *PodPage {
-	return &PodPage{
+	p := &PodPage{
 		Client:      client,
-		table:       table.New(table.WithColumns(podTableColumns())),
 		viewDirty:   true,
 		checkedPods: make(map[string]bool),
 	}
+	p.table = newBubbleTable(podNarrowColumns())
+	return p
 }
 
 // PodRowKey identifies a raw (un-prefixed) Pods-table row for check-state
 // tracking, keyed by context/namespace/name — the same triple used to
 // pin the log pane to a specific pod.
-func PodRowKey(row table.Row) string {
-	if len(row) < 6 {
+func PodRowKey(row msgs.RowData) string {
+	if row == nil {
 		return ""
 	}
-	return row[5] + "/" + row[1] + "/" + row[0]
+	ctx, _ := row[msgs.PodKeyContext].(string)
+	ns, _ := row[msgs.PodKeyNamespace].(string)
+	name, _ := row[msgs.PodKeyName].(string)
+	if ctx == "" && ns == "" && name == "" {
+		return ""
+	}
+	return ctx + "/" + ns + "/" + name
 }
 
 func (p *PodPage) Init() tea.Cmd {
@@ -150,38 +70,103 @@ func (p *PodPage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func (p *PodPage) SetRows(rows []table.Row) {
+func (p *PodPage) SetRows(rows []msgs.RowData) {
 	if p.rowsSet && rowsEqual(rows, p.rows) {
 		return
 	}
 
-	cloned := cloneRows(rows)
-	p.rows = cloned
+	p.rows = cloneRows(rows)
 	p.rowsSet = true
+	p.applyColumns()
 	p.pushDisplayRows()
 
 	if p.Focused {
-		p.table.Focus()
+		p.table = p.table.Focused(true)
 	} else {
-		p.table.Blur()
+		p.table = p.table.Focused(false)
 	}
 
 	p.invalidateView()
 }
 
 // pushDisplayRows rebuilds the table's rows from p.rows (the raw fetched
-// data) with a checkbox glyph prepended per row, reflecting checkedPods.
-// Called whenever raw rows or check state change.
+// data), prepending a checkbox glyph and coloring Status by phase via
+// StyledCell. Called whenever raw rows or check state change.
 func (p *PodPage) pushDisplayRows() {
-	display := make([]table.Row, len(p.rows))
+	display := make([]btable.Row, len(p.rows))
 	for i, row := range p.rows {
 		glyph := "☐"
 		if p.checkedPods[PodRowKey(row)] {
 			glyph = "☑"
 		}
-		display[i] = append(table.Row{glyph}, row...)
+		display[i] = btable.NewRow(btable.RowData{
+			msgs.PodKeyCheck:      glyph,
+			msgs.PodKeyName:       row[msgs.PodKeyName],
+			msgs.PodKeyNamespace:  row[msgs.PodKeyNamespace],
+			msgs.PodKeyStatus:     btable.NewStyledCellWithStyleFunc(row[msgs.PodKeyStatus], statusCellStyle),
+			msgs.PodKeyRestarts:   row[msgs.PodKeyRestarts],
+			msgs.PodKeyAge:        row[msgs.PodKeyAge],
+			msgs.PodKeyContext:    row[msgs.PodKeyContext],
+			msgs.PodKeyContainers: row[msgs.PodKeyContainers],
+		})
 	}
-	p.table.SetRows(display)
+	p.table = p.table.WithRows(display)
+}
+
+// applyColumns rebuilds the column set for the current mode (narrow/wide),
+// auto-fitting wide-mode widths to p.rows — called on every SetRows/ToggleWideMode.
+func (p *PodPage) applyColumns() {
+	var cols []btable.Column
+	if p.wideMode {
+		cols = podWideColumns(p.rows)
+	} else {
+		cols = podNarrowColumns()
+	}
+	p.wideColCount = len(cols)
+	p.scrollable = p.wideMode && totalColumnsWidth(cols) > p.tableW
+	p.table = p.table.WithColumns(cols).WithHorizontalFreezeColumnCount(1)
+	// WithTargetWidth governs flex-column sizing (narrow mode) and, if left
+	// set, forces bubble-table's own totalWidth to that value even for fixed
+	// wide-mode columns — which would silently disable scrolling. Clear it in
+	// wide mode so the real (possibly overflowing) fixed-column sum is used.
+	if p.wideMode {
+		p.table = p.table.WithTargetWidth(0).WithMaxTotalWidth(p.tableW)
+	} else {
+		p.table = p.table.WithTargetWidth(p.tableW).WithMaxTotalWidth(p.tableW)
+	}
+}
+
+// ToggleWideMode flips wide mode for this tab (sticky until the next
+// resize) and rebuilds columns to fit the current data.
+func (p *PodPage) ToggleWideMode() {
+	p.wideMode = !p.wideMode
+	p.applyColumns()
+	p.pushDisplayRows()
+	p.invalidateView()
+}
+
+func (p *PodPage) WideMode() bool {
+	return p.wideMode
+}
+
+// ScrollStatus reports the current horizontal scroll position for the
+// status bar's "◂ col N/M ▸" indicator. ok is false when the indicator
+// should be hidden (not in wide mode, or nothing to scroll).
+func (p *PodPage) ScrollStatus() (offset, total int, ok bool) {
+	if !p.wideMode || !p.scrollable {
+		return 0, 0, false
+	}
+	return p.table.GetHorizontalScrollColumnOffset() + 1, p.wideColCount, true
+}
+
+func (p *PodPage) ScrollLeft() {
+	p.table = p.table.ScrollLeft()
+	p.invalidateView()
+}
+
+func (p *PodPage) ScrollRight() {
+	p.table = p.table.ScrollRight()
+	p.invalidateView()
 }
 
 // ToggleChecked flips the checked state of the row identified by key
@@ -226,7 +211,7 @@ func (p *PodPage) CheckedKeys() []string {
 
 // CheckedRow returns the raw (un-prefixed) row for a given check key, or
 // nil if no such row is currently loaded.
-func (p *PodPage) CheckedRow(key string) table.Row {
+func (p *PodPage) CheckedRow(key string) msgs.RowData {
 	for _, row := range p.rows {
 		if PodRowKey(row) == key {
 			return row
@@ -238,17 +223,13 @@ func (p *PodPage) CheckedRow(key string) table.Row {
 func (p *PodPage) Reset() {
 	p.rows = nil
 	p.rowsSet = false
-	p.table.SetRows(nil)
+	p.table = p.table.WithRows(nil)
 	p.invalidateView()
 }
 
 func (p *PodPage) SetFocused(f bool) {
 	p.Focused = f
-	if f {
-		p.table.Focus()
-	} else {
-		p.table.Blur()
-	}
+	p.table = p.table.Focused(f)
 	p.invalidateView()
 }
 
@@ -257,10 +238,7 @@ func (p *PodPage) View() string {
 		return p.cachedView
 	}
 
-	tableStyles := styles.CatppuccinTableStyles()
-	p.table.SetStyles(tableStyles)
-	headerLines := lipgloss.Height(tableStyles.Header.Render("Status"))
-	view := colorizeStatusColumn(p.table.View(), p.table.Columns(), p.rows, headerLines)
+	view := p.table.View()
 	p.cachedView = view
 	p.viewDirty = false
 	return view
@@ -270,35 +248,32 @@ func (p *PodPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
-	p.table.SetHeight(h)
-	// bubbles/table pads each visible column by 2 (Padding(0,1)); budget that
-	// in so the rendered row never exceeds w.
-	const visibleCols = 6
-	const checkW = 1
-	avail := w - visibleCols*2 - checkW
-	nameW := avail * 38 / 100
-	nsW := avail * 22 / 100
-	statusW := avail * 15 / 100
-	restartsW := avail * 12 / 100
-	ageW := avail - nameW - nsW - statusW - restartsW
-	p.table.SetColumns([]table.Column{
-		{Title: "✓", Width: checkW},
-		{Title: "Name", Width: nameW},
-		{Title: "Namespace", Width: nsW},
-		{Title: "Status", Width: statusW},
-		{Title: "Restarts", Width: restartsW},
-		{Title: "Age", Width: ageW},
-		{Title: "Context", Width: 0},    // hidden, carries data for the detail tab
-		{Title: "Containers", Width: 0}, // hidden, comma-separated container names for the log pane
-	})
+	prevIdx := p.table.GetHighlightedRowIndex()
+	p.tableW, p.tableH = w, h
+	p.wideMode = false
+
+	st := styles.CatppuccinBubbleTableStyle()
+	p.table = newBubbleTable(podNarrowColumns()).
+		WithMinimumHeight(h).
+		WithTargetWidth(w).
+		WithMaxTotalWidth(w).
+		HeaderStyle(st.Header).
+		HighlightStyle(st.Highlight).
+		WithBaseStyle(st.Base).
+		WithHorizontalFreezeColumnCount(1).
+		Focused(p.Focused)
+	p.wideColCount = len(podNarrowColumns())
+	p.scrollable = false
+	p.pushDisplayRows()
+	p.table = p.table.WithHighlightedRow(prevIdx)
 	p.invalidateView()
 }
 
 // SelectedRow returns the raw (un-prefixed) row currently under the cursor,
 // or nil if there are no rows. Raw rows are what callers should read pod
 // identity out of — the table itself renders a checkbox-prefixed copy.
-func (p *PodPage) SelectedRow() table.Row {
-	idx := p.table.Cursor()
+func (p *PodPage) SelectedRow() msgs.RowData {
+	idx := p.table.GetHighlightedRowIndex()
 	if idx < 0 || idx >= len(p.rows) {
 		return nil
 	}

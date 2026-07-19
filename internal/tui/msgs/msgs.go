@@ -4,14 +4,51 @@ package msgs
 import (
 	"io"
 
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/ktails/ktails/internal/k8s"
+)
+
+// RowData is a keyed row of field values for the Pods/Deployments/svc
+// tables. Keys matching a table.Column's key are displayed; others (e.g.
+// PodKeyContext/PodKeyContainers) ride along as hidden metadata for the
+// Detail pane / Log pane to read without a visible column of their own.
+type RowData = map[string]any
+
+// Column keys for Pods rows (see cmds.LoadPodInfoCmd / models.PodPage).
+const (
+	PodKeyCheck      = "check"
+	PodKeyName       = "name"
+	PodKeyNamespace  = "namespace"
+	PodKeyStatus     = "status"
+	PodKeyRestarts   = "restarts"
+	PodKeyAge        = "age"
+	PodKeyContext    = "context"    // hidden, used by the detail tab
+	PodKeyContainers = "containers" // hidden, comma-separated, used by the log pane
+)
+
+// Column keys for Deployments rows (see cmds.LoadDeploymentInfoCmd).
+const (
+	DeployKeyName      = "name"
+	DeployKeyAge       = "age"
+	DeployKeyReplicas  = "replicas"
+	DeployKeyContext   = "context"
+	DeployKeyNamespace = "namespace" // hidden, used by the detail panel
+)
+
+// Column keys for svc rows (see cmds.LoadServiceInfoCmd).
+const (
+	SvcKeyName      = "name"
+	SvcKeyNamespace = "namespace"
+	SvcKeyType      = "type"
+	SvcKeyClusterIP = "clusterIP"
+	SvcKeyPorts     = "ports"
+	SvcKeyAge       = "age"
+	SvcKeyContext   = "context" // hidden, used by the detail tab
 )
 
 // PodTableMsg carries pod data or errors from async operations
 type PodTableMsg struct {
 	Context string
-	Rows    []table.Row
+	Rows    []RowData
 	Err     error // Error during pod fetching
 }
 
@@ -24,14 +61,14 @@ type ContextsSelectedMsg struct {
 // DeploymentTableMsg carries deployment data or errors from async operations
 type DeploymentTableMsg struct {
 	Context string
-	Rows    []table.Row
+	Rows    []RowData
 	Err     error // Error during deployment fetching
 }
 
 // ServiceTableMsg carries service data or errors from async operations
 type ServiceTableMsg struct {
 	Context string
-	Rows    []table.Row
+	Rows    []RowData
 	Err     error // Error during service fetching
 }
 

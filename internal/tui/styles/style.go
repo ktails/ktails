@@ -115,24 +115,31 @@ func CatppuccinLatte() Palette {
 	}
 }
 
-// CatppuccinTableStyles returns Bubbles table styles using the Catppuccin Mocha palette.
-func CatppuccinTableStyles() table.Styles {
+// BubbleTableStyle bundles the header/highlight/base styles applied to the
+// Pods/Deployments/svc tables (evertras/bubble-table) — the bubble-table
+// equivalent of the old CatppuccinTableStyles for bubbles/table.
+type BubbleTableStyle struct {
+	Header    lipgloss.Style
+	Highlight lipgloss.Style
+	Base      lipgloss.Style
+}
+
+// CatppuccinBubbleTableStyle returns bubble-table styles using the
+// Catppuccin Mocha palette.
+func CatppuccinBubbleTableStyle() BubbleTableStyle {
 	p := CatppuccinMocha()
-	styles := table.DefaultStyles()
-	styles.Header = styles.Header.
-		Background(p.Surface0).
-		Foreground(p.Text).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(p.Overlay0).
-		BorderBottom(true).
-		Bold(true)
-	styles.Cell = styles.Cell.
-		Foreground(p.Subtext1)
-	styles.Selected = styles.Selected.
-		Foreground(p.Base).
-		Background(p.Blue).
-		Bold(true)
-	return styles
+	return BubbleTableStyle{
+		Header: lipgloss.NewStyle().
+			Background(p.Surface0).
+			Foreground(p.Text).
+			Bold(true),
+		Highlight: lipgloss.NewStyle().
+			Foreground(p.Base).
+			Background(p.Blue).
+			Bold(true),
+		Base: lipgloss.NewStyle().
+			Foreground(p.Subtext1),
+	}
 }
 
 // HelpBoxStyle returns a styled lipgloss style for help overlays using the palette.

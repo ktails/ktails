@@ -4,7 +4,7 @@ package state
 import (
 	"sync"
 
-	"github.com/charmbracelet/bubbles/table"
+	"github.com/ktails/ktails/internal/tui/msgs"
 )
 
 type AppState struct {
@@ -12,13 +12,13 @@ type AppState struct {
 	SelectedContexts map[string]string // context -> namespace
 
 	// Deployment data per context
-	Deployments map[string][]table.Row // context -> rows
+	Deployments map[string][]msgs.RowData // context -> rows
 
 	// Pod data per context
-	Pods map[string][]table.Row // context -> rows
+	Pods map[string][]msgs.RowData // context -> rows
 
 	// Service data per context
-	Services map[string][]table.Row // context -> rows
+	Services map[string][]msgs.RowData // context -> rows
 
 	// Loading states
 	LoadingDeployments map[string]bool // context -> isLoading
@@ -32,9 +32,9 @@ type AppState struct {
 	LoadedContexts map[string]bool
 
 	// Cache for GetAllDeployments, GetAllPods, and GetAllServices
-	cachedAllDeployments []table.Row
-	cachedAllPods        []table.Row
-	cachedAllServices    []table.Row
+	cachedAllDeployments []msgs.RowData
+	cachedAllPods        []msgs.RowData
+	cachedAllServices    []msgs.RowData
 	deploymentsDirty     bool
 	podsDirty            bool
 	servicesDirty        bool
@@ -49,17 +49,17 @@ type Snapshot struct {
 	LoadingStates    map[string]bool // Combined deployment + pod + service loading
 	LoadedContexts   map[string]bool // Contexts with at least one successful load
 	Errors           map[string]string
-	Deployments      []table.Row
-	Pods             []table.Row
-	Services         []table.Row
+	Deployments      []msgs.RowData
+	Pods             []msgs.RowData
+	Services         []msgs.RowData
 }
 
 func NewAppState() *AppState {
 	return &AppState{
 		SelectedContexts:   make(map[string]string),
-		Deployments:        make(map[string][]table.Row),
-		Pods:               make(map[string][]table.Row),
-		Services:           make(map[string][]table.Row),
+		Deployments:        make(map[string][]msgs.RowData),
+		Pods:               make(map[string][]msgs.RowData),
+		Services:           make(map[string][]msgs.RowData),
 		LoadingDeployments: make(map[string]bool),
 		LoadingPods:        make(map[string]bool),
 		LoadingServices:    make(map[string]bool),
@@ -79,13 +79,13 @@ func (a *AppState) AddContext(context, namespace string) {
 	a.SelectedContexts[context] = namespace
 	// Initialize deployment, pod, and service state for this context
 	if _, exists := a.Deployments[context]; !exists {
-		a.Deployments[context] = []table.Row{}
+		a.Deployments[context] = []msgs.RowData{}
 	}
 	if _, exists := a.Pods[context]; !exists {
-		a.Pods[context] = []table.Row{}
+		a.Pods[context] = []msgs.RowData{}
 	}
 	if _, exists := a.Services[context]; !exists {
-		a.Services[context] = []table.Row{}
+		a.Services[context] = []msgs.RowData{}
 	}
 	a.deploymentsDirty = true
 	a.podsDirty = true
@@ -96,7 +96,7 @@ func (a *AppState) AddContext(context, namespace string) {
 }
 
 // SetDeployments replaces deployment rows for a context
-func (a *AppState) SetDeployments(context string, rows []table.Row) {
+func (a *AppState) SetDeployments(context string, rows []msgs.RowData) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -109,7 +109,7 @@ func (a *AppState) SetDeployments(context string, rows []table.Row) {
 }
 
 // SetPods replaces pod rows for a context
-func (a *AppState) SetPods(context string, rows []table.Row) {
+func (a *AppState) SetPods(context string, rows []msgs.RowData) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -121,7 +121,7 @@ func (a *AppState) SetPods(context string, rows []table.Row) {
 }
 
 // SetServices replaces service rows for a context
-func (a *AppState) SetServices(context string, rows []table.Row) {
+func (a *AppState) SetServices(context string, rows []msgs.RowData) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -169,21 +169,21 @@ func (a *AppState) SetError(context string, err string) {
 
 // GetAllDeployments returns all deployment rows from all selected contexts
 // Uses caching to avoid recomputing on every call
-func (a *AppState) GetAllDeployments() []table.Row {
+func (a *AppState) GetAllDeployments() []msgs.RowData {
 	snapshot := a.Snapshot()
 	return snapshot.Deployments
 }
 
 // GetAllPods returns all pod rows from all selected contexts
 // Uses caching to avoid recomputing on every call
-func (a *AppState) GetAllPods() []table.Row {
+func (a *AppState) GetAllPods() []msgs.RowData {
 	snapshot := a.Snapshot()
 	return snapshot.Pods
 }
 
 // GetAllServices returns all service rows from all selected contexts
 // Uses caching to avoid recomputing on every call
-func (a *AppState) GetAllServices() []table.Row {
+func (a *AppState) GetAllServices() []msgs.RowData {
 	snapshot := a.Snapshot()
 	return snapshot.Services
 }
@@ -354,12 +354,12 @@ func copyBoolMap(src map[string]bool) map[string]bool {
 }
 
 // flattenRows combines rows from multiple contexts (renamed from flattenDeployments for reuse)
-func flattenRows(selected map[string]string, rowsByContext map[string][]table.Row) []table.Row {
+func flattenRows(selected map[string]string, rowsByContext map[string][]msgs.RowData) []msgs.RowData {
 	if len(selected) == 0 {
 		return nil
 	}
 
-	var all []table.Row
+	var all []msgs.RowData
 	for context := range selected {
 		rows, exists := rowsByContext[context]
 		if !exists {
@@ -367,30 +367,37 @@ func flattenRows(selected map[string]string, rowsByContext map[string][]table.Ro
 		}
 
 		for _, row := range rows {
-			cloned := make(table.Row, len(row))
-			copy(cloned, row)
-			all = append(all, cloned)
+			all = append(all, cloneRow(row))
 		}
 	}
 
 	return all
 }
 
-func cloneRows(rows []table.Row) []table.Row {
+func cloneRows(rows []msgs.RowData) []msgs.RowData {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	cloned := make([]table.Row, len(rows))
+	cloned := make([]msgs.RowData, len(rows))
 	for i, row := range rows {
-		if len(row) == 0 {
-			cloned[i] = nil
-			continue
-		}
+		cloned[i] = cloneRow(row)
+	}
 
-		cells := make(table.Row, len(row))
-		copy(cells, row)
-		cloned[i] = cells
+	return cloned
+}
+
+// cloneRow shallow-copies a row's field values (primitives, so a shallow copy
+// is sufficient) into a fresh map, isolating the caller from mutations to the
+// stored/cached copy.
+func cloneRow(row msgs.RowData) msgs.RowData {
+	if row == nil {
+		return nil
+	}
+
+	cloned := make(msgs.RowData, len(row))
+	for k, v := range row {
+		cloned[k] = v
 	}
 
 	return cloned
