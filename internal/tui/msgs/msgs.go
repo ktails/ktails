@@ -2,6 +2,8 @@
 package msgs
 
 import (
+	"io"
+
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/ktails/ktails/internal/k8s"
 )
@@ -52,4 +54,27 @@ type ErrorMsg struct {
 	Context string // Which context caused the error (if applicable)
 	Title   string // Short error title
 	Err     error  // The actual error
+}
+
+// LogStreamOpenedMsg carries a freshly opened pod log stream for the Log
+// pane. SessionID must match MainPage's current log session before the
+// stream is adopted — otherwise it belongs to a since-superseded pod,
+// container, or closed pane and should just be closed.
+type LogStreamOpenedMsg struct {
+	SessionID int
+	Stream    io.ReadCloser
+}
+
+// LogLineMsg carries a single line read from an open log stream.
+type LogLineMsg struct {
+	SessionID int
+	Line      string
+}
+
+// LogStreamClosedMsg reports that a log stream ended, either because the
+// server closed it (Err == nil, e.g. a non-following read finished) or
+// because opening/reading it failed (Err != nil).
+type LogStreamClosedMsg struct {
+	SessionID int
+	Err       error
 }

@@ -2,7 +2,9 @@
 package pages
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -62,6 +64,17 @@ type MainPage struct {
 	showDetail    bool
 	detailFocused bool
 
+	// Log pane — a second cross-cutting bottom split, reachable with `l` on
+	// a Pods row. Mutually exclusive with the Detail pane in v0.1.0: opening
+	// one closes the other. logSessionID guards against messages from a
+	// since-superseded stream (old pod, old container, or a closed pane).
+	podLogs      *models.LogPage
+	showLogs     bool
+	logsFocused  bool
+	logSessionID int
+	logStream    io.ReadCloser
+	logScanner   *bufio.Scanner
+
 	tableW, tableH int
 }
 
@@ -71,6 +84,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 	pList := models.NewPodPageModel(c)
 	svcList := models.NewServicePageModel(c)
 	detailPage := models.NewResourceDetailPage()
+	logPage := models.NewLogPage()
 	tabs := styles.DefaultTabs
 	tabs = append(tabs, "svc")
 
@@ -84,6 +98,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 		podList:          pList,
 		svcList:          svcList,
 		deploymentDetail: detailPage,
+		podLogs:          logPage,
 		appStateLoaded:   false,
 		focus:            focusLeftPane,
 		errorMessage:     "",
@@ -118,18 +133,26 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Global keys
 		switch keypress {
 		case "ctrl+c", "q":
+			m.stopLogStream()
 			return m, tea.Quit
 		case "tab", "shift+tab":
 			m.toggleFocus()
 			return m, nil
 		case "esc":
-			// Peel dismissals one at a time: unfocus the detail pane, then close
-			// it, then inline error, then context errors.
+			// Peel dismissals one at a time: unfocus the detail/log pane, then
+			// close it, then inline error, then context errors. Detail and Logs
+			// are mutually exclusive, so only one of their branches is ever live.
 			if m.detailFocused {
 				m.detailFocused = false
 				m.updateFocusStates()
+			} else if m.logsFocused {
+				m.logsFocused = false
+				m.updateFocusStates()
 			} else if m.showDetail {
 				m.showDetail = false
+				m.applyContentSizes()
+			} else if m.showLogs {
+				m.closeLogs()
 				m.applyContentSizes()
 			} else if m.errorMessage != "" {
 				m.errorMessage = ""
@@ -152,6 +175,16 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (arrows/j-k/pgup/pgdn/g/G) until Esc hands focus back to the list.
 		if m.detailFocused {
 			cmd := m.deploymentDetail.Update(msg)
+			return m, cmd
+		}
+
+		// While the log pane has keyboard focus, it captures everything except
+		// 'c' (cycle container), which MainPage intercepts to restream.
+		if m.logsFocused {
+			if keypress == "c" {
+				return m, m.cycleLogContainer()
+			}
+			cmd := m.podLogs.Update(msg)
 			return m, cmd
 		}
 
@@ -194,10 +227,20 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Enter on a selected Deployment/Pod/Service row (re)loads the detail
-		// pane for that row and gives it keyboard focus for scrolling.
+		// pane for that row and gives it keyboard focus for scrolling. Detail
+		// and Logs share the same bottom slot and are mutually exclusive.
 		if m.appStateLoaded && keypress == "enter" &&
 			(m.tabs[m.activeTab] == "Deployments" || m.tabs[m.activeTab] == "Pods" || m.tabs[m.activeTab] == "svc") {
+			m.closeLogs()
 			if cmd := m.openResourceDetail(m.tabs[m.activeTab]); cmd != nil {
+				return m, cmd
+			}
+			return m, nil
+		}
+
+		// l on a selected Pod row opens/refocuses the log pane.
+		if m.appStateLoaded && keypress == "l" && m.tabs[m.activeTab] == "Pods" {
+			if cmd := m.openPodLogs(); cmd != nil {
 				return m, cmd
 			}
 			return m, nil
@@ -227,7 +270,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ctxW, ctxH := getContextPaneDimensions(m.width, m.height)
 		ctxMsg := tea.WindowSizeMsg{Width: ctxW, Height: ctxH}
 
-		leftW := m.width / 3
+		leftW := leftPaneWidthFor(m.width)
 		tableW := m.width - leftW - 12
 		tableH := m.height - 16
 		if tableH < 1 {
@@ -244,6 +287,32 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.deploymentDetail.SetDetail(msg.Detail)
+		return m, nil
+
+	case msgs.LogStreamOpenedMsg:
+		// Stale — belongs to a pod/container/pane the user has since moved
+		// on from. Close it rather than adopting it.
+		if msg.SessionID != m.logSessionID {
+			msg.Stream.Close()
+			return m, nil
+		}
+		m.logStream = msg.Stream
+		m.logScanner = cmds.NewLogScanner(msg.Stream)
+		return m, cmds.WaitForLogLineCmd(msg.SessionID, m.logScanner)
+
+	case msgs.LogLineMsg:
+		if msg.SessionID != m.logSessionID {
+			return m, nil
+		}
+		m.podLogs.AppendLine(msg.Line)
+		return m, cmds.WaitForLogLineCmd(msg.SessionID, m.logScanner)
+
+	case msgs.LogStreamClosedMsg:
+		if msg.SessionID != m.logSessionID {
+			return m, nil
+		}
+		m.stopLogStream()
+		m.podLogs.SetStreamEnded(msg.Err)
 		return m, nil
 
 	case msgs.DeploymentTableMsg:
@@ -399,6 +468,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showDetail {
 			forwardCmds = append(forwardCmds, m.deploymentDetail.Update(msg))
 		}
+		if m.showLogs {
+			forwardCmds = append(forwardCmds, m.podLogs.Update(msg))
+		}
 		if len(forwardCmds) > 0 {
 			return m, tea.Batch(forwardCmds...)
 		}
@@ -430,7 +502,7 @@ func (m *MainPage) toggleFocus() {
 
 func (m *MainPage) updateFocusStates() {
 	m.contextList.SetFocused(m.focus == focusLeftPane)
-	listActive := m.focus == focusTabs && !m.detailFocused
+	listActive := m.focus == focusTabs && !m.detailFocused && !m.logsFocused
 	shouldFocusDeployments := listActive && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded
 	m.deploymentList.SetFocused(shouldFocusDeployments)
 	shouldFocusPods := listActive && m.tabs[m.activeTab] == "Pods" && m.appStateLoaded
@@ -438,18 +510,20 @@ func (m *MainPage) updateFocusStates() {
 	shouldFocusSvc := listActive && m.tabs[m.activeTab] == "svc" && m.appStateLoaded
 	m.svcList.SetFocused(shouldFocusSvc)
 	m.deploymentDetail.SetFocused(m.focus == focusTabs && m.detailFocused)
+	m.podLogs.SetFocused(m.focus == focusTabs && m.logsFocused)
 }
 
 // detailPaneHeightPercent is the share of the tab content area given to the
 // detail pane, out of the remainder after list rows.
 const detailPaneHeightPercent = 45
 
-// applyContentSizes resizes the Deployments/Pods lists and the detail pane to
-// split the tab content area in two whenever the detail pane is open.
+// applyContentSizes resizes the Deployments/Pods lists and the bottom pane
+// (Detail or Logs — mutually exclusive) to split the tab content area in two
+// whenever either is open.
 func (m *MainPage) applyContentSizes() {
 	listH := m.tableH
 	detailH := 0
-	if m.showDetail {
+	if m.showDetail || m.showLogs {
 		detailH = m.tableH * detailPaneHeightPercent / 100
 		if detailH < 6 {
 			detailH = 6
@@ -463,6 +537,7 @@ func (m *MainPage) applyContentSizes() {
 	m.podList.SetSize(m.tableW, listH)
 	m.svcList.SetSize(m.tableW, listH)
 	m.deploymentDetail.SetSize(m.tableW, detailH)
+	m.podLogs.SetSize(m.tableW, detailH)
 }
 
 // openResourceDetail loads detail for the currently selected row on the given
@@ -520,6 +595,85 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 	}
 }
 
+// openPodLogs opens (or refocuses) the log pane for the currently selected
+// Pod row into the shared bottom Log pane. Returns nil if there's no valid
+// selection or the pod has no known containers.
+func (m *MainPage) openPodLogs() tea.Cmd {
+	row := m.podList.SelectedRow()
+	if len(row) < 7 {
+		return nil
+	}
+	name, namespace, ctxName := row[0], row[1], row[5]
+	var containers []string
+	if row[6] != "" {
+		containers = strings.Split(row[6], ",")
+	}
+	if len(containers) == 0 {
+		return nil
+	}
+
+	// Re-entering the pod already shown in the pane just refocuses it
+	// instead of restreaming — mirrors openResourceDetail's Matches check.
+	if m.podLogs.Matches(name, namespace, ctxName) {
+		m.closeDetail()
+		m.showLogs = true
+		m.logsFocused = true
+		m.applyContentSizes()
+		m.updateFocusStates()
+		return nil
+	}
+
+	m.closeDetail()
+	m.stopLogStream()
+	m.logSessionID++
+	sessionID := m.logSessionID
+	m.podLogs.Reset(name, namespace, ctxName, containers)
+	m.showLogs = true
+	m.logsFocused = true
+	m.applyContentSizes()
+	m.updateFocusStates()
+
+	return cmds.OpenPodLogStreamCmd(m.Client, ctxName, namespace, name, containers[0], sessionID)
+}
+
+// cycleLogContainer advances the open log pane to the next container (a
+// no-op if the pod has only one), closing the current stream and opening a
+// new one for it.
+func (m *MainPage) cycleLogContainer() tea.Cmd {
+	container, ok := m.podLogs.CycleContainer()
+	if !ok {
+		return nil
+	}
+	m.stopLogStream()
+	m.logSessionID++
+	sessionID := m.logSessionID
+	return cmds.OpenPodLogStreamCmd(m.Client, m.podLogs.Context(), m.podLogs.Namespace(), m.podLogs.PodName(), container, sessionID)
+}
+
+// closeDetail closes the Detail pane, if open. It holds no external
+// resources, so there's nothing to release beyond the flags themselves.
+func (m *MainPage) closeDetail() {
+	m.showDetail = false
+	m.detailFocused = false
+}
+
+// closeLogs closes the Log pane, if open, stopping its underlying stream.
+func (m *MainPage) closeLogs() {
+	m.stopLogStream()
+	m.showLogs = false
+	m.logsFocused = false
+}
+
+// stopLogStream closes the currently open log stream, if any. Safe to call
+// when nothing is streaming.
+func (m *MainPage) stopLogStream() {
+	if m.logStream != nil {
+		m.logStream.Close()
+		m.logStream = nil
+	}
+	m.logScanner = nil
+}
+
 func (m *MainPage) View() string {
 	if m.width < views.MinContentWidth || m.height < views.MinHeight {
 		return m.renderTooSmallOverlay()
@@ -527,7 +681,7 @@ func (m *MainPage) View() string {
 
 	snapshot := m.appState.Snapshot()
 
-	leftPaneWidth := m.width / 3
+	leftPaneWidth := leftPaneWidthFor(m.width)
 	leftPane := ""
 	tabBlur := false
 	tabBottom := styles.WindowStyle
@@ -581,9 +735,10 @@ func (m *MainPage) View() string {
 		m.tabContent = m.renderLoadingIndicator(snapshot.LoadingStates) + "\n\n" + m.tabContent
 	}
 
-	// The detail pane is cross-cutting: it splits whichever top tab's content
-	// area is active in two, rather than being a peer tab of its own.
-	if m.showDetail {
+	// The bottom pane (Detail or Logs — mutually exclusive) is cross-cutting:
+	// it splits whichever top tab's content area is active in two, rather
+	// than being a peer tab of its own.
+	if m.showDetail || m.showLogs {
 		p := styles.CatppuccinMocha()
 		// RenderTabHeaders divides tabWidth by len(tabs) with integer
 		// division, so the box's real rendered width can be up to
@@ -598,11 +753,21 @@ func (m *MainPage) View() string {
 			dividerW = 1
 		}
 		divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", dividerW))
+
+		var header, body string
+		if m.showDetail {
+			header = m.deploymentDetail.Header(dividerW)
+			body = m.deploymentDetail.View()
+		} else {
+			header = m.podLogs.Header(dividerW)
+			body = m.podLogs.View()
+		}
+
 		joined := lipgloss.JoinVertical(lipgloss.Left,
 			m.tabContent,
 			divider,
-			m.deploymentDetail.Header(dividerW),
-			m.deploymentDetail.View(),
+			header,
+			body,
 		)
 		// Right-pad every line up to a uniform minimum width so the outer
 		// container's Align(Center) shifts the whole block by one constant
@@ -906,7 +1071,19 @@ func hasLoading(loading map[string]bool) bool {
 }
 
 func getContextPaneDimensions(w, h int) (cW, cH int) {
-	cW = w / 4
+	cW = leftPaneWidthFor(w)
 	cH = h - 10
 	return cW, cH
+}
+
+// leftPaneWidthFor computes the left (context list) pane's width: a quarter
+// of the terminal width, capped at views.MaxLeftPaneWidth. Context names are
+// short, so on wide terminals a fixed fraction wastes space that the tab
+// area could otherwise use.
+func leftPaneWidthFor(w int) int {
+	lw := w / 4
+	if lw > views.MaxLeftPaneWidth {
+		lw = views.MaxLeftPaneWidth
+	}
+	return lw
 }

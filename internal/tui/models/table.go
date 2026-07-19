@@ -21,7 +21,8 @@ func podTableColumns() []table.Column {
 		{Title: "Status", Width: 10},
 		{Title: "Restarts", Width: 10},
 		{Title: "Age", Width: 10},
-		{Title: "Context", Width: 0}, // hidden, carries data for the detail tab
+		{Title: "Context", Width: 0},    // hidden, carries data for the detail tab
+		{Title: "Containers", Width: 0}, // hidden, comma-separated container names for the log pane
 	}
 }
 
