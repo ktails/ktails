@@ -222,7 +222,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			nextTab := m.tabs[next]
-			if nextTab == "Deployments" {
+			if nextTab == "Deployments" || nextTab == "Pods" || nextTab == "svc" {
 				snapshot := m.appState.Snapshot()
 				if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
 					return m, nil
@@ -270,6 +270,17 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the Pods tab (or the row under the cursor, if nothing's checked).
 		if m.appStateLoaded && keypress == "l" && m.tabs[m.activeTab] == "Pods" {
 			if cmd := m.openPodLogs(); cmd != nil {
+				return m, cmd
+			}
+			return m, nil
+		}
+
+		// r re-fetches only the active tab's resource type, across every
+		// selected context — not all three resource types, to avoid tripling
+		// API load on tabs the user isn't even looking at. Table cursor is
+		// untouched: SetRows reuses the same table.Model, it doesn't reset it.
+		if m.appStateLoaded && keypress == "r" {
+			if cmd := m.refreshActiveTab(); cmd != nil {
 				return m, cmd
 			}
 			return m, nil
@@ -630,6 +641,45 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 	}
 }
 
+// refreshActiveTab re-fetches the active tab's resource type for every
+// selected context, batched with tea.Batch the same way ContextsStateMsg
+// kicks off the initial load. Setting the same per-context loading flag used
+// on initial load means the existing "⏳ N loading" status bar hint just
+// picks the refresh up automatically.
+func (m *MainPage) refreshActiveTab() tea.Cmd {
+	snapshot := m.appState.Snapshot()
+	if len(snapshot.SelectedContexts) == 0 {
+		return nil
+	}
+
+	var cmdSequence []tea.Cmd
+	switch m.tabs[m.activeTab] {
+	case "Deployments":
+		for context, namespace := range snapshot.SelectedContexts {
+			m.appState.SetLoading(context, true)
+			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
+		}
+	case "Pods":
+		for context, namespace := range snapshot.SelectedContexts {
+			m.appState.SetLoadingPods(context, true)
+			cmdSequence = append(cmdSequence, cmds.LoadPodInfoCmd(m.Client, context, namespace))
+		}
+	case "svc":
+		for context, namespace := range snapshot.SelectedContexts {
+			m.appState.SetLoadingServices(context, true)
+			cmdSequence = append(cmdSequence, cmds.LoadServiceInfoCmd(m.Client, context, namespace))
+		}
+	}
+
+	if len(cmdSequence) == 0 {
+		return nil
+	}
+
+	s := m.appState.Snapshot()
+	m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+	return tea.Batch(cmdSequence...)
+}
+
 // podLogTarget identifies one pod/container source to be tailed.
 type podLogTarget struct {
 	key                            string // context/namespace/pod/container
@@ -954,6 +1004,11 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	if errCount > 0 {
 		statusBits = append(statusBits, fmt.Sprintf("⚠ %d error(s)", errCount))
 	}
+	if activeTabName == "Pods" {
+		if checkedCount := len(m.podList.CheckedKeys()); checkedCount > 0 {
+			statusBits = append(statusBits, fmt.Sprintf("☑ %d checked · l: open merged · Ctrl+X: clear", checkedCount))
+		}
+	}
 	if len(statusBits) == 0 {
 		statusBits = append(statusBits, "Ready")
 	}
@@ -997,6 +1052,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"Enter", "Confirm selection & load / open + focus detail pane (refocuses instantly if already loaded)"},
 		{"l (Pods tab)", "Open/reconcile the merged log pane for checked rows (or the row under the cursor)"},
 		{"Ctrl+X (Pods tab)", "Clear all checked rows"},
+		{"r", "Refresh the active tab's resource list across all selected contexts"},
 		{"c (log pane focused)", "Isolate one source's view, or return to the full merge"},
 		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
 		{"↑/↓ j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
