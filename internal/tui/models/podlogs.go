@@ -2,7 +2,9 @@
 package models
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -28,6 +30,145 @@ func sourceColors() []lipgloss.Color {
 		p.Blue, p.Lavender, p.Sapphire, p.Sky, p.Teal,
 		p.Pink, p.Flamingo, p.Rosewater, p.Yellow, p.Maroon,
 	}
+}
+
+// highlightJSONLine finds the first JSON object or array embedded in a log
+// line (e.g. after a "2026-07-19 INFO " prefix) and, if the text from there
+// to the end of the line parses as valid JSON, colors its tokens in place.
+// The line is otherwise returned unchanged: no pretty-printing, no
+// reformatting, and lines without a parseable JSON tail are left as plain
+// text. This uses a separate color palette from sourceColors so a JSON
+// payload never collides with its own line's source-prefix color.
+func highlightJSONLine(line string, p styles.Palette) string {
+	idx := strings.IndexAny(line, "{[")
+	if idx < 0 {
+		return line
+	}
+	prefix, jsonPart := line[:idx], line[idx:]
+	if !json.Valid([]byte(jsonPart)) {
+		return line
+	}
+	colored, ok := colorizeJSON(jsonPart, p)
+	if !ok {
+		return line
+	}
+	return prefix + colored
+}
+
+// splitLeadingGap separates a leading run of separator bytes (whitespace,
+// ':', ',') that json.Decoder attaches to the front of a scalar token's raw
+// span from the token's own text, based on where that token's value is
+// known to actually begin.
+func splitLeadingGap(raw string, tok interface{}) (gap, content string) {
+	var cut int
+	switch tok.(type) {
+	case json.Delim:
+		return "", raw
+	case string:
+		cut = strings.IndexByte(raw, '"')
+	case json.Number:
+		cut = strings.IndexAny(raw, "-0123456789")
+	case bool:
+		cut = strings.IndexAny(raw, "tf")
+	case nil:
+		cut = strings.IndexByte(raw, 'n')
+	}
+	if cut < 0 {
+		cut = 0
+	}
+	return raw[:cut], raw[cut:]
+}
+
+// colorizeJSON walks s (already known to be valid JSON) token by token via
+// json.Decoder, coloring each token's original raw text in place and
+// leaving everything between tokens (whitespace, colons, commas) dimmed as
+// punctuation. Token-based scanning, rather than unmarshaling into a map,
+// preserves the source's original key order and formatting exactly.
+func colorizeJSON(s string, p styles.Palette) (string, bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+
+	type frame struct {
+		isObj     bool
+		expectKey bool
+	}
+	var stack []frame
+
+	punctStyle := lipgloss.NewStyle().Foreground(p.Overlay1)
+	keyStyle := lipgloss.NewStyle().Foreground(p.Blue)
+	strStyle := lipgloss.NewStyle().Foreground(p.Green)
+	numStyle := lipgloss.NewStyle().Foreground(p.Yellow)
+	litStyle := lipgloss.NewStyle().Foreground(p.Mauve)
+
+	var sb strings.Builder
+	var prevEnd int64
+
+	for {
+		startOff := dec.InputOffset()
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", false
+		}
+		endOff := dec.InputOffset()
+
+		if gap := s[prevEnd:startOff]; gap != "" {
+			sb.WriteString(punctStyle.Render(gap))
+		}
+		raw := s[startOff:endOff]
+
+		// The decoder's offsets lag by one token: any separator between the
+		// previous token and this one (a colon, comma, or whitespace) shows
+		// up as a leading prefix of raw rather than its own gap, so it must
+		// be split off here and colored as punctuation to avoid bleeding
+		// into this token's value color.
+		lead, content := splitLeadingGap(raw, tok)
+		if lead != "" {
+			sb.WriteString(punctStyle.Render(lead))
+		}
+		raw = content
+
+		switch v := tok.(type) {
+		case json.Delim:
+			sb.WriteString(punctStyle.Render(raw))
+			switch v {
+			case '{':
+				stack = append(stack, frame{isObj: true, expectKey: true})
+			case '[':
+				stack = append(stack, frame{isObj: false})
+			case '}', ']':
+				if len(stack) > 0 {
+					stack = stack[:len(stack)-1]
+				}
+			}
+		case string:
+			if len(stack) > 0 && stack[len(stack)-1].isObj && stack[len(stack)-1].expectKey {
+				sb.WriteString(keyStyle.Render(raw))
+				stack[len(stack)-1].expectKey = false
+			} else {
+				sb.WriteString(strStyle.Render(raw))
+				if len(stack) > 0 && stack[len(stack)-1].isObj {
+					stack[len(stack)-1].expectKey = true
+				}
+			}
+		case json.Number:
+			sb.WriteString(numStyle.Render(raw))
+			if len(stack) > 0 && stack[len(stack)-1].isObj {
+				stack[len(stack)-1].expectKey = true
+			}
+		case bool, nil:
+			sb.WriteString(litStyle.Render(raw))
+			if len(stack) > 0 && stack[len(stack)-1].isObj {
+				stack[len(stack)-1].expectKey = true
+			}
+		}
+		prevEnd = endOff
+	}
+	sb.WriteString(s[prevEnd:])
+
+	return sb.String(), true
 }
 
 // logLine is a single buffered line tagged with a global arrival sequence
@@ -236,11 +377,13 @@ func (l *LogPage) SetStreamEnded(key string, err error) {
 // seq-ordered, so this is a straightforward merge-and-sort over a bounded
 // number of lines).
 func (l *LogPage) refreshContent() {
+	p := styles.CatppuccinMocha()
+
 	if l.isolatedIdx >= 0 && l.isolatedIdx < len(l.order) {
 		src := l.sources[l.order[l.isolatedIdx]]
 		rendered := make([]string, len(src.lines))
 		for i, ln := range src.lines {
-			rendered[i] = ln.text
+			rendered[i] = highlightJSONLine(ln.text, p)
 		}
 		l.viewport.SetContent(strings.Join(rendered, "\n"))
 		return
@@ -251,7 +394,7 @@ func (l *LogPage) refreshContent() {
 		src := l.sources[key]
 		prefix := lipgloss.NewStyle().Foreground(src.color).Bold(true).Render(src.label() + " |")
 		for _, ln := range src.lines {
-			all = append(all, logLine{seq: ln.seq, text: prefix + " " + ln.text})
+			all = append(all, logLine{seq: ln.seq, text: prefix + " " + highlightJSONLine(ln.text, p)})
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].seq < all[j].seq })
