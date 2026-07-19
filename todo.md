@@ -193,8 +193,10 @@ Focus: Make it easy to find pods and filter logs in large clusters.
     `Shift+Right` scroll by **half the viewport's width** per press.
     Status-bar indicator: percentage scrolled, e.g. `◂ 40% ▸`. Scroll
     position survives refresh/new log lines; resets on resize.
-  - Status: ❌ Not started — spec locked via grilling session, ready to
-    implement (large — see execution plan)
+  - Status: ⚠️ Partial — library migration + tables (narrow/wide mode,
+    including the wide-mode new-columns re-scope) ✅ done (Tracks M/M2, see
+    `plan-horizontal-scroll.md`); Detail & Log panes' horizontal scroll ❌
+    not started (Track F/G)
 
 ---
 

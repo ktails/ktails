@@ -1,10 +1,24 @@
 # Horizontal scroll + log wrap — execution plan (phased, parallelizable)
 
-Status: ready to execute. Full spec locked in `todo.md` (via a grilling
-session, 2026-07-19) under "Horizontal Scrolling" and "Soft Wrap Toggle" —
-this file only sequences *how* to build it (phases, tracks, file ownership),
-not *what* to build. Read both `todo.md` entries before starting a track;
-this file won't repeat that detail.
+Full spec locked in `todo.md` (via a grilling session, 2026-07-19) under
+"Horizontal Scrolling" and "Soft Wrap Toggle" — this file only sequences
+*how* to build it (phases, tracks, file ownership), not *what* to build.
+Read both `todo.md` entries before starting a track; this file won't repeat
+that detail.
+
+## Status
+
+- ✅ **Track M** — bubble-table migration + table wide-mode/scroll/freeze.
+  Done, merged.
+- ✅ **Track M2** — wide mode reveals new columns (Pods: Ready/Node/Node
+  IP/Pod IP; Deployments: Available/Updated/Strategy/Selector; Services:
+  Selector/External IP/Endpoint IPs). Done, merged.
+- ⬜ **Track F** — Detail pane horizontal scroll. Not started.
+- ⬜ **Track G** — Log pane wrap toggle + horizontal scroll. Not started.
+
+F and G are independent of each other and of M/M2 (different files —
+`resourcedetail.go` and `podlogs.go` respectively) and can run in parallel
+whenever picked up.
 
 ## How to use this plan
 
@@ -70,11 +84,20 @@ Files: `internal/tui/models/pods.go`, `internal/tui/models/deployment.go`,
 (row-access call sites, `Ctrl+W` handling, status bar indicator — different
 regions than Tracks F/G touch, expect clean merge).
 
-### Track M2 — wide mode: reveal new columns (builds on Track M)
+### Track M2 — wide mode: reveal new columns (builds on Track M) — ✅ done, merged
 
 `todo.md`'s "Horizontal Scrolling" entry, "Tables — narrow/wide mode"
 paragraph, re-scope note (grilling session, 2026-07-19, same day as Track
-M). Depends on Track M having landed (it has). Build in this order:
+M). Depended on Track M having landed (it had). Landed as scoped below:
+Pods wide mode gained Ready/Node/Node IP/Pod IP; Deployments gained
+Available/Updated/Strategy/Selector; Services gained Selector/External
+IP/Endpoint IPs (the last fetched lazily via one namespace-wide
+`EndpointSlices` List call, joined client-side by the
+`kubernetes.io/service-name` label, triggered only on the svc tab's
+off→on `Ctrl+W` transition per context+namespace — see
+`AppState.NeedsServiceEndpoints`/`MarkServiceEndpointsRequested` in
+`internal/state/state.go` and `fetchServiceEndpointsIfNeeded` in
+`internal/pages/mainPage.go`). Build order that was followed:
 
 1. **New `*Info` fields, all free from the existing `List` calls** (no new
    API call):
