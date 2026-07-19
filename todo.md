@@ -150,18 +150,43 @@ Focus: Make it easy to find pods and filter logs in large clusters.
   - **Tables — narrow/wide mode**: default ("narrow") behavior unchanged —
     flex columns shrink to fit viewport, long values truncated with `…`.
     `Ctrl+W` toggles "wide mode" **per tab, sticky** across tab switches
-    (Deployments/Pods/svc each remember their own state independently). Wide
-    mode swaps to fixed-width columns, **auto-fit to the longest current
-    value in each column** (recomputed on every `SetRows`/refresh) — no
-    truncation. When wide mode's total column width exceeds the viewport,
+    (Deployments/Pods/svc each remember their own state independently).
+    **Re-scoped (grilling session, same day): wide mode isn't just
+    auto-fit-to-content-width of the existing columns (that was the original,
+    narrower framing, already built in Track M) — it also reveals genuinely
+    new columns not shown in narrow mode at all**, joining the same
+    auto-fit-width + scroll mechanism (nothing from Track M is discarded, the
+    wide-mode column list just grows):
+    - **Pods**: Node, Node IP (`pod.Status.HostIP`), Pod IP
+      (`pod.Status.PodIP`), Ready containers (e.g. `2/3`). All free from the
+      existing `ListPods` call already backing `LoadPodInfoCmd` — no extra
+      API round trip.
+    - **Deployments**: Strategy (`deployment.Spec.Strategy.Type`),
+      Available/Updated replicas (`deployment.Status.AvailableReplicas`/
+      `.UpdatedReplicas`), Selector (`deployment.Spec.Selector`). All free
+      from the existing deployments List call.
+    - **Services**: Selector (`svc.Spec.Selector`), External IP/LoadBalancer
+      ingress (`svc.Status.LoadBalancer.Ingress`) — both free from the
+      existing services List call. **Endpoint IPs is the one exception** —
+      it lives on a separate resource (EndpointSlices/Endpoints, not
+      `Service`), so it needs one extra namespace-wide List call, joined
+      client-side by service name. Fetched **lazily** — only the first time
+      wide mode toggles on for a given context+namespace, then cached like
+      everything else. `Ctrl+W` reveals every other wide-mode column
+      immediately; the Endpoint IPs column shows `…` per row until that one
+      async fetch resolves.
+    All wide-mode columns (old and new) are **auto-fit to the longest
+    current value in each column** (recomputed on every `SetRows`/refresh) —
+    no truncation. When wide mode's total column width exceeds the viewport,
     `Shift+Left`/`Shift+Right` scroll **one column at a time**
     (`ScrollLeft`/`ScrollRight`). Pods' checkbox (`✓`) column stays **frozen**
-    on the left during scroll (`WithHorizontalFreezeColumnCount(1)`).
-    Status-bar indicator (new bit alongside `⏳ N loading`/`☑ N checked`):
-    `◂ col N/M ▸`, shown only when wide mode is on and there's more than one
-    column-page. Scroll position + wide-mode on/off **survive** manual/auto
-    refresh; **reset** to leftmost/narrow on terminal resize. `Ctrl+W` and
-    column-scroll are a no-op outside the three resource tables.
+    on the left during scroll (`WithHorizontalFreezeColumnCount(1)`) — no
+    other column warrants freezing. Status-bar indicator (new bit alongside
+    `⏳ N loading`/`☑ N checked`): `◂ col N/M ▸`, shown only when wide mode is
+    on and there's more than one column-page. Scroll position + wide-mode
+    on/off **survive** manual/auto refresh; **reset** to leftmost/narrow on
+    terminal resize. `Ctrl+W` and column-scroll are a no-op outside the three
+    resource tables.
   - **Detail & Log panes — horizontal scroll** (free text, no columns, both
     `bubbles/viewport`): always horizontally scrollable when content
     overflows (no on/off toggle — nothing to "widen" from). `Shift+Left`/

@@ -21,7 +21,13 @@ land on top.
 
 ## Phase 1 — three parallel tracks, no cross-track dependencies
 
-### Track M — bubble-table migration + table wide-mode/scroll/freeze
+### Track M — bubble-table migration + table wide-mode/scroll/freeze — ✅ done, merged
+
+Landed as-scoped below. **Superseded in part**: the "wide mode" framing here
+(auto-fit-to-content-width of the *existing* columns) turned out to be too
+narrow — see Track M2 below, which re-scopes wide mode to also reveal new
+columns, reusing everything built in this track rather than replacing it.
+Kept here for the historical record of what Track M itself built.
 
 Bundled into one track (not two) because the wide-mode/scroll/freeze work is
 built directly on top of the migration in the same files — splitting them
@@ -63,6 +69,77 @@ Files: `internal/tui/models/pods.go`, `internal/tui/models/deployment.go`,
 `internal/tui/cmds/cmds.go` (row-building, now keyed), `internal/pages/mainPage.go`
 (row-access call sites, `Ctrl+W` handling, status bar indicator — different
 regions than Tracks F/G touch, expect clean merge).
+
+### Track M2 — wide mode: reveal new columns (builds on Track M)
+
+`todo.md`'s "Horizontal Scrolling" entry, "Tables — narrow/wide mode"
+paragraph, re-scope note (grilling session, 2026-07-19, same day as Track
+M). Depends on Track M having landed (it has). Build in this order:
+
+1. **New `*Info` fields, all free from the existing `List` calls** (no new
+   API call):
+   - `internal/k8s/client.go`'s `PodInfo`/`podToPodInfo`: add `NodeIP`
+     (`pod.Status.HostIP`), `PodIP` (`pod.Status.PodIP`), and a
+     ready-containers count derived from `pod.Status.ContainerStatuses`
+     (e.g. rendered as `"2/3"` the same way `DeploymentInfo`'s
+     ready/desired is today). `Node` already exists on `PodInfo` — it's
+     just never been surfaced into a table row.
+   - `internal/k8s/deployments.go`'s `DeploymentInfo`/`GetDeploymentInfo`:
+     add `Strategy` (`deployment.Spec.Strategy.Type`), `AvailableReplicas`,
+     `UpdatedReplicas`, `Selector` (render `deployment.Spec.Selector` via
+     `metav1.LabelSelectorAsSelector(...).String()` or equivalent).
+   - `internal/k8s/services.go`'s `ServiceInfo`/`GetServiceInfo`: add
+     `Selector` (`svc.Spec.Selector`, a `map[string]string` — render as
+     `key=value,key=value`), `ExternalIP` (from
+     `svc.Status.LoadBalancer.Ingress`, hostname or IP, joined if multiple).
+2. **Endpoint IPs for Services — the one field needing a new API call**:
+   add a method alongside `GetServiceInfo` in `internal/k8s/services.go`
+   that lists `EndpointSlices` (or `Endpoints`) for the whole namespace in
+   one call and returns a `map[string][]string` (service name → endpoint
+   IPs) for client-side joining — never one call per service. Wire this
+   into `internal/tui/cmds/cmds.go` as a separate `tea.Cmd`
+   (`LoadServiceEndpointsCmd` or similar) fetched lazily: only issued the
+   first time wide mode toggles on for svc on a given context+namespace
+   (track a per-context+namespace "already fetched" flag, same spirit as
+   the existing per-context loading-state tracking in `AppState`), then
+   cached — don't refetch on every wide-mode toggle or every refresh.
+   `Ctrl+W` must reveal every other new svc column immediately regardless
+   of whether this fetch has completed; the Endpoint IPs column shows `…`
+   per row until the async result lands, then repopulates via the normal
+   `SetRows` path.
+3. **Row-building**: extend `LoadPodInfoCmd`/`LoadDeploymentInfoCmd`/
+   `LoadServiceInfoCmd` in `internal/tui/cmds/cmds.go` (and the new
+   endpoints-join step for svc) to carry these fields as additional
+   `msgs.RowData` keys — always populated (cheap, same List call already
+   made), regardless of whether wide mode is currently on. Add the new key
+   constants next to the existing `PodKey*`/`DeployKey*`/`SvcKey*` ones in
+   `internal/tui/msgs/msgs.go`.
+4. **New wide-mode-only columns**: extend `podWideColumns`/
+   `deploymentWideColumns`/`svcWideColumns` in `internal/tui/models/table.go`
+   to include the new fields alongside the existing ones, using the same
+   `paddedColumn`/`widestValue` auto-fit helpers already built — this is
+   additive to those functions, not a new mechanism. Narrow-mode column
+   functions (`podNarrowColumns` etc.) are untouched — the new fields are
+   wide-mode-only. Pick a sensible column order (e.g. group Node/Node
+   IP/Pod IP together for Pods, Ready-containers near Status/Restarts) —
+   cosmetic, adjust if it doesn't read well.
+5. Confirm the existing `◂ col N/M ▸` status-bar indicator, frozen Pods
+   checkbox column, and refresh-survives/resize-resets persistence all
+   still behave correctly now that `M` (total wide-mode columns) is larger
+   per tab — this should fall out of Track M's existing logic without
+   changes, since it already operates generically over "however many
+   columns are in wide mode," but verify rather than assume.
+
+Files: `internal/k8s/client.go`, `internal/k8s/deployments.go`,
+`internal/k8s/services.go` (new fields + the new endpoints-list method),
+`internal/tui/cmds/cmds.go` (row-building + new lazy-fetch `tea.Cmd`),
+`internal/tui/msgs/msgs.go` (new row-data key constants),
+`internal/tui/models/table.go` (wide-column functions only — narrow-column
+functions and the auto-fit/scroll/freeze machinery are untouched),
+`internal/state/state.go` (per-context+namespace "endpoints already
+fetched" tracking, if it doesn't fit naturally into existing loading-state
+tracking), `internal/pages/mainPage.go` (wiring the new lazy-fetch `tea.Cmd`
+into the `Ctrl+W` handler for the svc tab specifically).
 
 ### Track F — Detail pane horizontal scroll
 
@@ -122,6 +199,13 @@ artifacts at narrow *and* half-terminal widths (this is exactly the bug class
 that motivated the migration — verify it's actually gone, not just moved),
 checked-count indicator and multi-pod log selection still work, tab gating,
 manual/auto refresh still preserve cursor position.
+
+After Track M2: confirm the new columns appear only in wide mode (never in
+narrow), values match `kubectl get -o wide`/`kubectl describe` for a live
+cluster, the Endpoint IPs lazy-fetch only fires once per context+namespace
+(not on every `Ctrl+W` toggle or every refresh), and toggling wide mode on
+svc doesn't block waiting for that fetch — every other new column appears
+immediately, Endpoint IPs fills in a beat later.
 
 After all tracks: a manual pass — `Ctrl+W` on each of the three tabs widens
 columns to fit content with no clipping, is sticky across tab switches,

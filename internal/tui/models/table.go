@@ -12,15 +12,18 @@ import (
 
 // newBubbleTable builds a bubble-table Model with the options common to
 // every resource table: no pagination (the spec keeps today's continuous
-// full-list scroll, not discrete pages).
+// full-list scroll, not discrete pages), and no border — bubble-table draws
+// a full grid border by default, which the old bubbles/table never had and
+// which just duplicates the app's own pane border around the tab content.
 func newBubbleTable(cols []btable.Column) btable.Model {
-	return btable.New(cols).WithNoPagination()
+	return btable.New(cols).WithNoPagination().Border(btable.Border{})
 }
 
-// checkColWidth is the fixed, unpadded width of the Pods checkbox column —
-// it's intentionally excluded from the padded-column budget below, matching
-// the old bubbles/table layout where the checkbox column carried no extra
-// padding overhead.
+// checkColWidth is the content width (before padding) of the Pods checkbox
+// column glyph. The old bubbles/table implementation applied one shared
+// Padding(0,1) cell style across every column including the checkbox, so it
+// needs the same padding here (via paddedColumn) to avoid rendering flush
+// against the Name column.
 const checkColWidth = 1
 
 // columnPadStyle mirrors the old bubbles/table cell look (Padding(0,1)).
@@ -135,7 +138,7 @@ func replicaCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {
 
 func podNarrowColumns() []btable.Column {
 	return []btable.Column{
-		btable.NewColumn(msgs.PodKeyCheck, "✓", checkColWidth),
+		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
 		paddedFlexColumn(msgs.PodKeyName, "Name", 10),
 		paddedFlexColumn(msgs.PodKeyNamespace, "Namespace", 5),
 		paddedFlexColumn(msgs.PodKeyStatus, "Status", 4),
@@ -146,7 +149,7 @@ func podNarrowColumns() []btable.Column {
 
 func podWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
-		btable.NewColumn(msgs.PodKeyCheck, "✓", checkColWidth),
+		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
 		paddedColumn(msgs.PodKeyName, "Name", widestValue(rows, msgs.PodKeyName, "Name")),
 		paddedColumn(msgs.PodKeyNamespace, "Namespace", widestValue(rows, msgs.PodKeyNamespace, "Namespace")),
 		paddedColumn(msgs.PodKeyStatus, "Status", widestValue(rows, msgs.PodKeyStatus, "Status")),
