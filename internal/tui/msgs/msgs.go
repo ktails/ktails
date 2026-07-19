@@ -56,25 +56,29 @@ type ErrorMsg struct {
 	Err     error  // The actual error
 }
 
-// LogStreamOpenedMsg carries a freshly opened pod log stream for the Log
-// pane. SessionID must match MainPage's current log session before the
-// stream is adopted — otherwise it belongs to a since-superseded pod,
-// container, or closed pane and should just be closed.
+// LogStreamOpenedMsg carries a freshly opened pod log stream for one source
+// in the merged Log pane. SourceKey identifies which pod/container/context
+// this belongs to; Generation must match that source's current generation
+// in MainPage before the stream is adopted — otherwise this source has
+// since been restarted or closed and the stream should just be closed.
 type LogStreamOpenedMsg struct {
-	SessionID int
-	Stream    io.ReadCloser
+	SourceKey  string
+	Generation int
+	Stream     io.ReadCloser
 }
 
-// LogLineMsg carries a single line read from an open log stream.
+// LogLineMsg carries a single line read from one source's open log stream.
 type LogLineMsg struct {
-	SessionID int
-	Line      string
+	SourceKey  string
+	Generation int
+	Line       string
 }
 
-// LogStreamClosedMsg reports that a log stream ended, either because the
-// server closed it (Err == nil, e.g. a non-following read finished) or
-// because opening/reading it failed (Err != nil).
+// LogStreamClosedMsg reports that one source's log stream ended, either
+// because the server closed it (Err == nil, e.g. a non-following read
+// finished) or because opening/reading it failed (Err != nil).
 type LogStreamClosedMsg struct {
-	SessionID int
-	Err       error
+	SourceKey  string
+	Generation int
+	Err        error
 }

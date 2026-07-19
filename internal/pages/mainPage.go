@@ -65,17 +65,29 @@ type MainPage struct {
 	detailFocused bool
 
 	// Log pane — a second cross-cutting bottom split, reachable with `l` on
-	// a Pods row. Mutually exclusive with the Detail pane in v0.1.0: opening
-	// one closes the other. logSessionID guards against messages from a
-	// since-superseded stream (old pod, old container, or a closed pane).
-	podLogs      *models.LogPage
-	showLogs     bool
-	logsFocused  bool
-	logSessionID int
-	logStream    io.ReadCloser
-	logScanner   *bufio.Scanner
+	// one or more checked Pods rows (or the row under the cursor, if none
+	// are checked). Mutually exclusive with the Detail pane: opening one
+	// closes the other. Every checked pod's containers become one source
+	// each, merged into a single scrollback; logStreams holds the live
+	// stream/scanner/generation per source, keyed the same way as
+	// podLogs' sources. Generation guards against messages from a
+	// since-superseded stream for that specific source (old pod switched
+	// out, or the whole pane closed) without affecting other open sources.
+	podLogs     *models.LogPage
+	showLogs    bool
+	logsFocused bool
+	logStreams  map[string]*logStreamState
 
 	tableW, tableH int
+}
+
+// logStreamState is the live stream-plumbing state for one open log
+// source, keyed by the same context/namespace/pod/container key used in
+// models.LogPage.
+type logStreamState struct {
+	stream     io.ReadCloser
+	scanner    *bufio.Scanner
+	generation int
 }
 
 func NewMainPageModel(c *k8s.Client) *MainPage {
@@ -99,6 +111,7 @@ func NewMainPageModel(c *k8s.Client) *MainPage {
 		svcList:          svcList,
 		deploymentDetail: detailPage,
 		podLogs:          logPage,
+		logStreams:       make(map[string]*logStreamState),
 		appStateLoaded:   false,
 		focus:            focusLeftPane,
 		errorMessage:     "",
@@ -179,10 +192,12 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// While the log pane has keyboard focus, it captures everything except
-		// 'c' (cycle container), which MainPage intercepts to restream.
+		// 'c', which MainPage intercepts to isolate/return-to-merged a single
+		// source — a pure view toggle, no stream side effects.
 		if m.logsFocused {
 			if keypress == "c" {
-				return m, m.cycleLogContainer()
+				m.podLogs.CycleIsolation()
+				return m, nil
 			}
 			cmd := m.podLogs.Update(msg)
 			return m, cmd
@@ -238,7 +253,21 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// l on a selected Pod row opens/refocuses the log pane.
+		// Space toggles the row under the cursor for inclusion in the next
+		// merged log stream; Ctrl+X clears all checkmarks. Pods-tab only.
+		if m.appStateLoaded && m.tabs[m.activeTab] == "Pods" {
+			switch keypress {
+			case " ":
+				m.podList.ToggleChecked(models.PodRowKey(m.podList.SelectedRow()))
+				return m, nil
+			case "ctrl+x":
+				m.podList.ClearChecked()
+				return m, nil
+			}
+		}
+
+		// l reconciles the merged log pane to whatever's currently checked in
+		// the Pods tab (or the row under the cursor, if nothing's checked).
 		if m.appStateLoaded && keypress == "l" && m.tabs[m.activeTab] == "Pods" {
 			if cmd := m.openPodLogs(); cmd != nil {
 				return m, cmd
@@ -290,29 +319,35 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case msgs.LogStreamOpenedMsg:
-		// Stale — belongs to a pod/container/pane the user has since moved
-		// on from. Close it rather than adopting it.
-		if msg.SessionID != m.logSessionID {
+		// Stale — this source has since been restarted or closed. Close the
+		// stream rather than adopting it; other open sources are unaffected.
+		st, ok := m.logStreams[msg.SourceKey]
+		if !ok || msg.Generation != st.generation {
 			msg.Stream.Close()
 			return m, nil
 		}
-		m.logStream = msg.Stream
-		m.logScanner = cmds.NewLogScanner(msg.Stream)
-		return m, cmds.WaitForLogLineCmd(msg.SessionID, m.logScanner)
+		st.stream = msg.Stream
+		st.scanner = cmds.NewLogScanner(msg.Stream)
+		return m, cmds.WaitForLogLineCmd(msg.SourceKey, msg.Generation, st.scanner)
 
 	case msgs.LogLineMsg:
-		if msg.SessionID != m.logSessionID {
+		st, ok := m.logStreams[msg.SourceKey]
+		if !ok || msg.Generation != st.generation {
 			return m, nil
 		}
-		m.podLogs.AppendLine(msg.Line)
-		return m, cmds.WaitForLogLineCmd(msg.SessionID, m.logScanner)
+		m.podLogs.AppendLine(msg.SourceKey, msg.Line)
+		return m, cmds.WaitForLogLineCmd(msg.SourceKey, msg.Generation, st.scanner)
 
 	case msgs.LogStreamClosedMsg:
-		if msg.SessionID != m.logSessionID {
+		st, ok := m.logStreams[msg.SourceKey]
+		if !ok || msg.Generation != st.generation {
 			return m, nil
 		}
-		m.stopLogStream()
-		m.podLogs.SetStreamEnded(msg.Err)
+		if st.stream != nil {
+			st.stream.Close()
+		}
+		delete(m.logStreams, msg.SourceKey)
+		m.podLogs.SetStreamEnded(msg.SourceKey, msg.Err)
 		return m, nil
 
 	case msgs.DeploymentTableMsg:
@@ -595,59 +630,103 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 	}
 }
 
-// openPodLogs opens (or refocuses) the log pane for the currently selected
-// Pod row into the shared bottom Log pane. Returns nil if there's no valid
-// selection or the pod has no known containers.
+// podLogTarget identifies one pod/container source to be tailed.
+type podLogTarget struct {
+	key                            string // context/namespace/pod/container
+	context, namespace, pod, cntnr string
+}
+
+// podLogTargets expands the given raw Pods-table rows into one target per
+// container (all containers of each pod are tailed — decision #4).
+func podLogTargets(rows []table.Row) []podLogTarget {
+	var targets []podLogTarget
+	for _, row := range rows {
+		if len(row) < 7 || row[6] == "" {
+			continue
+		}
+		name, namespace, ctxName := row[0], row[1], row[5]
+		for _, container := range strings.Split(row[6], ",") {
+			targets = append(targets, podLogTarget{
+				key:       ctxName + "/" + namespace + "/" + name + "/" + container,
+				context:   ctxName,
+				namespace: namespace,
+				pod:       name,
+				cntnr:     container,
+			})
+		}
+	}
+	return targets
+}
+
+// openPodLogs reconciles the merged log pane to whatever's currently checked
+// in the Pods tab — or, if nothing's checked, the single row under the
+// cursor (preserving the original single-pod behavior). Sources newly
+// present are opened, sources no longer targeted are closed, and unchanged
+// sources are left running untouched. An empty target set closes the pane.
 func (m *MainPage) openPodLogs() tea.Cmd {
-	row := m.podList.SelectedRow()
-	if len(row) < 7 {
-		return nil
+	var rows []table.Row
+	if keys := m.podList.CheckedKeys(); len(keys) > 0 {
+		for _, key := range keys {
+			if row := m.podList.CheckedRow(key); row != nil {
+				rows = append(rows, row)
+			}
+		}
+	} else if row := m.podList.SelectedRow(); row != nil {
+		rows = append(rows, row)
 	}
-	name, namespace, ctxName := row[0], row[1], row[5]
-	var containers []string
-	if row[6] != "" {
-		containers = strings.Split(row[6], ",")
-	}
-	if len(containers) == 0 {
+
+	targets := podLogTargets(rows)
+	if len(targets) == 0 {
+		m.closeLogs()
+		m.applyContentSizes()
 		return nil
 	}
 
-	// Re-entering the pod already shown in the pane just refocuses it
-	// instead of restreaming — mirrors openResourceDetail's Matches check.
-	if m.podLogs.Matches(name, namespace, ctxName) {
-		m.closeDetail()
-		m.showLogs = true
-		m.logsFocused = true
-		m.applyContentSizes()
-		m.updateFocusStates()
-		return nil
+	targetSet := make(map[string]podLogTarget, len(targets))
+	for _, t := range targets {
+		targetSet[t.key] = t
+	}
+
+	// Close sources no longer targeted.
+	for key := range m.logStreams {
+		if _, wanted := targetSet[key]; !wanted {
+			m.closeLogSource(key)
+		}
+	}
+
+	// Open sources newly targeted; unchanged ones are left running.
+	var openCmds []tea.Cmd
+	for key, t := range targetSet {
+		if _, exists := m.logStreams[key]; exists {
+			continue
+		}
+		m.podLogs.AddSource(key, t.pod, t.namespace, t.context, t.cntnr)
+		m.logStreams[key] = &logStreamState{generation: 1}
+		openCmds = append(openCmds, cmds.OpenPodLogStreamCmd(m.Client, t.context, t.namespace, t.pod, t.cntnr, key, 1))
 	}
 
 	m.closeDetail()
-	m.stopLogStream()
-	m.logSessionID++
-	sessionID := m.logSessionID
-	m.podLogs.Reset(name, namespace, ctxName, containers)
 	m.showLogs = true
 	m.logsFocused = true
 	m.applyContentSizes()
 	m.updateFocusStates()
 
-	return cmds.OpenPodLogStreamCmd(m.Client, ctxName, namespace, name, containers[0], sessionID)
-}
-
-// cycleLogContainer advances the open log pane to the next container (a
-// no-op if the pod has only one), closing the current stream and opening a
-// new one for it.
-func (m *MainPage) cycleLogContainer() tea.Cmd {
-	container, ok := m.podLogs.CycleContainer()
-	if !ok {
+	if len(openCmds) == 0 {
 		return nil
 	}
-	m.stopLogStream()
-	m.logSessionID++
-	sessionID := m.logSessionID
-	return cmds.OpenPodLogStreamCmd(m.Client, m.podLogs.Context(), m.podLogs.Namespace(), m.podLogs.PodName(), container, sessionID)
+	return tea.Batch(openCmds...)
+}
+
+// closeLogSource stops one source's stream (if any) and removes it from
+// both the stream registry and the render model.
+func (m *MainPage) closeLogSource(key string) {
+	if st, ok := m.logStreams[key]; ok {
+		if st.stream != nil {
+			st.stream.Close()
+		}
+		delete(m.logStreams, key)
+	}
+	m.podLogs.RemoveSource(key)
 }
 
 // closeDetail closes the Detail pane, if open. It holds no external
@@ -657,21 +736,24 @@ func (m *MainPage) closeDetail() {
 	m.detailFocused = false
 }
 
-// closeLogs closes the Log pane, if open, stopping its underlying stream.
+// closeLogs closes the Log pane, if open, stopping every open source's
+// underlying stream.
 func (m *MainPage) closeLogs() {
 	m.stopLogStream()
+	m.podLogs.Clear()
 	m.showLogs = false
 	m.logsFocused = false
 }
 
-// stopLogStream closes the currently open log stream, if any. Safe to call
-// when nothing is streaming.
+// stopLogStream closes every currently open log source's stream. Safe to
+// call when nothing is streaming.
 func (m *MainPage) stopLogStream() {
-	if m.logStream != nil {
-		m.logStream.Close()
-		m.logStream = nil
+	for key, st := range m.logStreams {
+		if st.stream != nil {
+			st.stream.Close()
+		}
+		delete(m.logStreams, key)
 	}
-	m.logScanner = nil
 }
 
 func (m *MainPage) View() string {
@@ -911,12 +993,15 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"[ / ]", "Navigate tabs"},
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},
-		{"Space", "Toggle context selection"},
+		{"Space", "Toggle context selection / check a Pods row for log tailing"},
 		{"Enter", "Confirm selection & load / open + focus detail pane (refocuses instantly if already loaded)"},
+		{"l (Pods tab)", "Open/reconcile the merged log pane for checked rows (or the row under the cursor)"},
+		{"Ctrl+X (Pods tab)", "Clear all checked rows"},
+		{"c (log pane focused)", "Isolate one source's view, or return to the full merge"},
 		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
-		{"↑/↓ j/k PgUp/PgDn", "Scroll detail pane (while it has focus)"},
-		{"Home / End", "Jump to top / bottom of detail pane"},
-		{"Esc", "Unfocus detail pane, then close it / overlay / dismiss error"},
+		{"↑/↓ j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
+		{"Home / End", "Jump to top / bottom of detail/log pane"},
+		{"Esc", "Unfocus detail/log pane, then close it / overlay / dismiss error"},
 		{"?", "Toggle this help"},
 		{"q / Ctrl+C", "Quit"},
 	}

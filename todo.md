@@ -39,11 +39,11 @@ Focus: Get the basics working - status bar, refresh, error handling.
   - Preserve cursor position after refresh
   - Status: ❌ Not started (only loads once on context selection)
 
-- [ ] **Basic Log Viewing**
-  - Press a key on a pod to view its logs
+- [x] **Basic Log Viewing**
+  - Press `l` on a pod to view its logs
   - Display logs in a dedicated pane, with follow/tail-f mode
   - Scroll through logs with arrow keys
-  - Status: ❌ Not started — the app currently shows Pod *metadata and detail* (Status/Events/YAML via the Detail pane), not log streams
+  - Status: ✅ Done — see `design-pod-log-viewer.md` and `design-multi-pod-log-viewer.md`
 
 ### 🟡 MEDIUM Priority
 
@@ -124,11 +124,11 @@ Focus: Advanced log viewing capabilities.
   - Include timestamp in filename
   - Status: ❌ Not started
 
-- [ ] **Multi-Container Support**
-  - Select container when pod has multiple containers
-  - Switch between container logs with `c` key
-  - Show current container in status bar
-  - Status: ❌ Not started
+- [x] **Multi-Container Support**
+  - All containers of a tailed pod stream at once (merged view), not one at a time
+  - `c` isolates the view to one source (cycling through sources), instead of switching which container streams
+  - Current isolation state shown in the log pane header
+  - Status: ✅ Done — see `design-multi-pod-log-viewer.md`
 
 - [ ] **Timestamp Control**
   - Toggle timestamp display with `t` key
@@ -205,11 +205,11 @@ Focus: Production-ready stability and performance.
 
 ### 🟡 MEDIUM Priority
 
-- [ ] **Multiple Log Panes**
-  - View logs from multiple pods simultaneously
-  - Split screen horizontally/vertically
-  - Sync scroll option
-  - Status: ❌ Not started
+- [x] **Multiple Log Panes** (shipped as a merged single pane, not split screen)
+  - View logs from multiple pods simultaneously — done via `Space`-checked rows + `l`, merged into one scrollback with colored per-source prefixes
+  - Split screen horizontally/vertically — not done; deliberately chose a single merged pane instead (see `design-multi-pod-log-viewer.md`'s "Future" section); still open if the merged view proves insufficient
+  - Sync scroll option — not applicable to a single merged pane
+  - Status: ✅ Done (merged-pane version); split-screen variant still open
 
 - [ ] **Metrics Integration**
   - Show pod CPU/memory usage in list
@@ -289,7 +289,6 @@ Track current bugs and limitations:
 
 - ⚠️ No manual refresh — resource lists load once on context selection and don't update
 - ⚠️ Resource table rows aren't color-coded by status/phase (Running/Pending/Failed)
-- ⚠️ No log viewing yet — Pod detail shows metadata/Status/Events/YAML, not log streams
 - ⚠️ No way to deselect/remove a single loaded context's resources without deselecting the context itself
 - ⚠️ Context switching modifies global k8s client state (not thread-safe)
 

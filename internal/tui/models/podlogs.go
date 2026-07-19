@@ -3,6 +3,7 @@ package models
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -12,164 +13,273 @@ import (
 	"github.com/ktails/ktails/internal/tui/styles"
 )
 
-// maxLogLines bounds the in-memory scrollback for a live-tailing log
-// stream, dropping the oldest lines once exceeded.
+// maxLogLines bounds the in-memory scrollback per source, dropping each
+// source's own oldest lines once exceeded — a noisy container can't evict a
+// quiet one's history.
 const maxLogLines = 5000
 
-// LogPage renders a live-tailing log viewport for a single pod container, in
-// the shared bottom Log pane. It holds only render state — opening/reading
-// the underlying stream is orchestrated by cmds + MainPage, mirroring how
-// ResourceDetailPage stays free of k8s/io concerns.
+// sourceColors is the rotation of Catppuccin Mocha accents used to color
+// each source's line prefix. Red/Mauve/Green/Peach are excluded: they
+// already carry other meaning elsewhere in the UI (errors, focus/selection,
+// loaded state, this pane's own title).
+func sourceColors() []lipgloss.Color {
+	p := styles.CatppuccinMocha()
+	return []lipgloss.Color{
+		p.Blue, p.Lavender, p.Sapphire, p.Sky, p.Teal,
+		p.Pink, p.Flamingo, p.Rosewater, p.Yellow, p.Maroon,
+	}
+}
+
+// logLine is a single buffered line tagged with a global arrival sequence
+// number, so lines from different sources can be interleaved back into
+// true chronological order when rendering the merged view.
+type logLine struct {
+	seq  int64
+	text string
+}
+
+// logSource is one pod/container being tailed into the merged pane. It
+// holds only its own ring-buffered scrollback — stream I/O orchestration
+// lives in cmds + MainPage, mirroring how ResourceDetailPage stays free of
+// k8s/io concerns.
+type logSource struct {
+	key       string
+	podName   string
+	namespace string
+	context   string
+	container string
+	color     lipgloss.Color
+
+	lines     []logLine
+	streaming bool
+	streamErr string
+}
+
+func (s *logSource) label() string {
+	return fmt.Sprintf("%s/%s", s.podName, s.container)
+}
+
+// LogPage renders a live-tailing merged log viewport for one or more
+// pod/container sources, in the shared bottom Log pane. It holds only
+// render state — opening/reading the underlying streams is orchestrated by
+// cmds + MainPage.
 type LogPage struct {
 	viewport viewport.Model
 
-	podName      string
-	namespace    string
-	context      string
-	containers   []string
-	containerIdx int
+	sources map[string]*logSource
+	order   []string // insertion order: stable color assignment + isolate-cycle order
+	nextSeq int64
 
-	lines     []string
-	streaming bool
-	streamErr string
+	// isolatedIdx selects a single source (by index into order) to render
+	// alone; -1 means the full merged view. Other sources keep streaming
+	// into their buffers in the background regardless of isolation state.
+	isolatedIdx int
 
 	focused bool
 }
 
 func NewLogPage() *LogPage {
-	return &LogPage{viewport: viewport.New(0, 0)}
+	return &LogPage{
+		viewport:    viewport.New(0, 0),
+		sources:     make(map[string]*logSource),
+		isolatedIdx: -1,
+	}
 }
 
 func (l *LogPage) Init() tea.Cmd {
 	return nil
 }
 
-// Reset (re)starts the pane for a new pod, discarding any previous
-// scrollback, and points it at the pod's first container.
-func (l *LogPage) Reset(podName, namespace, context string, containers []string) {
-	l.podName = podName
-	l.namespace = namespace
-	l.context = context
-	l.containers = containers
-	l.containerIdx = 0
-	l.lines = nil
-	l.streaming = true
-	l.streamErr = ""
-	l.viewport.SetContent(fmt.Sprintf("Connecting to %s...", podName))
-	l.viewport.GotoTop()
-}
-
-// HasContent reports whether a pod has ever been loaded into this page.
+// HasContent reports whether any source has ever been added to this pane.
 func (l *LogPage) HasContent() bool {
-	return l.podName != ""
+	return len(l.order) > 0
 }
 
-// Matches reports whether the pane is already pinned to the given pod, so
-// callers can refocus it instead of restreaming.
-func (l *LogPage) Matches(podName, namespace, context string) bool {
-	return l.HasContent() && l.podName == podName && l.namespace == namespace && l.context == context
+// HasSource reports whether the given source key is currently open.
+func (l *LogPage) HasSource(key string) bool {
+	_, ok := l.sources[key]
+	return ok
 }
 
-// Containers returns the current pod's container names.
-func (l *LogPage) Containers() []string {
-	return l.containers
+// Keys returns the currently open source keys, in insertion order.
+func (l *LogPage) Keys() []string {
+	keys := make([]string, len(l.order))
+	copy(keys, l.order)
+	return keys
 }
 
-// PodName, Namespace, and Context identify the pod currently pinned to this
-// pane, so callers can restream (e.g. after CycleContainer) without having
-// to separately track that identity themselves.
-func (l *LogPage) PodName() string   { return l.podName }
-func (l *LogPage) Namespace() string { return l.namespace }
-func (l *LogPage) Context() string   { return l.context }
+// AddSource opens a new source in the pane, idempotently (a no-op if the
+// key is already present). Assigns the next color in the rotation.
+func (l *LogPage) AddSource(key, podName, namespace, context, container string) {
+	if _, exists := l.sources[key]; exists {
+		return
+	}
+	colors := sourceColors()
+	color := colors[len(l.order)%len(colors)]
 
-// CurrentContainer returns the container currently being streamed, or "" if
-// none is loaded.
-func (l *LogPage) CurrentContainer() string {
-	if l.containerIdx < 0 || l.containerIdx >= len(l.containers) {
+	src := &logSource{
+		key:       key,
+		podName:   podName,
+		namespace: namespace,
+		context:   context,
+		container: container,
+		color:     color,
+		streaming: true,
+	}
+	l.sources[key] = src
+	l.order = append(l.order, key)
+	l.appendTo(src, fmt.Sprintf("Connecting to %s...", src.label()))
+}
+
+// RemoveSource closes and forgets a source. Isolation resets to the full
+// merged view if the isolated source (or its index) no longer applies,
+// keeping isolatedIdx simple rather than tracking it through reordering.
+func (l *LogPage) RemoveSource(key string) {
+	if _, exists := l.sources[key]; !exists {
+		return
+	}
+	delete(l.sources, key)
+	for i, k := range l.order {
+		if k == key {
+			l.order = append(l.order[:i], l.order[i+1:]...)
+			break
+		}
+	}
+	l.isolatedIdx = -1
+	l.refreshContent()
+}
+
+// Clear removes every source, resetting the pane to empty.
+func (l *LogPage) Clear() {
+	l.sources = make(map[string]*logSource)
+	l.order = nil
+	l.isolatedIdx = -1
+	l.viewport.SetContent("")
+}
+
+// CycleIsolation advances through -1 (full merge) -> 0 -> ... ->
+// len(order)-1 -> -1, changing only what's rendered. Every source keeps
+// streaming into its own buffer regardless of isolation state, so
+// returning to the full merge shows no gaps.
+func (l *LogPage) CycleIsolation() {
+	if len(l.order) == 0 {
+		l.isolatedIdx = -1
+		return
+	}
+	l.isolatedIdx++
+	if l.isolatedIdx >= len(l.order) {
+		l.isolatedIdx = -1
+	}
+	l.refreshContent()
+}
+
+// IsolatedLabel returns the currently isolated source's "pod/container"
+// label, or "" when showing the full merge.
+func (l *LogPage) IsolatedLabel() string {
+	if l.isolatedIdx < 0 || l.isolatedIdx >= len(l.order) {
 		return ""
 	}
-	return l.containers[l.containerIdx]
+	return l.sources[l.order[l.isolatedIdx]].label()
 }
 
-// CycleContainer advances to the next container (wrapping around) and
-// resets the pane's scrollback for it. It's a no-op — ok == false — when
-// the pod has zero or one containers, since there's nothing to cycle to.
-func (l *LogPage) CycleContainer() (container string, ok bool) {
-	if len(l.containers) <= 1 {
-		return "", false
+// AppendLine adds a line read from source key's live stream. The viewport
+// only auto-follows to the bottom if it was already there.
+func (l *LogPage) AppendLine(key, line string) {
+	src, ok := l.sources[key]
+	if !ok {
+		return
 	}
-	l.containerIdx = (l.containerIdx + 1) % len(l.containers)
-	name := l.containers[l.containerIdx]
-
-	l.lines = nil
-	l.streaming = true
-	l.streamErr = ""
-	l.viewport.SetContent(fmt.Sprintf("Connecting to %s (%s)...", l.podName, name))
-	l.viewport.GotoTop()
-
-	return name, true
+	l.appendTo(src, line)
 }
 
-// AppendLine adds a line read from the live stream. The viewport only
-// auto-follows to the bottom if it was already there — a user who scrolled
-// up to read earlier output isn't yanked back down by new lines arriving.
-func (l *LogPage) AppendLine(line string) {
+func (l *LogPage) appendTo(src *logSource, text string) {
 	wasAtBottom := l.viewport.AtBottom()
 
-	l.lines = append(l.lines, line)
-	if len(l.lines) > maxLogLines {
-		l.lines = l.lines[len(l.lines)-maxLogLines:]
+	l.nextSeq++
+	src.lines = append(src.lines, logLine{seq: l.nextSeq, text: text})
+	if len(src.lines) > maxLogLines {
+		src.lines = src.lines[len(src.lines)-maxLogLines:]
 	}
-	l.viewport.SetContent(strings.Join(l.lines, "\n"))
+
+	l.refreshContent()
 
 	if wasAtBottom {
 		l.viewport.GotoBottom()
 	}
 }
 
-// SetStreamEnded records that the stream stopped (server-closed or errored)
-// and appends an inline banner line, preserving existing scrollback rather
-// than replacing the pane with a full-screen error.
-func (l *LogPage) SetStreamEnded(err error) {
-	wasAtBottom := l.viewport.AtBottom()
-
-	l.streaming = false
+// SetStreamEnded records that source key's stream stopped (server-closed or
+// errored) and appends an inline banner line for just that source,
+// preserving scrollback rather than replacing the pane. There's no
+// auto-retry — the source simply stops.
+func (l *LogPage) SetStreamEnded(key string, err error) {
+	src, ok := l.sources[key]
+	if !ok {
+		return
+	}
+	src.streaming = false
 	if err != nil {
-		l.streamErr = err.Error()
+		src.streamErr = err.Error()
 	} else {
-		l.streamErr = "stream ended"
+		src.streamErr = "stream ended"
 	}
 
 	p := styles.CatppuccinMocha()
-	banner := lipgloss.NewStyle().Foreground(p.Red).Render(fmt.Sprintf("⚠ log stream ended: %s", l.streamErr))
-	l.lines = append(l.lines, banner)
-	l.viewport.SetContent(strings.Join(l.lines, "\n"))
-
-	if wasAtBottom {
-		l.viewport.GotoBottom()
-	}
+	banner := lipgloss.NewStyle().Foreground(p.Red).
+		Render(fmt.Sprintf("⚠ log stream ended for %s: %s", src.label(), src.streamErr))
+	l.appendTo(src, banner)
 }
 
-// Header renders a one-line banner identifying the pod/container being
-// tailed and the pane's key hints. width caps the line so it never becomes
-// the widest line in the pane at narrow terminal sizes.
+// refreshContent rebuilds the viewport's content from either the isolated
+// source or a chronological merge of every source's buffer (interleaved by
+// global arrival sequence — each source's own lines are already
+// seq-ordered, so this is a straightforward merge-and-sort over a bounded
+// number of lines).
+func (l *LogPage) refreshContent() {
+	if l.isolatedIdx >= 0 && l.isolatedIdx < len(l.order) {
+		src := l.sources[l.order[l.isolatedIdx]]
+		rendered := make([]string, len(src.lines))
+		for i, ln := range src.lines {
+			rendered[i] = ln.text
+		}
+		l.viewport.SetContent(strings.Join(rendered, "\n"))
+		return
+	}
+
+	var all []logLine
+	for _, key := range l.order {
+		src := l.sources[key]
+		prefix := lipgloss.NewStyle().Foreground(src.color).Bold(true).Render(src.label() + " |")
+		for _, ln := range src.lines {
+			all = append(all, logLine{seq: ln.seq, text: prefix + " " + ln.text})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].seq < all[j].seq })
+
+	rendered := make([]string, len(all))
+	for i, ln := range all {
+		rendered[i] = ln.text
+	}
+	l.viewport.SetContent(strings.Join(rendered, "\n"))
+}
+
+// Header renders a one-line banner summarizing the merged sources (or the
+// isolated one) and the pane's key hints.
 func (l *LogPage) Header(width int) string {
 	p := styles.CatppuccinMocha()
 	title := lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true)
 
 	label := "Logs"
-	if l.podName != "" {
-		label = fmt.Sprintf("Pod: %s", l.podName)
+	switch {
+	case l.IsolatedLabel() != "":
+		label = fmt.Sprintf("Isolated: %s  [%d/%d]", l.IsolatedLabel(), l.isolatedIdx+1, len(l.order))
+	case len(l.order) > 0:
+		label = fmt.Sprintf("Merged: %d source(s)", len(l.order))
 	}
 
-	containerInfo := ""
-	if len(l.containers) > 0 {
-		containerInfo = fmt.Sprintf("  [%s %d/%d]", l.CurrentContainer(), l.containerIdx+1, len(l.containers))
-	}
-
-	full := title.Render(fmt.Sprintf("▾ %s%s", label, containerInfo)) + "  " +
-		hint.Render(fmt.Sprintf("(%s — c: cycle container, ↑/↓ pgup/pgdn scroll, End: jump+follow, Esc back)", l.context))
+	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
+		hint.Render("(c: isolate/merge, ↑/↓ pgup/pgdn scroll, End: jump+follow, Esc back)")
 	if width <= 0 {
 		return full
 	}

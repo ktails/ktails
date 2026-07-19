@@ -163,11 +163,13 @@ func LoadServiceDetailCmd(client *k8s.Client, kubeContext, namespace, serviceNam
 }
 
 // OpenPodLogStreamCmd opens a following log stream for a single pod
-// container, backfilled with the last logTailLines lines. sessionID is
-// echoed back on the resulting message so the caller can tell whether this
-// stream is still the one it's waiting for (the user may have switched pod
-// or container, or closed the pane, before this resolves).
-func OpenPodLogStreamCmd(client *k8s.Client, kubeContext, namespace, podName, container string, sessionID int) tea.Cmd {
+// container (one source in the merged Log pane), backfilled with the last
+// logTailLines lines. sourceKey identifies which source this is, and
+// generation is echoed back on the resulting message so the caller can
+// tell whether this stream is still the one it's waiting for — that
+// specific source may have been restarted or closed before this resolves,
+// independent of any other open source.
+func OpenPodLogStreamCmd(client *k8s.Client, kubeContext, namespace, podName, container, sourceKey string, generation int) tea.Cmd {
 	return func() tea.Msg {
 		opts := &v1.PodLogOptions{
 			Follow:    true,
@@ -176,22 +178,22 @@ func OpenPodLogStreamCmd(client *k8s.Client, kubeContext, namespace, podName, co
 		}
 		stream, err := client.StreamLogs(kubeContext, namespace, podName, opts)
 		if err != nil {
-			return msgs.LogStreamClosedMsg{SessionID: sessionID, Err: err}
+			return msgs.LogStreamClosedMsg{SourceKey: sourceKey, Generation: generation, Err: err}
 		}
-		return msgs.LogStreamOpenedMsg{SessionID: sessionID, Stream: stream}
+		return msgs.LogStreamOpenedMsg{SourceKey: sourceKey, Generation: generation, Stream: stream}
 	}
 }
 
 // WaitForLogLineCmd reads the next line from scanner and returns it as a
 // LogLineMsg, or a LogStreamClosedMsg once the stream ends (scanner.Err()
 // is nil on a clean EOF). The caller re-issues this command after each
-// LogLineMsg to keep the read loop going.
-func WaitForLogLineCmd(sessionID int, scanner *bufio.Scanner) tea.Cmd {
+// LogLineMsg to keep that source's read loop going.
+func WaitForLogLineCmd(sourceKey string, generation int, scanner *bufio.Scanner) tea.Cmd {
 	return func() tea.Msg {
 		if scanner.Scan() {
-			return msgs.LogLineMsg{SessionID: sessionID, Line: scanner.Text()}
+			return msgs.LogLineMsg{SourceKey: sourceKey, Generation: generation, Line: scanner.Text()}
 		}
-		return msgs.LogStreamClosedMsg{SessionID: sessionID, Err: scanner.Err()}
+		return msgs.LogStreamClosedMsg{SourceKey: sourceKey, Generation: generation, Err: scanner.Err()}
 	}
 }
 

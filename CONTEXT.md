@@ -15,6 +15,12 @@ A cross-cutting bottom split-pane showing a single resource's Status conditions,
 ## Detail Focus
 Within Tab Area focus, whether keyboard input goes to the row list (`ListFocus`) or to the Detail Pane's scrollable viewport (`DetailFocus`). `Enter` on a row opens the pane and grants it focus; `Esc` first returns focus to the list, a second `Esc` closes the pane; `Ctrl+R` jumps back into an already-open pane without touching focus semantics of a fresh fetch (i.e. no re-fetch).
 
+## Log Pane
+A cross-cutting bottom split-pane showing live-tailing logs, merged from one or more pod/container sources. Reachable with `l` on the Pods tab: it opens (or reconciles) a stream for every container of every *checked* row (toggled with `Space`), falling back to the row under the cursor if nothing's checked. Mutually exclusive with the Detail Pane — opening one closes the other. Backed by `models.LogPage`, which renders either the full chronological merge of all open sources (each line prefixed with a colored `pod/container` tag) or a single isolated source, toggled with `c`.
+
+## Log Focus
+Within Tab Area focus, whether keyboard input goes to the Pods row list (`ListFocus`) or to the Log Pane's scrollable viewport (`LogFocus`). `l` opens/reconciles the pane and grants it focus; while focused, `c` isolates the view to one source (cycling through sources, then back to the full merge) without affecting any source's underlying stream — every source keeps streaming into its own buffer regardless of what's currently isolated. `Esc` first returns focus to the list, a second `Esc` closes the pane (stopping every open source's stream); `Ctrl+R` is not currently wired to the Log Pane (unlike the Detail Pane).
+
 ## Help Overlay
 A modal display of all keybindings, toggled by `?`. While open it blocks all other keys; dismissed with `Esc` or `?`.
 

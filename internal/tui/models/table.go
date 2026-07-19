@@ -16,6 +16,7 @@ import "github.com/charmbracelet/bubbles/table"
 
 func podTableColumns() []table.Column {
 	return []table.Column{
+		{Title: "✓", Width: 1}, // checkbox glyph for multi-pod log selection
 		{Title: "Name", Width: 30},
 		{Title: "Namespace", Width: 15},
 		{Title: "Status", Width: 10},
