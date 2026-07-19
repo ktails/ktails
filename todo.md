@@ -34,30 +34,66 @@ Focus: Get the basics working - status bar, refresh, error handling.
   - Still open: hints for common issues (permissions, connectivity), debug-file error logging
 
 - [ ] **Manual Refresh**
-  - Press `r` to refresh the current tab's resource list
+  - Press `r` to re-fetch **only the active tab's** resource list (across all
+    loaded contexts) — not all three resource types, to avoid 3x API load on
+    tabs you're not looking at
+  - Reuses the existing `LoadDeploymentInfoCmd`/`LoadPodInfoCmd`/`LoadServiceInfoCmd`
   - Visual feedback during refresh (loading indicator already exists for initial load)
   - Preserve cursor position after refresh
-  - Status: ❌ Not started (only loads once on context selection)
+  - Status: ❌ Not started (only loads once on context selection) — spec locked via grilling session, ready to implement
 
 - [x] **Basic Log Viewing**
   - Press `l` on a pod to view its logs
   - Display logs in a dedicated pane, with follow/tail-f mode
   - Scroll through logs with arrow keys
-  - Status: ✅ Done — see `design-pod-log-viewer.md` and `design-multi-pod-log-viewer.md`
+  - Status: ✅ Done — see `design-log-viewer.md`
+
+- [ ] **Tab Gating Consistency**
+  - Only the Deployments tab currently blocks switching-in before contexts
+    are loaded (`nextTab == "Deployments"` check in `mainPage.go`'s tab
+    navigation); Pods/svc allow switching in and just show the empty-state
+    message instead
+  - Extend the same guard to Pods and svc, so all three tabs behave
+    identically (chosen over relaxing Deployments to match Pods/svc — see
+    grilling session)
+  - Status: ❌ Not started — spec locked via grilling session, ready to implement (small, mostly one-line-per-tab)
+
+- [ ] **Checked-Count Indicator**
+  - While on the Pods tab with 1+ rows checked (`Space`), show a status bar
+    hint: `☑ N checked · l: open merged · Ctrl+X: clear` — mirrors the
+    existing `⏳ N loading` status bar pattern
+  - Pods-tab only, hidden when nothing's checked
+  - Status: ❌ Not started — spec locked via grilling session, ready to implement (tiny)
 
 ### 🟡 MEDIUM Priority
 
 - [ ] **Auto-Refresh**
-  - Configurable refresh interval (default: 5s)
+  - Wire up the existing (currently unused) `config.Preferences.RefreshInterval`
+    to a ticking `tea.Cmd` that refreshes the active tab on that interval —
+    finally puts that config field to use
+  - **Pause the tick while the Detail or Log pane is open** — a background
+    refresh reordering rows under a pinned/open pane is more disruptive than
+    helpful; skip or discard the tick's result in that state
+  - Depends on **Manual Refresh** above landing first (reuses the same
+    per-tab refresh path)
   - Subtle spinner in status bar during refresh
   - Toggle auto-refresh with a key
-  - Status: ❌ Not started
+  - Status: ❌ Not started — spec locked via grilling session, ready to implement
 
-- [x] **Status Colors**
-  - Color code Detail pane event types (Warning=yellow, Normal=green)
-  - Highlight selected row with accent color
-  - Show focused pane with distinct border color/thickness
-  - Status: ✅ Done — Catppuccin palette used consistently; resource-table status text itself is not yet color-coded by phase (Running/Pending/Failed)
+- [ ] **Status Colors** (Detail pane + focus/selection — done; resource-table phase coloring — spec'd, not started)
+  - Color code Detail pane event types (Warning=yellow, Normal=green) — ✅ done
+  - Highlight selected row with accent color — ✅ done
+  - Show focused pane with distinct border color/thickness — ✅ done
+  - **Pods table** — color just the Status *cell* (not the whole row) by phase:
+    Running=green, Pending=yellow, Failed/Unknown=red, Succeeded=Overlay1 (dim)
+  - **Deployments table** — needs a new `DesiredReplicas` field (from
+    `deployment.Spec.Replicas`, currently not fetched into `DeploymentInfo` at
+    all); change the replica column from a bare ready-count to a colored
+    `ready/desired` fraction (green = fully ready, yellow = partial, red =
+    zero ready with desired > 0)
+  - **Services table** — no natural phase/status field exists today; out of
+    scope for this item
+  - Status: ⚠️ Partial — spec locked via grilling session for the Pods/Deployments halves, ready to implement
 
 ---
 
@@ -128,7 +164,7 @@ Focus: Advanced log viewing capabilities.
   - All containers of a tailed pod stream at once (merged view), not one at a time
   - `c` isolates the view to one source (cycling through sources), instead of switching which container streams
   - Current isolation state shown in the log pane header
-  - Status: ✅ Done — see `design-multi-pod-log-viewer.md`
+  - Status: ✅ Done — see `design-log-viewer.md`
 
 - [ ] **Timestamp Control**
   - Toggle timestamp display with `t` key
@@ -138,10 +174,22 @@ Focus: Advanced log viewing capabilities.
 
 ### 🟢 LOW Priority
 
-- [ ] **Log Highlighting**
-  - Syntax highlighting for common log formats (JSON, etc.)
-  - Custom highlight patterns
-  - Status: ❌ Not started
+- [ ] **Log Highlighting (JSON)**
+  - Detect JSON **embedded after a prefix** (e.g. `2026-07-19 INFO {"user":"x"}`)
+    — scan for the first `{`/`[` and try parsing from there to end of line;
+    whole-line-only detection was considered and rejected (misses the common
+    `timestamp level {json}` format)
+  - Color tokens **in place, single line** — no pretty-print/expand, so the
+    existing one-buffered-line-per-entry assumption (ring buffer cap, scroll
+    position, viewport line count) doesn't need to change
+  - Color scheme: Blue keys / Green strings / Yellow numbers / Mauve
+    booleans+null / Overlay1 (dim) punctuation — deliberately distinct from
+    the source-prefix color rotation (Sapphire/Sky/Teal/Pink/Flamingo/
+    Rosewater/Lavender/Maroon) so a payload's colors never collide with its
+    own line's source-prefix color
+  - Self-contained, ~100-150 lines, no shared risk with other log-pane code
+  - Custom highlight patterns — not scoped, future idea only
+  - Status: ❌ Not started — spec locked via grilling session, ready to implement
 
 - [ ] **Bookmarks**
   - Press `b` to bookmark current log line
@@ -207,7 +255,7 @@ Focus: Production-ready stability and performance.
 
 - [x] **Multiple Log Panes** (shipped as a merged single pane, not split screen)
   - View logs from multiple pods simultaneously — done via `Space`-checked rows + `l`, merged into one scrollback with colored per-source prefixes
-  - Split screen horizontally/vertically — not done; deliberately chose a single merged pane instead (see `design-multi-pod-log-viewer.md`'s "Future" section); still open if the merged view proves insufficient
+  - Split screen horizontally/vertically — not done; deliberately chose a single merged pane instead (see `design-log-viewer.md`'s "Future" section); still open if the merged view proves insufficient
   - Sync scroll option — not applicable to a single merged pane
   - Status: ✅ Done (merged-pane version); split-screen variant still open
 
@@ -264,6 +312,21 @@ Focus: Production-ready stability and performance.
 - ✅ Status bar with live per-tab row counts and loading indicator
 - ✅ Small-terminal guard (resize prompt below 80x24)
 
+### Performance & Internals
+
+(Folded in from the former `improvements.md`, which is now merged into this file.)
+
+- ✅ Single `AppState` (`internal/state/state.go`) — no more duplicate state tracking
+- ✅ Table re-render caching — `rowsSet`/`viewDirty` on `DeploymentPage`/`PodPage`/`ServicePage`;
+  `SetRows` no-ops when rows are unchanged (`rowsEqual`)
+- ✅ Batched lock reads — `AppState.Snapshot()` uses a cached fast-path under `RLock`, full
+  recompute only under `Lock`
+- ✅ Parallel context loading — `tea.Batch(cmdSequence...)` in the `ContextsStateMsg` handler
+- ✅ Error recovery on success — `AppState.SetDeployments` clears a context's error on a
+  successful load
+- ✅ Update timing measurement — `logSlowUpdate` logs any `Update()` call over 16ms
+- ✅ Dead code removed — `cmd/test-client` no longer exists; `PodPage` is fully integrated
+
 ---
 
 ## Backlog / Future Ideas
@@ -280,6 +343,10 @@ These are ideas for future consideration, not committed to any version:
 - [ ] **Vim Key Bindings** - Full vim-style navigation
 - [ ] **Log Streaming to External** - Send logs to file/syslog/etc.
 - [ ] **Namespace Filtering** - Filter whole UI by namespace
+- [ ] **Log Stream Auto-Retry** - Deliberately deferred (grilling session, 2026-07-19): a dead log
+  source today just shows an inline banner and stops (manual `l` restarts it in one keypress); no
+  evidence yet that this is actually annoying in practice. Don't build reconnect-with-backoff
+  speculatively — revisit only if manual restart proves to be real friction.
 
 ---
 
@@ -287,8 +354,8 @@ These are ideas for future consideration, not committed to any version:
 
 Track current bugs and limitations:
 
-- ⚠️ No manual refresh — resource lists load once on context selection and don't update
-- ⚠️ Resource table rows aren't color-coded by status/phase (Running/Pending/Failed)
+- ⚠️ Resource table rows aren't color-coded by status/phase — see **Status Colors** above for the
+  locked spec (Pods phase + Deployments ready/desired fraction)
 - ⚠️ No way to deselect/remove a single loaded context's resources without deselecting the context itself
 - ⚠️ Context switching modifies global k8s client state (not thread-safe)
 
@@ -296,16 +363,14 @@ Track current bugs and limitations:
 
 ## Contributing
 
-Want to work on a feature? Here's the suggested order:
+Want to work on a feature? See [`plan-quick-wins.md`](./plan-quick-wins.md) for
+a phased, parallelizable execution plan covering the items below whose specs
+are already locked (Tab Gating Consistency, Checked-Count Indicator, Manual
+Refresh, Auto-Refresh, Status Colors, Log Highlighting (JSON)) — it sequences
+them into tracks by file ownership so multiple agents/contributors can pick up
+different tracks without stepping on each other.
 
-**For New Contributors:**
-1. Status bar implementation (good first task)
-2. Error display panel
-3. Manual refresh (r key)
-
-**Core Features (need design discussion first):**
-1. Log viewing architecture
-2. Search mode implementation
-3. Auto-refresh strategy
+**Needs design discussion first (not in the plan above):**
+1. Search mode implementation
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
