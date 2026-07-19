@@ -903,8 +903,20 @@ func (m *MainPage) View() string {
 		m.tabContent = styles.HelpBoxStyle().Render(emptyMsg)
 	}
 
-	// Loading indicator (inline — it's brief and doesn't break layout)
-	if hasLoading(snapshot.LoadingStates) {
+	// Loading indicator (inline — it's brief and doesn't break layout). Only
+	// shown on the active tab's first load (no rows yet) — a background
+	// refresh of already-populated data relies on the subtle "⏳ N loading"
+	// status bar hint instead, so auto-refresh doesn't reflow the tab.
+	var activeTabHasRows bool
+	switch m.tabs[m.activeTab] {
+	case "Deployments":
+		activeTabHasRows = len(snapshot.Deployments) > 0
+	case "Pods":
+		activeTabHasRows = len(snapshot.Pods) > 0
+	case "svc":
+		activeTabHasRows = len(snapshot.Services) > 0
+	}
+	if !activeTabHasRows && hasLoading(snapshot.LoadingStates) {
 		m.tabContent = m.renderLoadingIndicator(snapshot.LoadingStates) + "\n\n" + m.tabContent
 	}
 

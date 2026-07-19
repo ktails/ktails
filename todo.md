@@ -135,11 +135,41 @@ Focus: Make it easy to find pods and filter logs in large clusters.
   - Filter by label selector
   - Status: ❌ Not started
 
-- [ ] **Horizontal Scrolling**
-  - Left/Right arrow keys to scroll horizontally
-  - Useful for long pod names or wide tables
-  - Show scroll position indicator
-  - Status: ❌ Not started
+- [ ] **Horizontal Scrolling** (table, Detail, and Log panes — spec locked via
+  grilling session, 2026-07-19; expanded well beyond the original bullet
+  below, see `plan-horizontal-scroll.md` for the execution plan)
+  - **Library migration**: adopt `github.com/evertras/bubble-table` for the
+    three resource tables (Pods/Deployments/svc), replacing
+    `charmbracelet/bubbles/table`. Retires the ANSI-embedding workarounds
+    built for Status/Replica cell coloring (`colorizeStatusColumn`/
+    `colorizeReplicaColumn`) in favor of native `StyledCell`/`StyledCellFunc`,
+    and replaces positional `table.Row` slices (with hidden width-0 "carrier"
+    columns for Context/Namespace/Containers) with real keyed `RowData` maps.
+    `WithNoPagination()` — vertical scroll-through-full-list stays exactly as
+    today, migration doesn't introduce paging as a side effect.
+  - **Tables — narrow/wide mode**: default ("narrow") behavior unchanged —
+    flex columns shrink to fit viewport, long values truncated with `…`.
+    `Ctrl+W` toggles "wide mode" **per tab, sticky** across tab switches
+    (Deployments/Pods/svc each remember their own state independently). Wide
+    mode swaps to fixed-width columns, **auto-fit to the longest current
+    value in each column** (recomputed on every `SetRows`/refresh) — no
+    truncation. When wide mode's total column width exceeds the viewport,
+    `Shift+Left`/`Shift+Right` scroll **one column at a time**
+    (`ScrollLeft`/`ScrollRight`). Pods' checkbox (`✓`) column stays **frozen**
+    on the left during scroll (`WithHorizontalFreezeColumnCount(1)`).
+    Status-bar indicator (new bit alongside `⏳ N loading`/`☑ N checked`):
+    `◂ col N/M ▸`, shown only when wide mode is on and there's more than one
+    column-page. Scroll position + wide-mode on/off **survive** manual/auto
+    refresh; **reset** to leftmost/narrow on terminal resize. `Ctrl+W` and
+    column-scroll are a no-op outside the three resource tables.
+  - **Detail & Log panes — horizontal scroll** (free text, no columns, both
+    `bubbles/viewport`): always horizontally scrollable when content
+    overflows (no on/off toggle — nothing to "widen" from). `Shift+Left`/
+    `Shift+Right` scroll by **half the viewport's width** per press.
+    Status-bar indicator: percentage scrolled, e.g. `◂ 40% ▸`. Scroll
+    position survives refresh/new log lines; resets on resize.
+  - Status: ❌ Not started — spec locked via grilling session, ready to
+    implement (large — see execution plan)
 
 ---
 
@@ -149,10 +179,24 @@ Focus: Advanced log viewing capabilities.
 
 ### 🟡 MEDIUM Priority
 
-- [ ] **Soft Wrap Toggle**
-  - Press `w` to toggle soft wrap for long log lines
-  - Remember preference per session
-  - Status: ❌ Not started
+- [ ] **Soft Wrap Toggle** (spec locked via grilling session, 2026-07-19 —
+  designed together with Horizontal Scrolling above, see
+  `plan-horizontal-scroll.md`)
+  - `w` toggles soft wrap (free key, no conflicts). **Off by default** — no
+    behavior change for existing users on their first log view.
+  - **Mutually exclusive** with the Log pane's horizontal scroll (see
+    Horizontal Scrolling above): wrap on → no horizontal scroll (nothing to
+    scroll to); wrap off → horizontal scroll available.
+  - Preference is "remembered per session" — persists across different
+    pods/log views for the lifetime of the running process (single in-memory
+    flag on the one long-lived `LogPage` instance), **not** written to disk —
+    no config-file I/O exists yet (see Configuration File, v0.4.0), so this
+    doesn't wait on that landing first.
+  - Wrapping must be ANSI-aware (reflow without breaking the per-source-prefix
+    colors or the JSON highlighting already shipped) — the main technical
+    risk in this item.
+  - Status: ❌ Not started — spec locked via grilling session, ready to
+    implement
 
 - [ ] **Log Export**
   - Press `e` to export current logs to file
@@ -369,6 +413,11 @@ are already locked (Tab Gating Consistency, Checked-Count Indicator, Manual
 Refresh, Auto-Refresh, Status Colors, Log Highlighting (JSON)) — it sequences
 them into tracks by file ownership so multiple agents/contributors can pick up
 different tracks without stepping on each other.
+
+See [`plan-horizontal-scroll.md`](./plan-horizontal-scroll.md) for the
+similarly phased plan covering Horizontal Scrolling (table/Detail/Log panes,
+including a `bubbles/table` → `evertras/bubble-table` migration) and the Log
+pane's Soft Wrap Toggle.
 
 **Needs design discussion first (not in the plan above):**
 1. Search mode implementation
