@@ -77,6 +77,10 @@ func (d *DeploymentPage) pushDisplayRows() {
 			msgs.DeployKeyReplicas:  btable.NewStyledCellWithStyleFunc(row[msgs.DeployKeyReplicas], replicaCellStyle),
 			msgs.DeployKeyContext:   row[msgs.DeployKeyContext],
 			msgs.DeployKeyNamespace: row[msgs.DeployKeyNamespace],
+			msgs.DeployKeyStrategy:  row[msgs.DeployKeyStrategy],
+			msgs.DeployKeyAvailable: row[msgs.DeployKeyAvailable],
+			msgs.DeployKeyUpdated:   row[msgs.DeployKeyUpdated],
+			msgs.DeployKeySelector:  row[msgs.DeployKeySelector],
 		})
 	}
 	d.table = d.table.WithRows(display)

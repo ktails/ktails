@@ -10,12 +10,16 @@ import (
 )
 
 type DeploymentInfo struct {
-	Name            string
-	Namespace       string
-	Age             string
-	ReadyReplicas   int32
-	DesiredReplicas int32
-	Status          []string
+	Name              string
+	Namespace         string
+	Age               string
+	ReadyReplicas     int32
+	DesiredReplicas   int32
+	AvailableReplicas int32
+	UpdatedReplicas   int32
+	Strategy          string
+	Selector          string
+	Status            []string
 }
 
 // GetDeploymentInfo retrieves deployment information for a specific context and namespace
@@ -48,12 +52,16 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 		}
 
 		deploymentInfoList = append(deploymentInfoList, DeploymentInfo{
-			Name:            deployment.Name,
-			Namespace:       deployment.Namespace,
-			Age:             age,
-			ReadyReplicas:   deployment.Status.ReadyReplicas,
-			DesiredReplicas: desiredReplicas,
-			Status:          []string{}, // You can add status conditions here if needed
+			Name:              deployment.Name,
+			Namespace:         deployment.Namespace,
+			Age:               age,
+			ReadyReplicas:     deployment.Status.ReadyReplicas,
+			DesiredReplicas:   desiredReplicas,
+			AvailableReplicas: deployment.Status.AvailableReplicas,
+			UpdatedReplicas:   deployment.Status.UpdatedReplicas,
+			Strategy:          string(deployment.Spec.Strategy.Type),
+			Selector:          v1.FormatLabelSelector(deployment.Spec.Selector),
+			Status:            []string{}, // You can add status conditions here if needed
 		})
 	}
 

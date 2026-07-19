@@ -321,7 +321,11 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch keypress {
 			case "ctrl+w":
 				if t := m.activeResourceTable(); t != nil {
+					wasWide := t.WideMode()
 					t.ToggleWideMode()
+					if !wasWide && t.WideMode() && m.tabs[m.activeTab] == "svc" {
+						return m, m.fetchServiceEndpointsIfNeeded()
+					}
 				}
 				return m, nil
 			case "shift+left":
@@ -518,6 +522,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		snapshot := m.appState.Snapshot()
 		m.podList.SetRows(snapshot.Pods)
 		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
+		return m, nil
+
+	case msgs.ServiceEndpointsMsg:
+		if msg.Err != nil {
+			// Allow a later Ctrl+W toggle to retry instead of getting stuck
+			// showing the "…" placeholder forever.
+			m.appState.ClearServiceEndpointsRequested(msg.Context)
+			return m, nil
+		}
+		m.appState.SetServiceEndpoints(msg.Context, msg.Namespace, msg.Endpoints)
+		snapshot := m.appState.Snapshot()
+		m.svcList.SetRows(snapshot.Services)
 		return m, nil
 
 	case msgs.ServiceTableMsg:
@@ -774,6 +790,33 @@ func (m *MainPage) refreshActiveTab() tea.Cmd {
 
 	s := m.appState.Snapshot()
 	m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+	return tea.Batch(cmdSequence...)
+}
+
+// fetchServiceEndpointsIfNeeded dispatches LoadServiceEndpointsCmd for every
+// selected context whose current namespace hasn't had its Endpoint IPs
+// fetched yet (see AppState.NeedsServiceEndpoints). Called only when svc
+// wide mode turns on — the Ctrl+W toggle itself already revealed the other
+// new columns synchronously; this just fills in the one column that needs
+// a network round trip, without blocking or repeating that round trip.
+func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
+	snapshot := m.appState.Snapshot()
+	if len(snapshot.SelectedContexts) == 0 {
+		return nil
+	}
+
+	var cmdSequence []tea.Cmd
+	for context, namespace := range snapshot.SelectedContexts {
+		if !m.appState.NeedsServiceEndpoints(context, namespace) {
+			continue
+		}
+		m.appState.MarkServiceEndpointsRequested(context, namespace)
+		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, namespace))
+	}
+
+	if len(cmdSequence) == 0 {
+		return nil
+	}
 	return tea.Batch(cmdSequence...)
 }
 

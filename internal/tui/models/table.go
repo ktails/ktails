@@ -153,8 +153,12 @@ func podWideColumns(rows []msgs.RowData) []btable.Column {
 		paddedColumn(msgs.PodKeyName, "Name", widestValue(rows, msgs.PodKeyName, "Name")),
 		paddedColumn(msgs.PodKeyNamespace, "Namespace", widestValue(rows, msgs.PodKeyNamespace, "Namespace")),
 		paddedColumn(msgs.PodKeyStatus, "Status", widestValue(rows, msgs.PodKeyStatus, "Status")),
+		paddedColumn(msgs.PodKeyReady, "Ready", widestValue(rows, msgs.PodKeyReady, "Ready")),
 		paddedColumn(msgs.PodKeyRestarts, "Restarts", widestValue(rows, msgs.PodKeyRestarts, "Restarts")),
 		paddedColumn(msgs.PodKeyAge, "Age", widestValue(rows, msgs.PodKeyAge, "Age")),
+		paddedColumn(msgs.PodKeyNode, "Node", widestValue(rows, msgs.PodKeyNode, "Node")),
+		paddedColumn(msgs.PodKeyNodeIP, "Node IP", widestValue(rows, msgs.PodKeyNodeIP, "Node IP")),
+		paddedColumn(msgs.PodKeyPodIP, "Pod IP", widestValue(rows, msgs.PodKeyPodIP, "Pod IP")),
 	}
 }
 
@@ -172,7 +176,11 @@ func deploymentWideColumns(rows []msgs.RowData) []btable.Column {
 		paddedColumn(msgs.DeployKeyName, "Name", widestValue(rows, msgs.DeployKeyName, "Name")),
 		paddedColumn(msgs.DeployKeyAge, "Age", widestValue(rows, msgs.DeployKeyAge, "Age")),
 		paddedColumn(msgs.DeployKeyReplicas, "ReadyReplicas", widestValue(rows, msgs.DeployKeyReplicas, "ReadyReplicas")),
+		paddedColumn(msgs.DeployKeyAvailable, "Available", widestValue(rows, msgs.DeployKeyAvailable, "Available")),
+		paddedColumn(msgs.DeployKeyUpdated, "Updated", widestValue(rows, msgs.DeployKeyUpdated, "Updated")),
+		paddedColumn(msgs.DeployKeyStrategy, "Strategy", widestValue(rows, msgs.DeployKeyStrategy, "Strategy")),
 		paddedColumn(msgs.DeployKeyContext, "Context", widestValue(rows, msgs.DeployKeyContext, "Context")),
+		paddedColumn(msgs.DeployKeySelector, "Selector", widestValue(rows, msgs.DeployKeySelector, "Selector")),
 	}
 }
 
@@ -195,5 +203,8 @@ func svcWideColumns(rows []msgs.RowData) []btable.Column {
 		paddedColumn(msgs.SvcKeyClusterIP, "ClusterIP", widestValue(rows, msgs.SvcKeyClusterIP, "ClusterIP")),
 		paddedColumn(msgs.SvcKeyPorts, "Ports", widestValue(rows, msgs.SvcKeyPorts, "Ports")),
 		paddedColumn(msgs.SvcKeyAge, "Age", widestValue(rows, msgs.SvcKeyAge, "Age")),
+		paddedColumn(msgs.SvcKeySelector, "Selector", widestValue(rows, msgs.SvcKeySelector, "Selector")),
+		paddedColumn(msgs.SvcKeyExternalIP, "ExternalIP", widestValue(rows, msgs.SvcKeyExternalIP, "ExternalIP")),
+		paddedColumn(msgs.SvcKeyEndpointIPs, "EndpointIPs", widestValue(rows, msgs.SvcKeyEndpointIPs, "EndpointIPs")),
 	}
 }
