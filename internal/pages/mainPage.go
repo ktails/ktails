@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/term"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/ktails/ktails/internal/k8s"
@@ -193,7 +195,7 @@ func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
 
 func (m *MainPage) Init() tea.Cmd {
 	m.contextList.Init()
-	return m.refreshTickCmd()
+	return tea.Batch(m.refreshTickCmd(), recheckStartupSizeCmd())
 }
 
 // refreshTickCmd schedules the next RefreshTickMsg one refreshInterval from
@@ -203,6 +205,32 @@ func (m *MainPage) Init() tea.Cmd {
 func (m *MainPage) refreshTickCmd() tea.Cmd {
 	return tea.Tick(m.refreshInterval, func(time.Time) tea.Msg {
 		return msgs.RefreshTickMsg{}
+	})
+}
+
+// startupResizeCheckDelay is how long after Init() to re-verify the real
+// terminal size against whatever WindowSizeMsg bubbletea delivered at
+// startup.
+const startupResizeCheckDelay = 250 * time.Millisecond
+
+// recheckStartupSizeCmd re-queries the terminal's actual size shortly after
+// startup and delivers it as a fresh WindowSizeMsg. bubbletea reads the
+// initial size via one synchronous ioctl before the first frame renders,
+// then only ever corrects it again on a real SIGWINCH. Some terminal
+// emulators (observed with Ghostty on macOS, launched directly into a
+// tiled/half-screen layout) haven't finished settling their own window
+// geometry at that instant, so the ioctl reads a stale size and — because
+// no further physical resize happens on its own — the layout stays wrong
+// until the user manually triggers one. This fires once to catch that race;
+// if the size didn't actually change, the resulting WindowSizeMsg is a
+// harmless no-op.
+func recheckStartupSizeCmd() tea.Cmd {
+	return tea.Tick(startupResizeCheckDelay, func(time.Time) tea.Msg {
+		w, h, err := term.GetSize(os.Stdout.Fd())
+		if err != nil {
+			return nil
+		}
+		return tea.WindowSizeMsg{Width: w, Height: h}
 	})
 }
 
