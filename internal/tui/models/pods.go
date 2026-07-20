@@ -141,9 +141,12 @@ func (p *PodPage) pushDisplayRows() {
 	start, end := windowBounds(p.windowStart, len(p.rows))
 	display := make([]btable.Row, 0, end-start)
 	for _, row := range p.rows[start:end] {
-		glyph := "☐"
+		// Plain ASCII (see styles.ASCIIBorder for why): ☐/☑ carry an
+		// Ambiguous East Asian Width that some terminals (e.g. Ghostty's
+		// default grapheme-width-method) render as double-width.
+		glyph := "-"
 		if p.checkedPods[PodRowKey(row)] {
-			glyph = "☑"
+			glyph = "x"
 		}
 		display = append(display, btable.NewRow(btable.RowData{
 			msgs.PodKeyCheck:      glyph,
@@ -200,7 +203,7 @@ func (p *PodPage) WideMode() bool {
 }
 
 // ScrollStatus reports the current horizontal scroll position for the
-// status bar's "◂ col N/M ▸" indicator. ok is false when the indicator
+// status bar's "< col N/M >" indicator. ok is false when the indicator
 // should be hidden (not in wide mode, or nothing to scroll).
 func (p *PodPage) ScrollStatus() (offset, total int, ok bool) {
 	if !p.wideMode || !p.scrollable {

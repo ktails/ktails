@@ -532,7 +532,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.ServiceEndpointsMsg:
 		if msg.Err != nil {
 			// Allow a later Ctrl+W toggle to retry instead of getting stuck
-			// showing the "…" placeholder forever.
+			// showing the "..." placeholder forever.
 			m.appState.ClearServiceEndpointsRequested(msg.Context)
 			return m, nil
 		}
@@ -762,7 +762,7 @@ func (m *MainPage) activeResourceTable() wideModeTable {
 // refreshActiveTab re-fetches the active tab's resource type for every
 // selected context, batched with tea.Batch the same way ContextsStateMsg
 // kicks off the initial load. Setting the same per-context loading flag used
-// on initial load means the existing "⏳ N loading" status bar hint just
+// on initial load means the existing "...N loading" status bar hint just
 // picks the refresh up automatically.
 func (m *MainPage) refreshActiveTab() tea.Cmd {
 	snapshot := m.appState.Snapshot()
@@ -993,7 +993,7 @@ func (m *MainPage) renderView() string {
 	tabs := strings.Builder{}
 	tabWidth := m.width - leftPaneWidth - 8
 
-	emptyMsg := "No contexts selected\n\nPress Tab to focus contexts\nSpace to select • Enter to load"
+	emptyMsg := "No contexts selected\n\nPress Tab to focus contexts\nSpace to select - Enter to load"
 	switch m.tabs[m.activeTab] {
 	case "Deployments":
 		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
@@ -1019,7 +1019,7 @@ func (m *MainPage) renderView() string {
 
 	// Loading indicator (inline — it's brief and doesn't break layout). Only
 	// shown on the active tab's first load (no rows yet) — a background
-	// refresh of already-populated data relies on the subtle "⏳ N loading"
+	// refresh of already-populated data relies on the subtle "...N loading"
 	// status bar hint instead, so auto-refresh doesn't reflow the tab.
 	var activeTabHasRows bool
 	switch m.tabs[m.activeTab] {
@@ -1051,7 +1051,7 @@ func (m *MainPage) renderView() string {
 		if dividerW < 1 {
 			dividerW = 1
 		}
-		divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", dividerW))
+		divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("-", dividerW))
 
 		var header, body string
 		if m.showDetail {
@@ -1166,33 +1166,36 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 
 	// Dynamic status bits (loading / count / errors) — count reflects
 	// whichever tab currently has focus, not always Deployments.
+	// ASCII-only status glyphs (see styles.ASCIIBorder for why): Unicode
+	// symbols like ⏳/⚠/☑/◂/▸ carry an Ambiguous East Asian Width that some
+	// terminals render as double-width, drifting the layout.
 	var statusBits []string
 	if loadingCount > 0 {
-		statusBits = append(statusBits, fmt.Sprintf("⏳ %d loading", loadingCount))
+		statusBits = append(statusBits, fmt.Sprintf("...%d loading", loadingCount))
 	} else if activeCount > 0 {
 		statusBits = append(statusBits, fmt.Sprintf("%s: %d", activeTabName, activeCount))
 	}
 	if errCount > 0 {
-		statusBits = append(statusBits, fmt.Sprintf("⚠ %d error(s)", errCount))
+		statusBits = append(statusBits, fmt.Sprintf("! %d error(s)", errCount))
 	}
 	if activeTabName == "Pods" {
 		if checkedCount := len(m.podList.CheckedKeys()); checkedCount > 0 {
-			statusBits = append(statusBits, fmt.Sprintf("☑ %d checked · l: open merged · Ctrl+X: clear", checkedCount))
+			statusBits = append(statusBits, fmt.Sprintf("x %d checked - l: open merged - Ctrl+X: clear", checkedCount))
 		}
 	}
 	if t := m.activeResourceTable(); t != nil {
 		if offset, total, ok := t.ScrollStatus(); ok {
-			statusBits = append(statusBits, fmt.Sprintf("◂ col %d/%d ▸", offset, total))
+			statusBits = append(statusBits, fmt.Sprintf("< col %d/%d >", offset, total))
 		}
 	}
 	if m.showDetail {
 		if percent, ok := m.deploymentDetail.HScrollStatus(); ok {
-			statusBits = append(statusBits, fmt.Sprintf("◂ %d%% ▸", percent))
+			statusBits = append(statusBits, fmt.Sprintf("< %d%% >", percent))
 		}
 	}
 	if m.showLogs {
 		if percent, ok := m.podLogs.ScrollStatus(); ok {
-			statusBits = append(statusBits, fmt.Sprintf("◂ %d%% ▸", percent))
+			statusBits = append(statusBits, fmt.Sprintf("< %d%% >", percent))
 		}
 	}
 	if len(statusBits) == 0 {
@@ -1223,7 +1226,7 @@ func (m *MainPage) renderHelpOverlay() string {
 	descStyle := lipgloss.NewStyle().Foreground(p.Text)
 	sepStyle := lipgloss.NewStyle().Foreground(p.Overlay0)
 	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(styles.ASCIIBorder()).
 		BorderForeground(p.Mauve).
 		Background(p.Mantle).
 		Padding(1, 3)
@@ -1232,8 +1235,8 @@ func (m *MainPage) renderHelpOverlay() string {
 	bindings := []binding{
 		{"Tab / Shift+Tab", "Switch pane focus"},
 		{"[ / ]", "Navigate tabs"},
-		{"← / →", "Navigate tabs (alias)"},
-		{"↑ / ↓   j / k", "Move up / down"},
+		{"<- / ->", "Navigate tabs (alias)"},
+		{"up / down   j / k", "Move up / down"},
 		{"Space", "Toggle context selection / check a Pods row for log tailing"},
 		{"Enter", "Confirm selection & load / open + focus detail pane (refocuses instantly if already loaded)"},
 		{"l (Pods tab)", "Open/reconcile the merged log pane for checked rows (or the row under the cursor)"},
@@ -1242,7 +1245,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"c (log pane focused)", "Isolate one source's view, or return to the full merge"},
 		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
 		{"R", "Toggle auto-refresh on/off"},
-		{"↑/↓ j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
+		{"up/down j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
 		{"Home / End", "Jump to top / bottom of detail/log pane"},
 		{"Esc", "Unfocus detail/log pane, then close it / overlay / dismiss error"},
 		{"?", "Toggle this help"},
@@ -1251,7 +1254,7 @@ func (m *MainPage) renderHelpOverlay() string {
 
 	var lines []string
 	lines = append(lines, titleStyle.Render("Keybindings"))
-	lines = append(lines, sepStyle.Render(strings.Repeat("─", 38)))
+	lines = append(lines, sepStyle.Render(strings.Repeat("-", 38)))
 	for _, b := range bindings {
 		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top,
 			keyStyle.Render(b.key),
@@ -1283,7 +1286,7 @@ func (m *MainPage) renderTooSmallOverlay() string {
 	box := lipgloss.NewStyle().
 		Foreground(p.Text).
 		Background(p.Surface0).
-		Border(lipgloss.RoundedBorder()).
+		Border(styles.ASCIIBorder()).
 		BorderForeground(p.Yellow).
 		Padding(1, 3).
 		Align(lipgloss.Center).
@@ -1301,14 +1304,14 @@ func (m *MainPage) renderErrorOverlay(msg string) string {
 	box := lipgloss.NewStyle().
 		Foreground(p.Text).
 		Background(p.Surface0).
-		Border(lipgloss.RoundedBorder()).
+		Border(styles.ASCIIBorder()).
 		BorderForeground(p.Red).
 		Padding(1, 3).
 		Width(maxW).
 		Align(lipgloss.Center)
 
-	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("⚠  Error")
-	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", maxW-2))
+	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("!  Error")
+	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("-", maxW-2))
 	body := lipgloss.NewStyle().Foreground(p.Text).Render(msg)
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc to dismiss")
 
@@ -1325,17 +1328,17 @@ func (m *MainPage) renderErrorSummaryOverlay(errors map[string]string) string {
 	box := lipgloss.NewStyle().
 		Foreground(p.Text).
 		Background(p.Surface0).
-		Border(lipgloss.RoundedBorder()).
+		Border(styles.ASCIIBorder()).
 		BorderForeground(p.Red).
 		Padding(1, 3).
 		Width(maxW).
 		Align(lipgloss.Center)
 
-	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("⚠  Errors encountered")
-	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", maxW-2))
+	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("!  Errors encountered")
+	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("-", maxW-2))
 	var bodyLines []string
 	for ctx, err := range errors {
-		bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s", ctx, err))
+		bodyLines = append(bodyLines, fmt.Sprintf("- %s: %s", ctx, err))
 	}
 	body := lipgloss.NewStyle().Foreground(p.Text).Render(strings.Join(bodyLines, "\n"))
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc to dismiss")
@@ -1362,7 +1365,7 @@ func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 		return ""
 	}
 
-	return loadingStyle.Render(fmt.Sprintf("⏳ Loading: %s...", strings.Join(loadingContexts, ", ")))
+	return loadingStyle.Render(fmt.Sprintf("...Loading: %s...", strings.Join(loadingContexts, ", ")))
 }
 
 // padLinesToMinWidth right-pads every line of content with spaces so it is at

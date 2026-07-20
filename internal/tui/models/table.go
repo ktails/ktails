@@ -196,7 +196,7 @@ func replicaCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {
 
 func podNarrowColumns() []btable.Column {
 	return []btable.Column{
-		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
+		paddedColumn(msgs.PodKeyCheck, "+", checkColWidth),
 		paddedFlexColumn(msgs.PodKeyName, "Name", 10),
 		paddedFlexColumn(msgs.PodKeyNamespace, "Namespace", 5),
 		paddedFlexColumn(msgs.PodKeyStatus, "Status", 4),
@@ -207,7 +207,7 @@ func podNarrowColumns() []btable.Column {
 
 func podWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
-		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
+		paddedColumn(msgs.PodKeyCheck, "+", checkColWidth),
 		paddedColumn(msgs.PodKeyName, "Name", widestValue(rows, msgs.PodKeyName, "Name")),
 		paddedColumn(msgs.PodKeyNamespace, "Namespace", widestValue(rows, msgs.PodKeyNamespace, "Namespace")),
 		paddedColumn(msgs.PodKeyStatus, "Status", widestValue(rows, msgs.PodKeyStatus, "Status")),

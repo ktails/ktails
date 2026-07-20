@@ -162,7 +162,7 @@ func (d *DeploymentPage) WideMode() bool {
 }
 
 // ScrollStatus reports the current horizontal scroll position for the
-// status bar's "◂ col N/M ▸" indicator. ok is false when the indicator
+// status bar's "< col N/M >" indicator. ok is false when the indicator
 // should be hidden.
 func (d *DeploymentPage) ScrollStatus() (offset, total int, ok bool) {
 	if !d.wideMode || !d.scrollable {

@@ -53,7 +53,7 @@ const (
 	SvcKeyContext     = "context"     // hidden, used by the detail tab
 	SvcKeySelector    = "selector"    // wide mode only
 	SvcKeyExternalIP  = "externalIP"  // wide mode only
-	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "…" until lazily fetched
+	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "..." until lazily fetched
 )
 
 // PodTableMsg carries pod data or errors from async operations

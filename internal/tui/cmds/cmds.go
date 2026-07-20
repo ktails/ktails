@@ -141,7 +141,7 @@ func LoadServiceInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.C
 
 // endpointIPsPlaceholder is shown in the Endpoint IPs wide-mode column until
 // LoadServiceEndpointsCmd's lazy fetch resolves for that context+namespace.
-const endpointIPsPlaceholder = "…"
+const endpointIPsPlaceholder = "..."
 
 // LoadServiceEndpointsCmd fetches Endpoint IPs for every service in one
 // context+namespace via a single EndpointSlices list call. It's triggered
