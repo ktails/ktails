@@ -12,6 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"k8s.io/apimachinery/pkg/watch"
+
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/state"
 	"github.com/ktails/ktails/internal/tui/cmds"
@@ -57,12 +59,24 @@ type MainPage struct {
 	errorMessage string
 	showHelp     bool
 
-	// Auto-refresh — a self-rescheduling tick that reruns refreshActiveTab on
-	// an interval. Paused (tick still reschedules, but the refresh is skipped)
-	// while the Detail or Log pane is open, since a background reorder under a
-	// pinned pane is more disruptive than helpful.
+	// Auto-refresh — a self-rescheduling tick. Table data itself is now kept
+	// current by the watch streams below; the tick's only remaining job is to
+	// re-render Age text from the local watch caches (no API calls). Paused
+	// (tick still reschedules, but the re-render is skipped) while the Detail
+	// or Log pane is open, since a background reorder under a pinned pane is
+	// more disruptive than helpful.
 	autoRefresh     bool
 	refreshInterval time.Duration
+
+	// Watch streams — one per resource type per selected context, replacing
+	// the old poll-on-a-timer refresh with a k9s-style Watch()-backed local
+	// cache. Keyed by context, mirroring logStreams. generation guards
+	// against messages from a since-superseded watch (manual "r" restart or
+	// context deselect) the same way logStreamState.generation does for log
+	// streams.
+	podWatchers        map[string]*resourceWatchState[*cmds.PodWatchCache]
+	deploymentWatchers map[string]*resourceWatchState[*cmds.DeploymentWatchCache]
+	serviceWatchers    map[string]*resourceWatchState[*cmds.ServiceWatchCache]
 
 	// Detail pane — a cross-cutting bottom split opened by Enter from
 	// Deployments or Pods. It's not a peer tab: it stays put, splitting
@@ -96,6 +110,43 @@ type logStreamState struct {
 	generation int
 }
 
+// resourceWatchState is the live watch-plumbing state for one resource
+// type's Watch() stream against one context: the current generation (bumped
+// on every restart, guarding against stale in-flight messages), the open
+// watcher itself (nil between a restart and its WatchOpenedMsg landing),
+// the local cache it's keeping in sync, and a consecutive-failure counter
+// driving reconnect backoff (reset to 0 the moment any event is applied).
+type resourceWatchState[C any] struct {
+	generation int
+	watcher    watch.Interface
+	cache      C
+	failures   int
+}
+
+// maxWatchReconnectFailures is how many consecutive reconnect failures a
+// context+resource watch tolerates before giving up and surfacing an error,
+// rather than backing off forever against a genuinely broken context (bad
+// creds, deleted context, unreachable apiserver).
+const maxWatchReconnectFailures = 6
+
+// maxWatchBackoff caps the exponential reconnect delay (1s, 2s, 4s, 8s,
+// 16s, ...) so a flaky-but-recovering connection doesn't end up waiting
+// minutes between attempts.
+const maxWatchBackoff = 32 * time.Second
+
+// watchBackoffDelay returns the reconnect delay for the Nth consecutive
+// failure (1-indexed): 1s, 2s, 4s, 8s, 16s, capped at maxWatchBackoff.
+func watchBackoffDelay(failures int) time.Duration {
+	if failures < 1 {
+		failures = 1
+	}
+	delay := time.Second << uint(failures-1)
+	if delay <= 0 || delay > maxWatchBackoff {
+		delay = maxWatchBackoff
+	}
+	return delay
+}
+
 // NewMainPageModel builds the top-level page model. refreshIntervalSeconds is
 // config.Preferences.RefreshInterval — the auto-refresh tick period; values
 // below 1 fall back to 5s (the same default as config.DefaultConfig).
@@ -114,23 +165,26 @@ func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
 	}
 
 	m := &MainPage{
-		Client:           c,
-		appState:         state.NewAppState(),
-		tabs:             tabs,
-		tabContent:       "",
-		contextList:      ctxInfo,
-		deploymentList:   depList,
-		podList:          pList,
-		svcList:          svcList,
-		deploymentDetail: detailPage,
-		podLogs:          logPage,
-		logStreams:       make(map[string]*logStreamState),
-		appStateLoaded:   false,
-		focus:            focusLeftPane,
-		errorMessage:     "",
-		showHelp:         false,
-		autoRefresh:      true,
-		refreshInterval:  time.Duration(refreshIntervalSeconds) * time.Second,
+		Client:             c,
+		appState:           state.NewAppState(),
+		tabs:               tabs,
+		tabContent:         "",
+		contextList:        ctxInfo,
+		deploymentList:     depList,
+		podList:            pList,
+		svcList:            svcList,
+		deploymentDetail:   detailPage,
+		podLogs:            logPage,
+		logStreams:         make(map[string]*logStreamState),
+		podWatchers:        make(map[string]*resourceWatchState[*cmds.PodWatchCache]),
+		deploymentWatchers: make(map[string]*resourceWatchState[*cmds.DeploymentWatchCache]),
+		serviceWatchers:    make(map[string]*resourceWatchState[*cmds.ServiceWatchCache]),
+		appStateLoaded:     false,
+		focus:              focusLeftPane,
+		errorMessage:       "",
+		showHelp:           false,
+		autoRefresh:        true,
+		refreshInterval:    time.Duration(refreshIntervalSeconds) * time.Second,
 	}
 
 	m.updateFocusStates()
@@ -328,12 +382,13 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// r re-fetches only the active tab's resource type, across every
-		// selected context — not all three resource types, to avoid tripling
-		// API load on tabs the user isn't even looking at. Table cursor is
-		// untouched: SetRows reuses the same table.Model, it doesn't reset it.
+		// r force-restarts the watch(es) for only the active tab's resource
+		// type, across every selected context — not all three resource
+		// types, to avoid tripling API load on tabs the user isn't even
+		// looking at. Table cursor is untouched: SetRows reuses the same
+		// table.Model, it doesn't reset it.
 		if m.appStateLoaded && keypress == "r" {
-			if cmd := m.refreshActiveTab(); cmd != nil {
+			if cmd := m.restartActiveTabWatch(); cmd != nil {
 				return m, cmd
 			}
 			return m, nil
@@ -441,25 +496,68 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.podLogs.SetStreamEnded(msg.SourceKey, msg.Err)
 		return m, nil
 
-	case msgs.DeploymentTableMsg:
-		if msg.Err != nil {
-			errMsg := fmt.Sprintf("Failed to load deployments for context '%s': %v", msg.Context, msg.Err)
-			m.appState.SetError(msg.Context, errMsg)
-			m.errorMessage = errMsg
-			m.appState.SetLoading(msg.Context, false)
-			{
-				s := m.appState.Snapshot()
-				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-			}
+	case msgs.PodWatchOpenedMsg:
+		st, ok := m.podWatchers[msg.Context]
+		if !ok || msg.Generation != st.generation {
+			msg.Watcher.Stop()
 			return m, nil
 		}
+		st.watcher = msg.Watcher
+		return m, cmds.WaitForPodWatchEventCmd(msg.Context, msg.Generation, msg.Watcher, st.cache)
 
-		m.appState.SetDeployments(msg.Context, msg.Rows)
-		snapshot := m.appState.Snapshot()
-		m.deploymentList.SetRows(snapshot.Deployments)
-		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
-		m.updateFocusStates()
-		return m, nil
+	case msgs.PodWatchEventMsg:
+		st, ok := m.podWatchers[msg.Context]
+		if !ok || msg.Generation != st.generation {
+			return m, nil
+		}
+		st.failures = 0
+		m.applyPodWatchRows(msg.Context, msg.Rows)
+		return m, cmds.WaitForPodWatchEventCmd(msg.Context, msg.Generation, st.watcher, st.cache)
+
+	case msgs.PodWatchClosedMsg:
+		return m, m.onPodWatchClosed(msg)
+
+	case msgs.DeploymentWatchOpenedMsg:
+		st, ok := m.deploymentWatchers[msg.Context]
+		if !ok || msg.Generation != st.generation {
+			msg.Watcher.Stop()
+			return m, nil
+		}
+		st.watcher = msg.Watcher
+		return m, cmds.WaitForDeploymentWatchEventCmd(msg.Context, msg.Generation, msg.Watcher, st.cache)
+
+	case msgs.DeploymentWatchEventMsg:
+		st, ok := m.deploymentWatchers[msg.Context]
+		if !ok || msg.Generation != st.generation {
+			return m, nil
+		}
+		st.failures = 0
+		m.applyDeploymentWatchRows(msg.Context, msg.Rows)
+		return m, cmds.WaitForDeploymentWatchEventCmd(msg.Context, msg.Generation, st.watcher, st.cache)
+
+	case msgs.DeploymentWatchClosedMsg:
+		return m, m.onDeploymentWatchClosed(msg)
+
+	case msgs.ServiceWatchOpenedMsg:
+		st, ok := m.serviceWatchers[msg.Context]
+		if !ok || msg.Generation != st.generation {
+			msg.Watcher.Stop()
+			return m, nil
+		}
+		st.watcher = msg.Watcher
+		return m, cmds.WaitForServiceWatchEventCmd(msg.Context, msg.Generation, msg.Watcher, st.cache)
+
+	case msgs.ServiceWatchEventMsg:
+		st, ok := m.serviceWatchers[msg.Context]
+		if !ok || msg.Generation != st.generation {
+			return m, nil
+		}
+		st.failures = 0
+		m.applyServiceWatchRows(msg.Context, msg.Rows)
+		return m, cmds.WaitForServiceWatchEventCmd(msg.Context, msg.Generation, st.watcher, st.cache)
+
+	case msgs.ServiceWatchClosedMsg:
+		return m, m.onServiceWatchClosed(msg)
 
 	case msgs.ContextsStateMsg:
 		m.errorMessage = ""
@@ -469,6 +567,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		for _, contextName := range msg.Deselected {
 			m.appState.RemoveContext(contextName)
+			m.stopPodWatch(contextName)
+			m.stopDeploymentWatch(contextName)
+			m.stopServiceWatch(contextName)
 		}
 
 		for _, ms := range msg.Selected {
@@ -510,10 +611,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appState.SetLoading(context, true)
 			m.appState.SetLoadingPods(context, true)
 			m.appState.SetLoadingServices(context, true)
+
+			m.podWatchers[context] = &resourceWatchState[*cmds.PodWatchCache]{generation: 1, cache: cmds.NewPodWatchCache()}
+			m.deploymentWatchers[context] = &resourceWatchState[*cmds.DeploymentWatchCache]{generation: 1, cache: cmds.NewDeploymentWatchCache()}
+			m.serviceWatchers[context] = &resourceWatchState[*cmds.ServiceWatchCache]{generation: 1, cache: cmds.NewServiceWatchCache()}
+
 			cmdSequence = append(cmdSequence,
-				cmds.LoadDeploymentInfoCmd(m.Client, context, namespace),
-				cmds.LoadPodInfoCmd(m.Client, context, namespace),
-				cmds.LoadServiceInfoCmd(m.Client, context, namespace),
+				cmds.WatchDeploymentsCmd(m.Client, context, namespace, 1),
+				cmds.WatchPodsCmd(m.Client, context, namespace, 1),
+				cmds.WatchServicesCmd(m.Client, context, namespace, 1),
 			)
 		}
 
@@ -530,25 +636,6 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(cmdSequence...)
 
-	case msgs.PodTableMsg:
-		if msg.Err != nil {
-			errMsg := fmt.Sprintf("Failed to load pods for context '%s': %v", msg.Context, msg.Err)
-			m.appState.SetError(msg.Context, errMsg)
-			m.errorMessage = errMsg
-			m.appState.SetLoadingPods(msg.Context, false)
-			{
-				s := m.appState.Snapshot()
-				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-			}
-			return m, nil
-		}
-
-		m.appState.SetPods(msg.Context, msg.Rows)
-		snapshot := m.appState.Snapshot()
-		m.podList.SetRows(snapshot.Pods)
-		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
-		return m, nil
-
 	case msgs.ServiceEndpointsMsg:
 		if msg.Err != nil {
 			// Allow a later Ctrl+W toggle to retry instead of getting stuck
@@ -559,25 +646,6 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.appState.SetServiceEndpoints(msg.Context, msg.Namespace, msg.Endpoints)
 		snapshot := m.appState.Snapshot()
 		m.svcList.SetRows(snapshot.Services)
-		return m, nil
-
-	case msgs.ServiceTableMsg:
-		if msg.Err != nil {
-			errMsg := fmt.Sprintf("Failed to load services for context '%s': %v", msg.Context, msg.Err)
-			m.appState.SetError(msg.Context, errMsg)
-			m.errorMessage = errMsg
-			m.appState.SetLoadingServices(msg.Context, false)
-			{
-				s := m.appState.Snapshot()
-				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-			}
-			return m, nil
-		}
-
-		m.appState.SetServices(msg.Context, msg.Rows)
-		snapshot := m.appState.Snapshot()
-		m.svcList.SetRows(snapshot.Services)
-		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
 		return m, nil
 
 	case msgs.ErrorMsg:
@@ -594,13 +662,14 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.RefreshTickMsg:
 		// Always reschedule, even when auto-refresh is off or paused, so it
 		// resumes on its own the moment the pane closes / it's toggled back on.
+		// Table data itself is kept current by the watch streams; this tick
+		// just re-renders Age text from the local watch caches — purely
+		// local, zero API calls.
 		next := m.refreshTickCmd()
 		if !m.autoRefresh || m.showDetail || m.showLogs || !m.appStateLoaded {
 			return m, next
 		}
-		if cmd := m.refreshActiveTab(); cmd != nil {
-			return m, tea.Batch(cmd, next)
-		}
+		m.reRenderAgeFromWatchCaches()
 		return m, next
 	}
 
@@ -781,12 +850,164 @@ func (m *MainPage) activeResourceTable() wideModeTable {
 	return nil
 }
 
-// refreshActiveTab re-fetches the active tab's resource type for every
-// selected context, batched with tea.Batch the same way ContextsStateMsg
-// kicks off the initial load. Setting the same per-context loading flag used
-// on initial load means the existing "...N loading" status bar hint just
-// picks the refresh up automatically.
-func (m *MainPage) refreshActiveTab() tea.Cmd {
+// applyPodWatchRows applies a freshly rebuilt Pods row set for one context
+// to AppState and the render models — the watch equivalent of the old
+// PodTableMsg success path.
+func (m *MainPage) applyPodWatchRows(context string, rows []msgs.RowData) {
+	m.appState.SetPods(context, rows)
+	snapshot := m.appState.Snapshot()
+	m.podList.SetRows(snapshot.Pods)
+	m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
+}
+
+// applyDeploymentWatchRows mirrors applyPodWatchRows for Deployments.
+func (m *MainPage) applyDeploymentWatchRows(context string, rows []msgs.RowData) {
+	m.appState.SetDeployments(context, rows)
+	snapshot := m.appState.Snapshot()
+	m.deploymentList.SetRows(snapshot.Deployments)
+	m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
+	m.updateFocusStates()
+}
+
+// applyServiceWatchRows mirrors applyPodWatchRows for Services.
+func (m *MainPage) applyServiceWatchRows(context string, rows []msgs.RowData) {
+	m.appState.SetServices(context, rows)
+	snapshot := m.appState.Snapshot()
+	m.svcList.SetRows(snapshot.Services)
+	m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
+}
+
+// onPodWatchClosed handles a stopped/failed Pods watch for one context:
+// dropped if stale or the context is no longer selected, otherwise
+// reconnected with exponential backoff, or — past
+// maxWatchReconnectFailures consecutive failures — given up on with the
+// error surfaced the same way a List-failure error would be.
+func (m *MainPage) onPodWatchClosed(msg msgs.PodWatchClosedMsg) tea.Cmd {
+	st, ok := m.podWatchers[msg.Context]
+	if !ok || msg.Generation != st.generation {
+		return nil
+	}
+	st.watcher = nil
+	st.failures++
+
+	namespace, stillSelected := m.appState.Snapshot().SelectedContexts[msg.Context]
+	if !stillSelected {
+		return nil
+	}
+
+	if st.failures > maxWatchReconnectFailures {
+		errMsg := fmt.Sprintf("Failed to watch pods for context '%s' after %d attempts: %v", msg.Context, st.failures, msg.Err)
+		m.appState.SetError(msg.Context, errMsg)
+		m.errorMessage = errMsg
+		s := m.appState.Snapshot()
+		m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+		return nil
+	}
+
+	return cmds.ReconnectPodsCmd(m.Client, msg.Context, namespace, st.generation, watchBackoffDelay(st.failures))
+}
+
+// onDeploymentWatchClosed mirrors onPodWatchClosed for Deployments.
+func (m *MainPage) onDeploymentWatchClosed(msg msgs.DeploymentWatchClosedMsg) tea.Cmd {
+	st, ok := m.deploymentWatchers[msg.Context]
+	if !ok || msg.Generation != st.generation {
+		return nil
+	}
+	st.watcher = nil
+	st.failures++
+
+	namespace, stillSelected := m.appState.Snapshot().SelectedContexts[msg.Context]
+	if !stillSelected {
+		return nil
+	}
+
+	if st.failures > maxWatchReconnectFailures {
+		errMsg := fmt.Sprintf("Failed to watch deployments for context '%s' after %d attempts: %v", msg.Context, st.failures, msg.Err)
+		m.appState.SetError(msg.Context, errMsg)
+		m.errorMessage = errMsg
+		s := m.appState.Snapshot()
+		m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+		return nil
+	}
+
+	return cmds.ReconnectDeploymentsCmd(m.Client, msg.Context, namespace, st.generation, watchBackoffDelay(st.failures))
+}
+
+// onServiceWatchClosed mirrors onPodWatchClosed for Services.
+func (m *MainPage) onServiceWatchClosed(msg msgs.ServiceWatchClosedMsg) tea.Cmd {
+	st, ok := m.serviceWatchers[msg.Context]
+	if !ok || msg.Generation != st.generation {
+		return nil
+	}
+	st.watcher = nil
+	st.failures++
+
+	namespace, stillSelected := m.appState.Snapshot().SelectedContexts[msg.Context]
+	if !stillSelected {
+		return nil
+	}
+
+	if st.failures > maxWatchReconnectFailures {
+		errMsg := fmt.Sprintf("Failed to watch services for context '%s' after %d attempts: %v", msg.Context, st.failures, msg.Err)
+		m.appState.SetError(msg.Context, errMsg)
+		m.errorMessage = errMsg
+		s := m.appState.Snapshot()
+		m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+		return nil
+	}
+
+	return cmds.ReconnectServicesCmd(m.Client, msg.Context, namespace, st.generation, watchBackoffDelay(st.failures))
+}
+
+// stopPodWatch stops (if open) and forgets a context's Pods watch — called
+// on context deselect. watch.Interface.Stop() is guaranteed to close
+// ResultChan(), so any goroutine blocked in WaitForPodWatchEventCmd's
+// receive unblocks cleanly rather than leaking; bumping the generation
+// first means that goroutine's eventual message is dropped as stale even if
+// it was already past the blocking receive.
+func (m *MainPage) stopPodWatch(context string) {
+	st, ok := m.podWatchers[context]
+	if !ok {
+		return
+	}
+	st.generation++
+	if st.watcher != nil {
+		st.watcher.Stop()
+	}
+	delete(m.podWatchers, context)
+}
+
+// stopDeploymentWatch mirrors stopPodWatch for Deployments.
+func (m *MainPage) stopDeploymentWatch(context string) {
+	st, ok := m.deploymentWatchers[context]
+	if !ok {
+		return
+	}
+	st.generation++
+	if st.watcher != nil {
+		st.watcher.Stop()
+	}
+	delete(m.deploymentWatchers, context)
+}
+
+// stopServiceWatch mirrors stopPodWatch for Services.
+func (m *MainPage) stopServiceWatch(context string) {
+	st, ok := m.serviceWatchers[context]
+	if !ok {
+		return
+	}
+	st.generation++
+	if st.watcher != nil {
+		st.watcher.Stop()
+	}
+	delete(m.serviceWatchers, context)
+}
+
+// restartActiveTabWatch force-restarts the watch(es) for only the active
+// tab's resource type, across every selected context — the "r" key. The
+// existing watch cache for each context is reused as-is: a fresh watch's
+// Added replay is idempotent against the upsert-based cache.apply.
+func (m *MainPage) restartActiveTabWatch() tea.Cmd {
 	snapshot := m.appState.Snapshot()
 	if len(snapshot.SelectedContexts) == 0 {
 		return nil
@@ -796,18 +1017,21 @@ func (m *MainPage) refreshActiveTab() tea.Cmd {
 	switch m.tabs[m.activeTab] {
 	case "Deployments":
 		for context, namespace := range snapshot.SelectedContexts {
-			m.appState.SetLoading(context, true)
-			cmdSequence = append(cmdSequence, cmds.LoadDeploymentInfoCmd(m.Client, context, namespace))
+			if cmd := m.restartDeploymentWatch(context, namespace); cmd != nil {
+				cmdSequence = append(cmdSequence, cmd)
+			}
 		}
 	case "Pods":
 		for context, namespace := range snapshot.SelectedContexts {
-			m.appState.SetLoadingPods(context, true)
-			cmdSequence = append(cmdSequence, cmds.LoadPodInfoCmd(m.Client, context, namespace))
+			if cmd := m.restartPodWatch(context, namespace); cmd != nil {
+				cmdSequence = append(cmdSequence, cmd)
+			}
 		}
 	case "svc":
 		for context, namespace := range snapshot.SelectedContexts {
-			m.appState.SetLoadingServices(context, true)
-			cmdSequence = append(cmdSequence, cmds.LoadServiceInfoCmd(m.Client, context, namespace))
+			if cmd := m.restartServiceWatch(context, namespace); cmd != nil {
+				cmdSequence = append(cmdSequence, cmd)
+			}
 		}
 	}
 
@@ -818,6 +1042,78 @@ func (m *MainPage) refreshActiveTab() tea.Cmd {
 	s := m.appState.Snapshot()
 	m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
 	return tea.Batch(cmdSequence...)
+}
+
+// restartPodWatch stops context's current Pods watcher (if any), bumps its
+// generation so any in-flight message from the old watcher is dropped as
+// stale, and issues a fresh WatchPodsCmd. Returns nil if no watcher state
+// exists for context (shouldn't happen for a selected context, but guards
+// against a race with a just-deselected one).
+func (m *MainPage) restartPodWatch(context, namespace string) tea.Cmd {
+	st, ok := m.podWatchers[context]
+	if !ok {
+		return nil
+	}
+	if st.watcher != nil {
+		st.watcher.Stop()
+		st.watcher = nil
+	}
+	st.generation++
+	st.failures = 0
+	m.appState.SetLoadingPods(context, true)
+	return cmds.WatchPodsCmd(m.Client, context, namespace, st.generation)
+}
+
+// restartDeploymentWatch mirrors restartPodWatch for Deployments.
+func (m *MainPage) restartDeploymentWatch(context, namespace string) tea.Cmd {
+	st, ok := m.deploymentWatchers[context]
+	if !ok {
+		return nil
+	}
+	if st.watcher != nil {
+		st.watcher.Stop()
+		st.watcher = nil
+	}
+	st.generation++
+	st.failures = 0
+	m.appState.SetLoading(context, true)
+	return cmds.WatchDeploymentsCmd(m.Client, context, namespace, st.generation)
+}
+
+// restartServiceWatch mirrors restartPodWatch for Services.
+func (m *MainPage) restartServiceWatch(context, namespace string) tea.Cmd {
+	st, ok := m.serviceWatchers[context]
+	if !ok {
+		return nil
+	}
+	if st.watcher != nil {
+		st.watcher.Stop()
+		st.watcher = nil
+	}
+	st.generation++
+	st.failures = 0
+	m.appState.SetLoadingServices(context, true)
+	return cmds.WatchServicesCmd(m.Client, context, namespace, st.generation)
+}
+
+// reRenderAgeFromWatchCaches recomputes every selected context's rows from
+// its local watch caches (re-running the converter/formatDuration against
+// time.Now(), refreshing the Age column text) and reapplies them — purely
+// local, zero API calls. Driven by RefreshTickMsg, replacing the old
+// List()-based polling refresh.
+func (m *MainPage) reRenderAgeFromWatchCaches() {
+	snapshot := m.appState.Snapshot()
+	for context := range snapshot.SelectedContexts {
+		if st, ok := m.podWatchers[context]; ok {
+			m.applyPodWatchRows(context, st.cache.Rows(context))
+		}
+		if st, ok := m.deploymentWatchers[context]; ok {
+			m.applyDeploymentWatchRows(context, st.cache.Rows(context))
+		}
+		if st, ok := m.serviceWatchers[context]; ok {
+			m.applyServiceWatchRows(context, st.cache.Rows(context))
+		}
+	}
 }
 
 // fetchServiceEndpointsIfNeeded dispatches LoadServiceEndpointsCmd for every

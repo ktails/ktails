@@ -4,8 +4,6 @@ package cmds
 import (
 	"bufio"
 	"io"
-	"strconv"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	v1 "k8s.io/api/core/v1"
@@ -27,127 +25,15 @@ func int64Ptr(v int64) *int64 {
 	return &v
 }
 
-// LoadPodInfoCmd fetches pod information for a specific context and namespace
-func LoadPodInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
-	return func() tea.Msg {
-		// Fetch pods for the context
-		pods, err := client.ListPodInfo(kubeContext, namespace)
-		if err != nil {
-			return msgs.PodTableMsg{
-				Context: kubeContext,
-				Rows:    nil,
-				Err:     err,
-			}
-		}
-
-		// Convert pods to table rows
-		rows := make([]msgs.RowData, len(pods))
-		for i, pod := range pods {
-			rows[i] = msgs.RowData{
-				msgs.PodKeyName:       pod.Name,
-				msgs.PodKeyNamespace:  pod.Namespace,
-				msgs.PodKeyStatus:     pod.Status,
-				msgs.PodKeyRestarts:   strconv.FormatInt(int64(pod.Restarts), 10),
-				msgs.PodKeyAge:        pod.Age,
-				msgs.PodKeyContext:    pod.Context,                       // hidden, used by the detail tab
-				msgs.PodKeyContainers: strings.Join(pod.Containers, ","), // hidden, used by the log pane
-				msgs.PodKeyNode:       pod.Node,
-				msgs.PodKeyNodeIP:     pod.NodeIP,
-				msgs.PodKeyPodIP:      pod.PodIP,
-				msgs.PodKeyReady:      pod.ReadyContainers,
-			}
-		}
-
-		return msgs.PodTableMsg{
-			Context: kubeContext,
-			Rows:    rows,
-			Err:     nil,
-		}
-	}
-}
-
-// LoadDeploymentInfoCmd fetches deployment information for a specific context and namespace
-func LoadDeploymentInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
-	return func() tea.Msg {
-		// Fetch deployments for the context
-		deployments, err := client.GetDeploymentInfo(kubeContext, namespace)
-		if err != nil {
-			return msgs.DeploymentTableMsg{
-				Context: kubeContext,
-				Rows:    nil,
-				Err:     err,
-			}
-		}
-
-		// Convert deployments to table rows
-		rows := make([]msgs.RowData, len(deployments))
-		for i, deployment := range deployments {
-			rows[i] = msgs.RowData{
-				msgs.DeployKeyName:      deployment.Name,
-				msgs.DeployKeyAge:       deployment.Age,
-				msgs.DeployKeyReplicas:  strconv.Itoa(int(deployment.ReadyReplicas)) + "/" + strconv.Itoa(int(deployment.DesiredReplicas)),
-				msgs.DeployKeyContext:   kubeContext,
-				msgs.DeployKeyNamespace: deployment.Namespace, // hidden, used by the detail panel
-				msgs.DeployKeyStrategy:  deployment.Strategy,
-				msgs.DeployKeyAvailable: strconv.FormatInt(int64(deployment.AvailableReplicas), 10),
-				msgs.DeployKeyUpdated:   strconv.FormatInt(int64(deployment.UpdatedReplicas), 10),
-				msgs.DeployKeySelector:  deployment.Selector,
-			}
-		}
-
-		return msgs.DeploymentTableMsg{
-			Context: kubeContext,
-			Rows:    rows,
-			Err:     nil,
-		}
-	}
-}
-
-// LoadServiceInfoCmd fetches service information for a specific context and namespace
-func LoadServiceInfoCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
-	return func() tea.Msg {
-		services, err := client.GetServiceInfo(kubeContext, namespace)
-		if err != nil {
-			return msgs.ServiceTableMsg{
-				Context: kubeContext,
-				Rows:    nil,
-				Err:     err,
-			}
-		}
-
-		rows := make([]msgs.RowData, len(services))
-		for i, svc := range services {
-			rows[i] = msgs.RowData{
-				msgs.SvcKeyName:        svc.Name,
-				msgs.SvcKeyNamespace:   svc.Namespace,
-				msgs.SvcKeyType:        svc.Type,
-				msgs.SvcKeyClusterIP:   svc.ClusterIP,
-				msgs.SvcKeyPorts:       svc.Ports,
-				msgs.SvcKeyAge:         svc.Age,
-				msgs.SvcKeyContext:     kubeContext, // hidden, used by the detail tab
-				msgs.SvcKeySelector:    svc.Selector,
-				msgs.SvcKeyExternalIP:  svc.ExternalIP,
-				msgs.SvcKeyEndpointIPs: endpointIPsPlaceholder, // replaced once LoadServiceEndpointsCmd resolves
-			}
-		}
-
-		return msgs.ServiceTableMsg{
-			Context: kubeContext,
-			Rows:    rows,
-			Err:     nil,
-		}
-	}
-}
-
 // endpointIPsPlaceholder is shown in the Endpoint IPs wide-mode column until
 // LoadServiceEndpointsCmd's lazy fetch resolves for that context+namespace.
 const endpointIPsPlaceholder = "..."
 
 // LoadServiceEndpointsCmd fetches Endpoint IPs for every service in one
 // context+namespace via a single EndpointSlices list call. It's triggered
-// lazily (see mainPage.go's Ctrl+W handling for the svc tab), not folded
-// into LoadServiceInfoCmd/refresh, so it only ever runs once per
-// context+namespace until that namespace's selection changes.
+// lazily (see mainPage.go's Ctrl+W handling for the svc tab), independent of
+// the Services watch, so it only ever runs once per context+namespace until
+// that namespace's selection changes.
 func LoadServiceEndpointsCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 	return func() tea.Msg {
 		endpoints, err := client.GetServiceEndpoints(kubeContext, namespace)

@@ -11,6 +11,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
@@ -19,7 +20,7 @@ import (
 
 // Client wraps Kubernetes client operations with support for multiple contexts
 type Client struct {
-	clientsByContext map[string]*kubernetes.Clientset
+	clientsByContext map[string]kubernetes.Interface
 	rawConfig        *api.Config
 	kubeconfigPath   string
 	currentContext   string
@@ -92,7 +93,7 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	}
 
 	client := &Client{
-		clientsByContext: make(map[string]*kubernetes.Clientset),
+		clientsByContext: make(map[string]kubernetes.Interface),
 		rawConfig:        &rawConfig,
 		kubeconfigPath:   kubeconfigPath,
 		currentContext:   currentContext,
@@ -152,7 +153,7 @@ func (c *Client) createClientForContext(contextName string) (*kubernetes.Clients
 
 // GetClientForContext returns a clientset for the specified context
 // Creates and caches the client if it doesn't exist yet
-func (c *Client) GetClientForContext(contextName string) (*kubernetes.Clientset, error) {
+func (c *Client) GetClientForContext(contextName string) (kubernetes.Interface, error) {
 	// Try to get existing client with read lock
 	c.mu.RLock()
 	if client, exists := c.clientsByContext[contextName]; exists {
@@ -280,6 +281,53 @@ func (c *Client) ListPods(kubeContext, namespace string) ([]v1.Pod, error) {
 	return pList.Items, nil
 }
 
+// WatchPods opens a watch on pods in the given namespace. A bare Watch with
+// no ResourceVersion set has the server replay every currently-existing
+// object as a synthetic Added event before continuing with live changes, so
+// no separate initial List() call is needed.
+func (c *Client) WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	w, err := clientset.CoreV1().Pods(namespace).Watch(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to watch pods in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	return w, nil
+}
+
+// WatchDeployments opens a watch on deployments in the given namespace. See
+// WatchPods for the implicit list-then-watch behavior.
+func (c *Client) WatchDeployments(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	w, err := clientset.AppsV1().Deployments(namespace).Watch(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to watch deployments in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	return w, nil
+}
+
+// WatchServices opens a watch on services in the given namespace. See
+// WatchPods for the implicit list-then-watch behavior.
+func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	w, err := clientset.CoreV1().Services(namespace).Watch(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to watch services in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	return w, nil
+}
+
 // ListPodInfo returns pods with detailed information
 func (c *Client) ListPodInfo(kubeContext, namespace string) ([]*PodInfo, error) {
 	pods, err := c.ListPods(kubeContext, namespace)
@@ -289,7 +337,7 @@ func (c *Client) ListPodInfo(kubeContext, namespace string) ([]*PodInfo, error) 
 
 	podInfos := make([]*PodInfo, 0, len(pods))
 	for _, pod := range pods {
-		info := c.podToPodInfo(&pod, kubeContext)
+		info := PodToPodInfo(&pod, kubeContext)
 		podInfos = append(podInfos, info)
 	}
 
@@ -309,7 +357,7 @@ func (c *Client) GetPodInfo(kubeContext, namespace, podName string) (*PodInfo, e
 		return nil, fmt.Errorf("failed to get pod %s in namespace %s (context %s): %w", podName, namespace, kubeContext, err)
 	}
 
-	return c.podToPodInfo(pod, kubeContext), nil
+	return PodToPodInfo(pod, kubeContext), nil
 }
 
 // GetPodDetail fetches a single pod's status, rendered YAML, and recent events.
@@ -361,8 +409,8 @@ func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceD
 	return d, nil
 }
 
-// podToPodInfo converts a pod object to PodInfo
-func (c *Client) podToPodInfo(pod *v1.Pod, kubeContext string) *PodInfo {
+// PodToPodInfo converts a pod object to PodInfo
+func PodToPodInfo(pod *v1.Pod, kubeContext string) *PodInfo {
 	age := time.Since(pod.CreationTimestamp.Time)
 
 	var restarts int32
@@ -480,5 +528,5 @@ func (c *Client) ClearClientCache(contextName string) {
 func (c *Client) ClearAllClientCaches() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.clientsByContext = make(map[string]*kubernetes.Clientset)
+	c.clientsByContext = make(map[string]kubernetes.Interface)
 }

@@ -251,7 +251,7 @@ func statusCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {
 }
 
 // replicaCellStyle is a btable.StyledCellFunc that colors a "ready/desired"
-// replica cell (as produced by LoadDeploymentInfoCmd): green when fully
+// replica cell (as produced by the Deployments watch cache's Rows): green when fully
 // ready, yellow when partially ready, red when zero replicas are ready but
 // some are desired.
 func replicaCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {

@@ -41,19 +41,24 @@ func (c *Client) GetServiceInfo(kubeContextName, namespace string) ([]ServiceInf
 
 	serviceInfoList := make([]ServiceInfo, 0, len(serviceList.Items))
 	for _, svc := range serviceList.Items {
-		serviceInfoList = append(serviceInfoList, ServiceInfo{
-			Name:       svc.Name,
-			Namespace:  svc.Namespace,
-			Type:       string(svc.Spec.Type),
-			ClusterIP:  svc.Spec.ClusterIP,
-			Ports:      formatServicePorts(svc.Spec.Ports),
-			Age:        formatDuration(time.Since(svc.CreationTimestamp.Time)),
-			Selector:   formatSelector(svc.Spec.Selector),
-			ExternalIP: formatLoadBalancerIngress(svc.Status.LoadBalancer.Ingress),
-		})
+		serviceInfoList = append(serviceInfoList, ServiceToServiceInfo(&svc))
 	}
 
 	return serviceInfoList, nil
+}
+
+// ServiceToServiceInfo converts a service object to ServiceInfo.
+func ServiceToServiceInfo(svc *corev1.Service) ServiceInfo {
+	return ServiceInfo{
+		Name:       svc.Name,
+		Namespace:  svc.Namespace,
+		Type:       string(svc.Spec.Type),
+		ClusterIP:  svc.Spec.ClusterIP,
+		Ports:      formatServicePorts(svc.Spec.Ports),
+		Age:        formatDuration(time.Since(svc.CreationTimestamp.Time)),
+		Selector:   formatSelector(svc.Spec.Selector),
+		ExternalIP: formatLoadBalancerIngress(svc.Status.LoadBalancer.Ingress),
+	}
 }
 
 // GetServiceEndpoints lists EndpointSlices for the whole namespace in one

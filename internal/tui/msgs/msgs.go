@@ -4,6 +4,8 @@ package msgs
 import (
 	"io"
 
+	"k8s.io/apimachinery/pkg/watch"
+
 	"github.com/ktails/ktails/internal/k8s"
 )
 
@@ -13,7 +15,7 @@ import (
 // Detail pane / Log pane to read without a visible column of their own.
 type RowData = map[string]any
 
-// Column keys for Pods rows (see cmds.LoadPodInfoCmd / models.PodPage).
+// Column keys for Pods rows (see cmds.PodWatchCache.Rows / models.PodPage).
 const (
 	PodKeyCheck      = "check"
 	PodKeyName       = "name"
@@ -29,7 +31,7 @@ const (
 	PodKeyReady      = "ready"      // wide mode only, "ready/total" containers
 )
 
-// Column keys for Deployments rows (see cmds.LoadDeploymentInfoCmd).
+// Column keys for Deployments rows (see cmds.DeploymentWatchCache.Rows).
 const (
 	DeployKeyName      = "name"
 	DeployKeyAge       = "age"
@@ -42,7 +44,7 @@ const (
 	DeployKeySelector  = "selector"  // wide mode only
 )
 
-// Column keys for svc rows (see cmds.LoadServiceInfoCmd).
+// Column keys for svc rows (see cmds.ServiceWatchCache.Rows).
 const (
 	SvcKeyName        = "name"
 	SvcKeyNamespace   = "namespace"
@@ -56,31 +58,10 @@ const (
 	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "..." until lazily fetched
 )
 
-// PodTableMsg carries pod data or errors from async operations
-type PodTableMsg struct {
-	Context string
-	Rows    []RowData
-	Err     error // Error during pod fetching
-}
-
 // ContextsSelectedMsg represents a selected context with its namespace
 type ContextsSelectedMsg struct {
 	ContextName      string
 	DefaultNamespace string
-}
-
-// DeploymentTableMsg carries deployment data or errors from async operations
-type DeploymentTableMsg struct {
-	Context string
-	Rows    []RowData
-	Err     error // Error during deployment fetching
-}
-
-// ServiceTableMsg carries service data or errors from async operations
-type ServiceTableMsg struct {
-	Context string
-	Rows    []RowData
-	Err     error // Error during service fetching
 }
 
 // ServiceEndpointsMsg carries lazily-fetched Endpoint IPs (service name ->
@@ -143,6 +124,76 @@ type LogStreamClosedMsg struct {
 }
 
 // RefreshTickMsg fires on the auto-refresh interval, self-rescheduled by
-// whoever handles it. It carries nothing — its only job is to trigger the
-// same per-tab refresh path manual refresh uses.
+// whoever handles it. Watches keep table data current on their own; this
+// tick now just re-renders Age text from the local watch caches (no API
+// calls) — see MainPage's RefreshTickMsg handler.
 type RefreshTickMsg struct{}
+
+// PodWatchOpenedMsg carries a freshly opened Pods watch for one
+// context+namespace. Generation must match that context's current
+// generation in MainPage before the watch is adopted — otherwise it's been
+// superseded (a manual "r" restart or context deselect) and should just be
+// stopped.
+type PodWatchOpenedMsg struct {
+	Context    string
+	Generation int
+	Watcher    watch.Interface
+}
+
+// PodWatchEventMsg carries a freshly rebuilt row set for one context's Pods
+// watch cache, after applying one or more buffered watch events.
+type PodWatchEventMsg struct {
+	Context    string
+	Generation int
+	Rows       []RowData
+}
+
+// PodWatchClosedMsg reports that one context's Pods watch ended, either
+// cleanly (Err == nil) or because opening/reading it failed (Err != nil).
+type PodWatchClosedMsg struct {
+	Context    string
+	Generation int
+	Err        error
+}
+
+// DeploymentWatchOpenedMsg mirrors PodWatchOpenedMsg for Deployments.
+type DeploymentWatchOpenedMsg struct {
+	Context    string
+	Generation int
+	Watcher    watch.Interface
+}
+
+// DeploymentWatchEventMsg mirrors PodWatchEventMsg for Deployments.
+type DeploymentWatchEventMsg struct {
+	Context    string
+	Generation int
+	Rows       []RowData
+}
+
+// DeploymentWatchClosedMsg mirrors PodWatchClosedMsg for Deployments.
+type DeploymentWatchClosedMsg struct {
+	Context    string
+	Generation int
+	Err        error
+}
+
+// ServiceWatchOpenedMsg mirrors PodWatchOpenedMsg for Services.
+type ServiceWatchOpenedMsg struct {
+	Context    string
+	Generation int
+	Watcher    watch.Interface
+}
+
+// ServiceWatchEventMsg mirrors PodWatchEventMsg for Services.
+type ServiceWatchEventMsg struct {
+	Context    string
+	Generation int
+	Rows       []RowData
+}
+
+// ServiceWatchClosedMsg mirrors PodWatchClosedMsg for Services.
+type ServiceWatchClosedMsg struct {
+	Context    string
+	Generation int
+	Err        error
+}

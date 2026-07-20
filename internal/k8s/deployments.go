@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -43,29 +44,34 @@ func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]Deploym
 	// Convert to DeploymentInfo
 	deploymentInfoList := make([]DeploymentInfo, 0, len(deploymentList.Items))
 	for _, deployment := range deploymentList.Items {
-		age := formatDuration(time.Since(deployment.CreationTimestamp.Time))
-
-		// Spec.Replicas is nil when unset, which the Kubernetes API defaults to 1.
-		desiredReplicas := int32(1)
-		if deployment.Spec.Replicas != nil {
-			desiredReplicas = *deployment.Spec.Replicas
-		}
-
-		deploymentInfoList = append(deploymentInfoList, DeploymentInfo{
-			Name:              deployment.Name,
-			Namespace:         deployment.Namespace,
-			Age:               age,
-			ReadyReplicas:     deployment.Status.ReadyReplicas,
-			DesiredReplicas:   desiredReplicas,
-			AvailableReplicas: deployment.Status.AvailableReplicas,
-			UpdatedReplicas:   deployment.Status.UpdatedReplicas,
-			Strategy:          string(deployment.Spec.Strategy.Type),
-			Selector:          v1.FormatLabelSelector(deployment.Spec.Selector),
-			Status:            []string{}, // You can add status conditions here if needed
-		})
+		deploymentInfoList = append(deploymentInfoList, DeploymentToDeploymentInfo(&deployment))
 	}
 
 	return deploymentInfoList, nil
+}
+
+// DeploymentToDeploymentInfo converts a deployment object to DeploymentInfo.
+func DeploymentToDeploymentInfo(deployment *appsv1.Deployment) DeploymentInfo {
+	age := formatDuration(time.Since(deployment.CreationTimestamp.Time))
+
+	// Spec.Replicas is nil when unset, which the Kubernetes API defaults to 1.
+	desiredReplicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desiredReplicas = *deployment.Spec.Replicas
+	}
+
+	return DeploymentInfo{
+		Name:              deployment.Name,
+		Namespace:         deployment.Namespace,
+		Age:               age,
+		ReadyReplicas:     deployment.Status.ReadyReplicas,
+		DesiredReplicas:   desiredReplicas,
+		AvailableReplicas: deployment.Status.AvailableReplicas,
+		UpdatedReplicas:   deployment.Status.UpdatedReplicas,
+		Strategy:          string(deployment.Spec.Strategy.Type),
+		Selector:          v1.FormatLabelSelector(deployment.Spec.Selector),
+		Status:            []string{}, // You can add status conditions here if needed
+	}
 }
 
 // GetDeploymentDetail fetches a single deployment's status, rendered YAML, and recent events.
