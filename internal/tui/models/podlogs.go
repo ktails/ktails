@@ -19,7 +19,7 @@ import (
 // maxLogLines bounds the in-memory scrollback per source, dropping each
 // source's own oldest lines once exceeded — a noisy container can't evict a
 // quiet one's history.
-const maxLogLines = 5000
+const maxLogLines = 500
 
 // sourceColors is the rotation of Catppuccin Mocha accents used to color
 // each source's line prefix. Red/Mauve/Green/Peach are excluded: they

@@ -31,6 +31,13 @@ type PodPage struct {
 	tableH       int
 	wideColCount int
 	scrollable   bool
+
+	// cursorIdx is the absolute index into p.rows the user has selected.
+	// bubble-table's own highlighted-row index is relative to the windowed
+	// slice handed to it (see windowStart/rowWindowSize in table.go), so it
+	// can't be used directly once more rows are loaded than fit in a window.
+	cursorIdx   int
+	windowStart int
 }
 
 func NewPodPageModel(client *k8s.Client) *PodPage {
@@ -64,10 +71,43 @@ func (p *PodPage) Init() tea.Cmd {
 }
 
 func (p *PodPage) Update(msg tea.Msg) tea.Cmd {
+	if p.Focused {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			switch key.String() {
+			case "down", "j":
+				p.moveCursor(1)
+				return nil
+			case "up", "k":
+				p.moveCursor(-1)
+				return nil
+			}
+		}
+	}
+
 	var cmd tea.Cmd
 	p.table, cmd = p.table.Update(msg)
 	p.invalidateView()
 	return cmd
+}
+
+// moveCursor shifts the absolute row cursor by delta, wrapping at either end
+// of p.rows (mirroring bubble-table's own moveHighlightUp/Down), then slides
+// the row window to keep the new cursor visible.
+func (p *PodPage) moveCursor(delta int) {
+	if len(p.rows) == 0 {
+		return
+	}
+
+	p.cursorIdx += delta
+	if p.cursorIdx < 0 {
+		p.cursorIdx = len(p.rows) - 1
+	} else if p.cursorIdx >= len(p.rows) {
+		p.cursorIdx = 0
+	}
+
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows))
+	p.pushDisplayRows()
+	p.invalidateView()
 }
 
 func (p *PodPage) SetRows(rows []msgs.RowData) {
@@ -77,6 +117,10 @@ func (p *PodPage) SetRows(rows []msgs.RowData) {
 
 	p.rows = cloneRows(rows)
 	p.rowsSet = true
+	if p.cursorIdx >= len(p.rows) {
+		p.cursorIdx = max(len(p.rows)-1, 0)
+	}
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows))
 	p.applyColumns()
 	p.pushDisplayRows()
 
@@ -89,17 +133,19 @@ func (p *PodPage) SetRows(rows []msgs.RowData) {
 	p.invalidateView()
 }
 
-// pushDisplayRows rebuilds the table's rows from p.rows (the raw fetched
-// data), prepending a checkbox glyph and coloring Status by phase via
-// StyledCell. Called whenever raw rows or check state change.
+// pushDisplayRows rebuilds the table's rows from the current row window (see
+// windowBounds in table.go) into p.rows, prepending a checkbox glyph and
+// coloring Status by phase via StyledCell. Called whenever raw rows, check
+// state, or the cursor/window change.
 func (p *PodPage) pushDisplayRows() {
-	display := make([]btable.Row, len(p.rows))
-	for i, row := range p.rows {
+	start, end := windowBounds(p.windowStart, len(p.rows))
+	display := make([]btable.Row, 0, end-start)
+	for _, row := range p.rows[start:end] {
 		glyph := "☐"
 		if p.checkedPods[PodRowKey(row)] {
 			glyph = "☑"
 		}
-		display[i] = btable.NewRow(btable.RowData{
+		display = append(display, btable.NewRow(btable.RowData{
 			msgs.PodKeyCheck:      glyph,
 			msgs.PodKeyName:       row[msgs.PodKeyName],
 			msgs.PodKeyNamespace:  row[msgs.PodKeyNamespace],
@@ -112,9 +158,9 @@ func (p *PodPage) pushDisplayRows() {
 			msgs.PodKeyNodeIP:     row[msgs.PodKeyNodeIP],
 			msgs.PodKeyPodIP:      row[msgs.PodKeyPodIP],
 			msgs.PodKeyReady:      row[msgs.PodKeyReady],
-		})
+		}))
 	}
-	p.table = p.table.WithRows(display)
+	p.table = p.table.WithRows(display).WithHighlightedRow(p.cursorIdx - start)
 }
 
 // applyColumns rebuilds the column set for the current mode (narrow/wide),
@@ -227,6 +273,8 @@ func (p *PodPage) CheckedRow(key string) msgs.RowData {
 func (p *PodPage) Reset() {
 	p.rows = nil
 	p.rowsSet = false
+	p.cursorIdx = 0
+	p.windowStart = 0
 	p.table = p.table.WithRows(nil)
 	p.invalidateView()
 }
@@ -252,7 +300,6 @@ func (p *PodPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
-	prevIdx := p.table.GetHighlightedRowIndex()
 	p.tableW, p.tableH = w, h
 	p.wideMode = false
 
@@ -268,8 +315,8 @@ func (p *PodPage) SetSize(w, h int) {
 		Focused(p.Focused)
 	p.wideColCount = len(podNarrowColumns())
 	p.scrollable = false
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows))
 	p.pushDisplayRows()
-	p.table = p.table.WithHighlightedRow(prevIdx)
 	p.invalidateView()
 }
 
@@ -277,11 +324,10 @@ func (p *PodPage) SetSize(w, h int) {
 // or nil if there are no rows. Raw rows are what callers should read pod
 // identity out of — the table itself renders a checkbox-prefixed copy.
 func (p *PodPage) SelectedRow() msgs.RowData {
-	idx := p.table.GetHighlightedRowIndex()
-	if idx < 0 || idx >= len(p.rows) {
+	if p.cursorIdx < 0 || p.cursorIdx >= len(p.rows) {
 		return nil
 	}
-	return p.rows[idx]
+	return p.rows[p.cursorIdx]
 }
 
 func (p *PodPage) invalidateView() {

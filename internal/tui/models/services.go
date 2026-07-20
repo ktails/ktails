@@ -23,6 +23,10 @@ type ServicePage struct {
 	tableH       int
 	wideColCount int
 	scrollable   bool
+
+	// cursorIdx/windowStart: see the identical fields on PodPage in pods.go.
+	cursorIdx   int
+	windowStart int
 }
 
 func NewServicePageModel(client *k8s.Client) *ServicePage {
@@ -38,10 +42,41 @@ func (s *ServicePage) Init() tea.Cmd {
 }
 
 func (s *ServicePage) Update(msg tea.Msg) tea.Cmd {
+	if s.Focused {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			switch key.String() {
+			case "down", "j":
+				s.moveCursor(1)
+				return nil
+			case "up", "k":
+				s.moveCursor(-1)
+				return nil
+			}
+		}
+	}
+
 	var cmd tea.Cmd
 	s.table, cmd = s.table.Update(msg)
 	s.invalidateView()
 	return cmd
+}
+
+// moveCursor: see PodPage.moveCursor in pods.go.
+func (s *ServicePage) moveCursor(delta int) {
+	if len(s.rows) == 0 {
+		return
+	}
+
+	s.cursorIdx += delta
+	if s.cursorIdx < 0 {
+		s.cursorIdx = len(s.rows) - 1
+	} else if s.cursorIdx >= len(s.rows) {
+		s.cursorIdx = 0
+	}
+
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows))
+	s.pushDisplayRows()
+	s.invalidateView()
 }
 
 func (s *ServicePage) SetRows(rows []msgs.RowData) {
@@ -51,6 +86,10 @@ func (s *ServicePage) SetRows(rows []msgs.RowData) {
 
 	s.rows = cloneRows(rows)
 	s.rowsSet = true
+	if s.cursorIdx >= len(s.rows) {
+		s.cursorIdx = max(len(s.rows)-1, 0)
+	}
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows))
 	s.applyColumns()
 	s.pushDisplayRows()
 
@@ -63,10 +102,14 @@ func (s *ServicePage) SetRows(rows []msgs.RowData) {
 	s.invalidateView()
 }
 
+// pushDisplayRows rebuilds the table's rows from the current row window
+// (see windowBounds in table.go) into s.rows. Called whenever raw rows or
+// the cursor/window change.
 func (s *ServicePage) pushDisplayRows() {
-	display := make([]btable.Row, len(s.rows))
-	for i, row := range s.rows {
-		display[i] = btable.NewRow(btable.RowData{
+	start, end := windowBounds(s.windowStart, len(s.rows))
+	display := make([]btable.Row, 0, end-start)
+	for _, row := range s.rows[start:end] {
+		display = append(display, btable.NewRow(btable.RowData{
 			msgs.SvcKeyName:        row[msgs.SvcKeyName],
 			msgs.SvcKeyNamespace:   row[msgs.SvcKeyNamespace],
 			msgs.SvcKeyType:        row[msgs.SvcKeyType],
@@ -77,9 +120,9 @@ func (s *ServicePage) pushDisplayRows() {
 			msgs.SvcKeySelector:    row[msgs.SvcKeySelector],
 			msgs.SvcKeyExternalIP:  row[msgs.SvcKeyExternalIP],
 			msgs.SvcKeyEndpointIPs: row[msgs.SvcKeyEndpointIPs],
-		})
+		}))
 	}
-	s.table = s.table.WithRows(display)
+	s.table = s.table.WithRows(display).WithHighlightedRow(s.cursorIdx - start)
 }
 
 // applyColumns rebuilds the column set for the current mode (narrow/wide),
@@ -139,11 +182,10 @@ func (s *ServicePage) ScrollRight() {
 // SelectedRow returns the raw (un-prefixed) row currently under the cursor,
 // or nil if there are no rows.
 func (s *ServicePage) SelectedRow() msgs.RowData {
-	idx := s.table.GetHighlightedRowIndex()
-	if idx < 0 || idx >= len(s.rows) {
+	if s.cursorIdx < 0 || s.cursorIdx >= len(s.rows) {
 		return nil
 	}
-	return s.rows[idx]
+	return s.rows[s.cursorIdx]
 }
 
 func (s *ServicePage) SetFocused(f bool) {
@@ -167,7 +209,6 @@ func (s *ServicePage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
-	prevIdx := s.table.GetHighlightedRowIndex()
 	s.tableW, s.tableH = w, h
 	s.wideMode = false
 
@@ -182,8 +223,8 @@ func (s *ServicePage) SetSize(w, h int) {
 		Focused(s.Focused)
 	s.wideColCount = len(svcNarrowColumns())
 	s.scrollable = false
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows))
 	s.pushDisplayRows()
-	s.table = s.table.WithHighlightedRow(prevIdx)
 	s.invalidateView()
 }
 

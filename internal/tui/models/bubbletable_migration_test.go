@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/ktails/ktails/internal/tui/msgs"
 )
 
@@ -60,10 +61,12 @@ func TestPodPageCursorPreservedAcrossRefresh(t *testing.T) {
 	p.SetFocused(true)
 	p.SetRows(samplePodRows(10))
 
-	// Move highlighted row down a couple of times via the underlying table.
-	p.table = p.table.WithHighlightedRow(3)
-	if idx := p.table.GetHighlightedRowIndex(); idx != 3 {
-		t.Fatalf("expected cursor at 3, got %d", idx)
+	// Move the cursor down a few times, same as a user pressing the down key.
+	for i := 0; i < 3; i++ {
+		p.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != p.rows[3][msgs.PodKeyName] {
+		t.Fatalf("expected cursor at row 3, got %v", row)
 	}
 
 	// A refresh with the same row count/content is a no-op per rowsEqual,
@@ -72,8 +75,43 @@ func TestPodPageCursorPreservedAcrossRefresh(t *testing.T) {
 	newRows[0][msgs.PodKeyRestarts] = "5" // force rowsEqual to see a change
 	p.SetRows(newRows)
 
-	if idx := p.table.GetHighlightedRowIndex(); idx != 3 {
-		t.Fatalf("expected cursor preserved at 3 after refresh, got %d", idx)
+	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != newRows[3][msgs.PodKeyName] {
+		t.Fatalf("expected cursor preserved at row 3 after refresh, got %v", row)
+	}
+}
+
+// TestPodPageLargeRowSetIsWindowed guards against the perf/clipping bug on
+// real clusters with thousands of pods: WithNoPagination makes bubble-table
+// render every row it's given on every frame (see VisibleIndices in
+// bubble-table's pagination.go), so PodPage must only ever hand it a bounded
+// window (see rowWindowSize in table.go) regardless of how many rows are
+// loaded, and must keep the cursor tracking the right row as it scrolls past
+// a window edge.
+func TestPodPageLargeRowSetIsWindowed(t *testing.T) {
+	p := NewPodPageModel(nil)
+	p.SetSize(60, 20)
+	p.SetFocused(true)
+	rows := samplePodRows(2000)
+	p.SetRows(rows)
+
+	if got := len(p.table.GetVisibleRows()); got > rowWindowSize {
+		t.Fatalf("expected bubble-table to hold at most %d rows, got %d", rowWindowSize, got)
+	}
+
+	// Walk the cursor past the first window's edge and confirm both the
+	// selected row and the table's own highlighted row stay in sync with it.
+	for i := 0; i < rowWindowSize; i++ {
+		p.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[rowWindowSize][msgs.PodKeyName] {
+		t.Fatalf("expected cursor at row %d after scrolling past window edge, got %v", rowWindowSize, row)
+	}
+	if got := len(p.table.GetVisibleRows()); got > rowWindowSize {
+		t.Fatalf("expected window to stay bounded at %d rows after scrolling, got %d", rowWindowSize, got)
+	}
+	wantHighlighted := p.cursorIdx - p.windowStart
+	if got := p.table.GetHighlightedRowIndex(); got != wantHighlighted {
+		t.Fatalf("expected table highlighted row %d, got %d", wantHighlighted, got)
 	}
 }
 
