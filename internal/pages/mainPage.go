@@ -1169,6 +1169,11 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 			statusBits = append(statusBits, fmt.Sprintf("◂ col %d/%d ▸", offset, total))
 		}
 	}
+	if m.showDetail {
+		if percent, ok := m.deploymentDetail.HScrollStatus(); ok {
+			statusBits = append(statusBits, fmt.Sprintf("◂ %d%% ▸", percent))
+		}
+	}
 	if len(statusBits) == 0 {
 		statusBits = append(statusBits, "Ready")
 	}

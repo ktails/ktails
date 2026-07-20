@@ -13,7 +13,7 @@ that detail.
 - ✅ **Track M2** — wide mode reveals new columns (Pods: Ready/Node/Node
   IP/Pod IP; Deployments: Available/Updated/Strategy/Selector; Services:
   Selector/External IP/Endpoint IPs). Done, merged.
-- ⬜ **Track F** — Detail pane horizontal scroll. Not started.
+- ✅ **Track F** — Detail pane horizontal scroll. Done.
 - ⬜ **Track G** — Log pane wrap toggle + horizontal scroll. Not started.
 
 F and G are independent of each other and of M/M2 (different files —
@@ -164,7 +164,7 @@ fetched" tracking, if it doesn't fit naturally into existing loading-state
 tracking), `internal/pages/mainPage.go` (wiring the new lazy-fetch `tea.Cmd`
 into the `Ctrl+W` handler for the svc tab specifically).
 
-### Track F — Detail pane horizontal scroll
+### Track F — Detail pane horizontal scroll — ✅ done
 
 `todo.md`, Horizontal Scrolling spec, Detail-pane half. No toggle — Detail
 (`bubbles/viewport`) is always horizontally scrollable when content overflows.
@@ -172,15 +172,28 @@ into the `Ctrl+W` handler for the svc tab specifically).
 (adapts to terminal size automatically). Status-bar indicator: percentage
 scrolled (`◂ 40% ▸`). Scroll position survives refresh, resets on resize.
 
-Wire the new keys into `mainPage.go`'s existing `m.detailFocused` block (which
-already forwards everything to `m.deploymentDetail.Update(msg)` — either
-handle `shift+left`/`shift+right` inside `resourcedetail.go`'s own `Update`,
-or intercept it in `mainPage.go` next to the existing `ctrl+r`/ detail-focus
-handling, whichever keeps the horizontal-offset state closest to the
-viewport it affects).
+Landed as scoped. `shift+left`/`shift+right` are handled inside
+`resourcedetail.go`'s own `Update` (the simpler of the two options — keeps
+the horizontal-offset state colocated with the viewport it affects; nothing
+in `mainPage.go`'s detail-focused block needed changing). `rawContent`
+(the un-sliced rendered detail text) is kept alongside the viewport;
+`applyHOffset` re-slices every line at the current offset via
+`ansi.Cut(line, offset, offset+width)` — ANSI-aware, so Status/Events
+coloring survives the crop — and pushes the result into `viewport.SetContent`
+rather than mutating `rawContent` itself, so scrolling back left is lossless.
+`HScrollStatus()` exposes `(percent, ok)` to `mainPage.go`'s `renderStatusBar`,
+mirroring how `ScrollStatus()` already feeds the table `◂ col N/M ▸`
+indicator; shown whenever `m.showDetail` and there's overflow to scroll.
+Persistence: `StartLoading` resets the offset only when the newly-requested
+resource doesn't match the one already loaded (via the existing `Matches`
+check), so same-resource reloads (including `Ctrl+R`, which doesn't even
+call `StartLoading`) keep the offset; `SetSize` resets it only when the
+width actually changes, not on every same-size call triggered by pane
+focus/layout churn.
 
-Files: `internal/tui/models/resourcedetail.go`, `internal/pages/mainPage.go`
-(detail-focused key handling + status bar — different region than Track M/G).
+Files: `internal/tui/models/resourcedetail.go`,
+`internal/tui/models/resourcedetail_test.go`, `internal/pages/mainPage.go`
+(status bar only — detail-focused key handling didn't need touching).
 
 ### Track G — Log pane wrap toggle + horizontal scroll
 

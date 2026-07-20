@@ -195,8 +195,8 @@ Focus: Make it easy to find pods and filter logs in large clusters.
     position survives refresh/new log lines; resets on resize.
   - Status: ⚠️ Partial — library migration + tables (narrow/wide mode,
     including the wide-mode new-columns re-scope) ✅ done (Tracks M/M2, see
-    `plan-horizontal-scroll.md`); Detail & Log panes' horizontal scroll ❌
-    not started (Track F/G)
+    `plan-horizontal-scroll.md`); Detail pane's horizontal scroll ✅ done
+    (Track F); Log pane's horizontal scroll ❌ not started (Track G)
 
 ---
 

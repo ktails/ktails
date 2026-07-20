@@ -27,6 +27,15 @@ type ResourceDetailPage struct {
 	name    string
 	context string
 	focused bool
+
+	// rawContent is the full, un-sliced rendered detail text — the
+	// source-of-truth for horizontal scrolling. Each render of the
+	// viewport's content re-slices rawContent's lines at hOffset rather
+	// than mutating it, so scrolling back left never loses content.
+	rawContent   string
+	rawLineWidth int // widest line in rawContent, in cells
+	hOffset      int // horizontal scroll offset, in cells
+	lastWidth    int // viewport width as of the last SetSize, to detect resize
 }
 
 func NewResourceDetailPage() *ResourceDetailPage {
@@ -40,8 +49,13 @@ func (d *ResourceDetailPage) Init() tea.Cmd {
 }
 
 // StartLoading marks a fetch as in-flight for the given resource, replacing
-// any previously rendered content.
+// any previously rendered content. The horizontal scroll offset is kept when
+// re-loading the same resource (e.g. re-pressing Enter on the still-selected
+// row) and reset when a different resource is opened.
 func (d *ResourceDetailPage) StartLoading(kind, name, context string) {
+	if !d.Matches(kind, name, context) {
+		d.hOffset = 0
+	}
 	d.loading = true
 	d.loaded = false
 	d.errMsg = ""
@@ -59,13 +73,71 @@ func (d *ResourceDetailPage) SetError(err string) {
 	d.errMsg = err
 }
 
-// SetDetail renders the fetched detail into the scrollable viewport.
+// SetDetail renders the fetched detail into the scrollable viewport,
+// preserving whatever horizontal scroll offset StartLoading left in place
+// (clamped to the new content's width).
 func (d *ResourceDetailPage) SetDetail(detail k8s.ResourceDetail) {
 	d.loading = false
 	d.loaded = true
 	d.errMsg = ""
-	d.viewport.SetContent(d.render(detail))
+	d.rawContent = d.render(detail)
+	d.rawLineWidth = maxLineWidth(d.rawContent)
+	d.clampHOffset()
+	d.applyHOffset()
 	d.viewport.GotoTop()
+}
+
+// maxLineWidth returns the widest line in s, in display cells, ANSI escapes
+// excluded.
+func maxLineWidth(s string) int {
+	widest := 0
+	for _, line := range strings.Split(s, "\n") {
+		if w := ansi.StringWidth(line); w > widest {
+			widest = w
+		}
+	}
+	return widest
+}
+
+// clampHOffset keeps hOffset within [0, rawLineWidth-viewport.Width], so a
+// narrower resource/terminal never leaves the view stuck past the content.
+func (d *ResourceDetailPage) clampHOffset() {
+	maxOffset := d.rawLineWidth - d.viewport.Width
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if d.hOffset > maxOffset {
+		d.hOffset = maxOffset
+	}
+	if d.hOffset < 0 {
+		d.hOffset = 0
+	}
+}
+
+// applyHOffset re-slices every line of rawContent at the current hOffset and
+// pushes the result into the viewport. ansi.Cut is ANSI-aware, so escape
+// sequences (Status/Events coloring) survive the horizontal crop intact.
+func (d *ResourceDetailPage) applyHOffset() {
+	if d.hOffset == 0 {
+		d.viewport.SetContent(d.rawContent)
+		return
+	}
+	lines := strings.Split(d.rawContent, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Cut(line, d.hOffset, d.hOffset+d.viewport.Width)
+	}
+	d.viewport.SetContent(strings.Join(lines, "\n"))
+}
+
+// HScrollStatus reports the current horizontal scroll position as a
+// percentage, for the status bar's "◂ 40% ▸" indicator. ok is false when the
+// indicator should be hidden — no overflow to scroll, or nothing loaded.
+func (d *ResourceDetailPage) HScrollStatus() (percent int, ok bool) {
+	maxOffset := d.rawLineWidth - d.viewport.Width
+	if !d.loaded || maxOffset <= 0 {
+		return 0, false
+	}
+	return d.hOffset * 100 / maxOffset, true
 }
 
 // HasContent reports whether a resource has ever been loaded into this page.
@@ -110,6 +182,22 @@ func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
 		case "end", "G":
 			d.viewport.GotoBottom()
 			return nil
+		case "shift+left":
+			if !d.loaded {
+				return nil
+			}
+			d.hOffset -= halfViewportStep(d.viewport.Width)
+			d.clampHOffset()
+			d.applyHOffset()
+			return nil
+		case "shift+right":
+			if !d.loaded {
+				return nil
+			}
+			d.hOffset += halfViewportStep(d.viewport.Width)
+			d.clampHOffset()
+			d.applyHOffset()
+			return nil
 		}
 	}
 
@@ -118,12 +206,35 @@ func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+// halfViewportStep is the Shift+Left/Right scroll distance: half the
+// viewport's width, so a couple of presses reach far-right content
+// regardless of terminal size. Minimum 1 to stay useful at very narrow
+// widths.
+func halfViewportStep(viewportWidth int) int {
+	step := viewportWidth / 2
+	if step < 1 {
+		step = 1
+	}
+	return step
+}
+
 func (d *ResourceDetailPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
+	if w != d.lastWidth {
+		d.hOffset = 0
+		d.lastWidth = w
+	}
 	d.viewport.Width = w
 	d.viewport.Height = h
+	// Loading/error placeholders bypass rawContent (see StartLoading/
+	// SetError) — only re-slice once real content is loaded, so this
+	// doesn't clobber a placeholder just set by StartLoading.
+	if d.loaded {
+		d.clampHOffset()
+		d.applyHOffset()
+	}
 }
 
 func (d *ResourceDetailPage) SetFocused(f bool) {
