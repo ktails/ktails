@@ -1,7 +1,7 @@
 package views
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
 
@@ -38,7 +38,13 @@ func RenderTabHeaders(activeTab int, tabs []string, w int, blur bool) string {
 			border.BottomRight = "┤"
 		}
 
-		style = style.Border(border).Width(width)
+		style = style.Border(border)
+		// lipgloss v2's Width() sets the total rendered width including the
+		// border, unlike v1 where border was added on top of the declared
+		// width — add the style's own horizontal border size back so each
+		// tab still renders at `width` cells of border+padding+content,
+		// matching the layout budget computed by callers of RenderTabHeaders.
+		style = style.Width(width + style.GetHorizontalBorderSize())
 		renderedTabs = append(renderedTabs, style.Render(t))
 	}
 

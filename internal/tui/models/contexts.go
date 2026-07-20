@@ -2,13 +2,14 @@ package models
 
 import (
 	"fmt"
+	"image/color"
 	"io"
 	"log"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
@@ -54,7 +55,7 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 
 	// State icon and colours
 	var icon string
-	var iconColor, nameColor lipgloss.Color
+	var iconColor, nameColor color.Color
 
 	switch {
 	case ctx.IsLoading:
@@ -186,7 +187,7 @@ func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 		c.height = msg.Height
 		c.setDimensions()
 		return nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			c.list, cmd = c.list.Update(msg)
@@ -194,7 +195,7 @@ func (c *ContextsInfo) Update(msg tea.Msg) tea.Cmd {
 		case "down", "j":
 			c.list, cmd = c.list.Update(msg)
 			return cmd
-		case " ":
+		case "space":
 			c.toggleSelection()
 			return nil
 		case "enter":

@@ -4,17 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ktails/ktails/internal/tui/msgs"
-	"github.com/muesli/termenv"
 )
-
-func init() {
-	// This sandboxed test environment has no color-capable TTY, so lipgloss
-	// would otherwise strip all ANSI codes and the coloring assertions below
-	// would pass vacuously. Force a color profile so they mean something.
-	lipgloss.SetColorProfile(termenv.TrueColor)
-}
 
 func samplePodRows(n int) []msgs.RowData {
 	rows := make([]msgs.RowData, n)

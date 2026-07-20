@@ -1,54 +1,40 @@
 package styles
 
 import (
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/lipgloss"
-)
+	"image/color"
 
-// DefaultTableStyles returns a basic style set with a highlighted selected row
-func DefaultTableStyles() table.Styles {
-	styles := table.DefaultStyles()
-	styles.Header = styles.Header.
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		BorderBottom(true).
-		Bold(true)
-	styles.Selected = styles.Selected.
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("57")).
-		Bold(true)
-	return styles
-}
+	"charm.land/bubbles/v2/list"
+	"charm.land/lipgloss/v2"
+)
 
 // Palette defines a set of Catppuccin colors for styling.
 type Palette struct {
-	Base      lipgloss.Color
-	Mantle    lipgloss.Color
-	Crust     lipgloss.Color
-	Text      lipgloss.Color
-	Subtext1  lipgloss.Color
-	Subtext0  lipgloss.Color
-	Overlay2  lipgloss.Color
-	Overlay1  lipgloss.Color
-	Overlay0  lipgloss.Color
-	Surface2  lipgloss.Color
-	Surface1  lipgloss.Color
-	Surface0  lipgloss.Color
-	Blue      lipgloss.Color
-	Lavender  lipgloss.Color
-	Sapphire  lipgloss.Color
-	Sky       lipgloss.Color
-	Teal      lipgloss.Color
-	Green     lipgloss.Color
-	Yellow    lipgloss.Color
-	Peach     lipgloss.Color
-	Maroon    lipgloss.Color
-	Red       lipgloss.Color
-	Mauve     lipgloss.Color
-	Pink      lipgloss.Color
-	Flamingo  lipgloss.Color
-	Rosewater lipgloss.Color
+	Base      color.Color
+	Mantle    color.Color
+	Crust     color.Color
+	Text      color.Color
+	Subtext1  color.Color
+	Subtext0  color.Color
+	Overlay2  color.Color
+	Overlay1  color.Color
+	Overlay0  color.Color
+	Surface2  color.Color
+	Surface1  color.Color
+	Surface0  color.Color
+	Blue      color.Color
+	Lavender  color.Color
+	Sapphire  color.Color
+	Sky       color.Color
+	Teal      color.Color
+	Green     color.Color
+	Yellow    color.Color
+	Peach     color.Color
+	Maroon    color.Color
+	Red       color.Color
+	Mauve     color.Color
+	Pink      color.Color
+	Flamingo  color.Color
+	Rosewater color.Color
 }
 
 // CatppuccinMocha returns the Mocha palette.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/ktails/ktails/internal/k8s"
 )
 
@@ -34,7 +34,7 @@ func TestResourceDetailHorizontalScroll(t *testing.T) {
 	}
 
 	// shift+right should scroll by ~half the viewport width per press.
-	d.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+	d.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 	if d.hOffset != 20 {
 		t.Fatalf("expected hOffset 20 after one shift+right on a 40-wide viewport, got %d", d.hOffset)
 	}
@@ -48,14 +48,14 @@ func TestResourceDetailHorizontalScroll(t *testing.T) {
 	// in a small, terminal-size-independent number of presses — the whole
 	// point of scaling the step to half the viewport width.
 	for i := 0; i < 10; i++ {
-		d.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+		d.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 	}
 	pctMax, ok := d.HScrollStatus()
 	if !ok || pctMax != 100 {
 		t.Fatalf("expected to reach 100%% scroll, got %d (ok=%v)", pctMax, ok)
 	}
 
-	d.Update(tea.KeyMsg{Type: tea.KeyShiftLeft})
+	d.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
 	if d.hOffset >= 200 {
 		t.Fatalf("expected shift+left to move the offset back left, got %d", d.hOffset)
 	}
@@ -66,7 +66,7 @@ func TestResourceDetailScrollResetsOnNewResource(t *testing.T) {
 	d.SetSize(40, 10)
 	d.StartLoading("Deployment", "foo", "ctx")
 	d.SetDetail(wideResourceDetail("foo"))
-	d.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+	d.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 	if d.hOffset == 0 {
 		t.Fatalf("expected non-zero offset after scrolling")
 	}
@@ -95,7 +95,7 @@ func TestResourceDetailScrollResetsOnResize(t *testing.T) {
 	d.SetSize(40, 10)
 	d.StartLoading("Deployment", "foo", "ctx")
 	d.SetDetail(wideResourceDetail("foo"))
-	d.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+	d.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 	if d.hOffset == 0 {
 		t.Fatalf("expected non-zero offset after scrolling")
 	}

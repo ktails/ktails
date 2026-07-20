@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/state"
@@ -157,7 +157,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.logSlowUpdate(start)
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		keypress := msg.String()
 
 		// Help overlay is modal — only ? and esc pass through
@@ -290,7 +290,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// merged log stream; Ctrl+X clears all checkmarks. Pods-tab only.
 		if m.appStateLoaded && m.tabs[m.activeTab] == "Pods" {
 			switch keypress {
-			case " ":
+			case "space":
 				m.podList.ToggleChecked(models.PodRowKey(m.podList.SelectedRow()))
 				return m, nil
 			case "ctrl+x":
@@ -954,7 +954,14 @@ func (m *MainPage) stopLogStream() {
 	}
 }
 
-func (m *MainPage) View() string {
+func (m *MainPage) View() tea.View {
+	return tea.View{
+		Content:   m.renderView(),
+		AltScreen: true,
+	}
+}
+
+func (m *MainPage) renderView() string {
 	if m.width < views.MinContentWidth || m.height < views.MinHeight {
 		return m.renderTooSmallOverlay()
 	}
@@ -1074,7 +1081,11 @@ func (m *MainPage) View() string {
 	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
 	tabs.WriteString(tabHeaders)
 	tabs.WriteString("\n")
-	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
+	// lipgloss v2's Width() sets the box's total rendered width (border and
+	// padding included), unlike v1 where it set the content width only — so
+	// the target here is simply tabHeaders' own width, with no frame-size
+	// subtraction needed to line up the two borders.
+	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders)).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
 
 	// lipgloss's Height()+Border()+Padding() frame math doesn't add up to a
 	// fixed constant across every width/content combination — real content
@@ -1098,7 +1109,7 @@ func (m *MainPage) View() string {
 		tabs.Reset()
 		tabs.WriteString(tabHeaders)
 		tabs.WriteString("\n")
-		tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders) - styles.WindowStyle.GetHorizontalFrameSize()).Height(m.height - 8 - gap).Align(lipgloss.Center).Render(m.tabContent))
+		tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders)).Height(m.height - 8 - gap).Align(lipgloss.Center).Render(m.tabContent))
 	}
 
 	fullView := lipgloss.JoinVertical(lipgloss.Left,

@@ -1,7 +1,7 @@
 // Package styles is contains layout and styling of the KTails
 package styles
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 // DocStyle is an outer wrapper similar to lipgloss layout example.
 func NewHeaderStyle() lipgloss.Style {

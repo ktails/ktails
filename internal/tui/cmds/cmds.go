@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	v1 "k8s.io/api/core/v1"
 
 	"github.com/ktails/ktails/internal/k8s"

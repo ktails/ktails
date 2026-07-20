@@ -4,13 +4,14 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"io"
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
@@ -24,9 +25,9 @@ const maxLogLines = 5000
 // each source's line prefix. Red/Mauve/Green/Peach are excluded: they
 // already carry other meaning elsewhere in the UI (errors, focus/selection,
 // loaded state, this pane's own title).
-func sourceColors() []lipgloss.Color {
+func sourceColors() []color.Color {
 	p := styles.CatppuccinMocha()
-	return []lipgloss.Color{
+	return []color.Color{
 		p.Blue, p.Lavender, p.Sapphire, p.Sky, p.Teal,
 		p.Pink, p.Flamingo, p.Rosewater, p.Yellow, p.Maroon,
 	}
@@ -189,7 +190,7 @@ type logSource struct {
 	namespace string
 	context   string
 	container string
-	color     lipgloss.Color
+	color     color.Color
 
 	lines     []logLine
 	streaming bool
@@ -239,7 +240,7 @@ type LogPage struct {
 
 func NewLogPage() *LogPage {
 	return &LogPage{
-		viewport:    viewport.New(0, 0),
+		viewport:    viewport.New(),
 		sources:     make(map[string]*logSource),
 		isolatedIdx: -1,
 	}
@@ -440,14 +441,14 @@ func (l *LogPage) refreshContent() {
 // ansi.Wrap reflows each line to the viewport width, preserving ANSI escape
 // sequences and only ever splitting on grapheme boundaries.
 func (l *LogPage) applyContent() {
-	if !l.wrap || l.viewport.Width < 1 {
+	if !l.wrap || l.viewport.Width() < 1 {
 		l.viewport.SetContent(strings.Join(l.rawLines, "\n"))
 		return
 	}
 
 	wrapped := make([]string, len(l.rawLines))
 	for i, s := range l.rawLines {
-		wrapped[i] = ansi.Wrap(s, l.viewport.Width, "")
+		wrapped[i] = ansi.Wrap(s, l.viewport.Width(), "")
 	}
 	l.viewport.SetContent(strings.Join(wrapped, "\n"))
 }
@@ -473,7 +474,7 @@ func (l *LogPage) Wrap() bool {
 // wrapped (nothing to scroll) or when no line overflows the viewport width
 // (nothing to scroll to).
 func (l *LogPage) ScrollStatus() (percent int, ok bool) {
-	if l.wrap || l.maxLineWidth <= l.viewport.Width {
+	if l.wrap || l.maxLineWidth <= l.viewport.Width() {
 		return 0, false
 	}
 	return int(l.viewport.HorizontalScrollPercent() * 100), true
@@ -506,7 +507,7 @@ func (l *LogPage) Header(width int) string {
 }
 
 func (l *LogPage) Update(msg tea.Msg) tea.Cmd {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.String() {
 		case "home", "g":
 			l.viewport.GotoTop()
@@ -516,12 +517,12 @@ func (l *LogPage) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		case "shift+left":
 			if !l.wrap {
-				l.viewport.ScrollLeft(halfViewportStep(l.viewport.Width))
+				l.viewport.ScrollLeft(halfViewportStep(l.viewport.Width()))
 			}
 			return nil
 		case "shift+right":
 			if !l.wrap {
-				l.viewport.ScrollRight(halfViewportStep(l.viewport.Width))
+				l.viewport.ScrollRight(halfViewportStep(l.viewport.Width()))
 			}
 			return nil
 		}
@@ -542,9 +543,9 @@ func (l *LogPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
-	resized := w != l.viewport.Width || h != l.viewport.Height
-	l.viewport.Width = w
-	l.viewport.Height = h
+	resized := w != l.viewport.Width() || h != l.viewport.Height()
+	l.viewport.SetWidth(w)
+	l.viewport.SetHeight(h)
 	if resized {
 		l.viewport.SetXOffset(0)
 		if l.wrap {

@@ -1,10 +1,11 @@
 package models
 
 import (
+	"image/color"
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
@@ -78,7 +79,7 @@ func totalColumnsWidth(cols []btable.Column) int {
 // status color, per the Status Colors spec: Running=Green, Pending=Yellow,
 // Failed/Unknown=Red, Succeeded=Overlay1 (dim). Unrecognized phases are
 // left uncolored.
-func statusColor(status string) (lipgloss.Color, bool) {
+func statusColor(status string) (color.Color, bool) {
 	p := styles.CatppuccinMocha()
 	switch status {
 	case "Running":
@@ -90,7 +91,7 @@ func statusColor(status string) (lipgloss.Color, bool) {
 	case "Succeeded":
 		return p.Overlay1, true
 	default:
-		return "", false
+		return nil, false
 	}
 }
 

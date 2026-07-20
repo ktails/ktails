@@ -205,8 +205,8 @@ stateDiagram-v2
 - **`state.AppState`** — holds per-context Deployment/Pod/Service rows, loading flags, and errors;
   exposes a cached `Snapshot()` for cheap reads during render
 - **`models.ContextsInfo`** — the left-pane context list with multi-select
-- **`models.DeploymentPage` / `PodPage` / `ServicePage`** — thin wrappers around `bubbles/table` for
-  each resource tab
+- **`models.DeploymentPage` / `PodPage` / `ServicePage`** — thin wrappers around
+  [`evertras/bubble-table`](https://github.com/Evertras/bubble-table) for each resource tab
 - **`models.ResourceDetailPage`** — the shared, cross-cutting Detail pane (a `bubbles/viewport`
   showing Status/Events/YAML), reused regardless of which tab opened it
 - **`k8s.Client`** — wraps `client-go`, supporting multiple contexts and both list (`GetDeploymentInfo`,
@@ -259,9 +259,10 @@ make release-dry-run  # build all targets into ./dist with a snapshot version
 
 ## Dependencies
 
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
-- [Bubbles](https://github.com/charmbracelet/bubbles) — TUI components (table, list, viewport)
-- [Lip Gloss](https://github.com/charmbracelet/lipgloss) — styling and layout
+- [Bubble Tea v2](https://github.com/charmbracelet/bubbletea) — TUI framework
+- [Bubbles v2](https://github.com/charmbracelet/bubbles) — TUI components (list, viewport)
+- [Lip Gloss v2](https://github.com/charmbracelet/lipgloss) — styling and layout
+- [bubble-table](https://github.com/Evertras/bubble-table) — the Deployments/Pods/svc tables
 - [client-go](https://github.com/kubernetes/client-go) — Kubernetes client library
 - [sigs.k8s.io/yaml](https://github.com/kubernetes-sigs/yaml) — YAML rendering for the Detail pane
 

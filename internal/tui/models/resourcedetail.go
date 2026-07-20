@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/styles"
@@ -40,7 +40,7 @@ type ResourceDetailPage struct {
 
 func NewResourceDetailPage() *ResourceDetailPage {
 	return &ResourceDetailPage{
-		viewport: viewport.New(0, 0),
+		viewport: viewport.New(),
 	}
 }
 
@@ -102,7 +102,7 @@ func maxLineWidth(s string) int {
 // clampHOffset keeps hOffset within [0, rawLineWidth-viewport.Width], so a
 // narrower resource/terminal never leaves the view stuck past the content.
 func (d *ResourceDetailPage) clampHOffset() {
-	maxOffset := d.rawLineWidth - d.viewport.Width
+	maxOffset := d.rawLineWidth - d.viewport.Width()
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -124,7 +124,7 @@ func (d *ResourceDetailPage) applyHOffset() {
 	}
 	lines := strings.Split(d.rawContent, "\n")
 	for i, line := range lines {
-		lines[i] = ansi.Cut(line, d.hOffset, d.hOffset+d.viewport.Width)
+		lines[i] = ansi.Cut(line, d.hOffset, d.hOffset+d.viewport.Width())
 	}
 	d.viewport.SetContent(strings.Join(lines, "\n"))
 }
@@ -133,7 +133,7 @@ func (d *ResourceDetailPage) applyHOffset() {
 // percentage, for the status bar's "◂ 40% ▸" indicator. ok is false when the
 // indicator should be hidden — no overflow to scroll, or nothing loaded.
 func (d *ResourceDetailPage) HScrollStatus() (percent int, ok bool) {
-	maxOffset := d.rawLineWidth - d.viewport.Width
+	maxOffset := d.rawLineWidth - d.viewport.Width()
 	if !d.loaded || maxOffset <= 0 {
 		return 0, false
 	}
@@ -174,7 +174,7 @@ func (d *ResourceDetailPage) Header(width int) string {
 }
 
 func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.String() {
 		case "home", "g":
 			d.viewport.GotoTop()
@@ -186,7 +186,7 @@ func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
 			if !d.loaded {
 				return nil
 			}
-			d.hOffset -= halfViewportStep(d.viewport.Width)
+			d.hOffset -= halfViewportStep(d.viewport.Width())
 			d.clampHOffset()
 			d.applyHOffset()
 			return nil
@@ -194,7 +194,7 @@ func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
 			if !d.loaded {
 				return nil
 			}
-			d.hOffset += halfViewportStep(d.viewport.Width)
+			d.hOffset += halfViewportStep(d.viewport.Width())
 			d.clampHOffset()
 			d.applyHOffset()
 			return nil
@@ -218,8 +218,8 @@ func (d *ResourceDetailPage) SetSize(w, h int) {
 		d.hOffset = 0
 		d.lastWidth = w
 	}
-	d.viewport.Width = w
-	d.viewport.Height = h
+	d.viewport.SetWidth(w)
+	d.viewport.SetHeight(h)
 	// Loading/error placeholders bypass rawContent (see StartLoading/
 	// SetError) — only re-slice once real content is loaded, so this
 	// doesn't clobber a placeholder just set by StartLoading.

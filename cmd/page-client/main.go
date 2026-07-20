@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/ktails/ktails/internal/config"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/pages"
@@ -44,7 +44,7 @@ func main() {
 
 	mp := pages.NewMainPageModel(client, cfg.Preferences.RefreshInterval)
 
-	p := tea.NewProgram(mp, tea.WithAltScreen())
+	p := tea.NewProgram(mp)
 	if r, err := p.Run(); err != nil {
 		utils.PrintJSON(r)
 		panic(err)
