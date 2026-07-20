@@ -534,13 +534,6 @@ func (l *LogPage) Update(msg tea.Msg) tea.Cmd {
 
 // halfViewportStep is the Shift+Left/Shift+Right scroll distance: half the
 // viewport's current width, so it adapts to terminal size.
-func halfViewportStep(width int) int {
-	if step := width / 2; step > 0 {
-		return step
-	}
-	return 1
-}
-
 // SetSize resizes the viewport. Horizontal scroll resets to the left edge
 // on an actual size change (there's nothing meaningful to preserve once the
 // overflow that produced it has changed shape); wrapped content is re-flowed

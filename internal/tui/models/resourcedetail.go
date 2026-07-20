@@ -210,14 +210,6 @@ func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
 // viewport's width, so a couple of presses reach far-right content
 // regardless of terminal size. Minimum 1 to stay useful at very narrow
 // widths.
-func halfViewportStep(viewportWidth int) int {
-	step := viewportWidth / 2
-	if step < 1 {
-		step = 1
-	}
-	return step
-}
-
 func (d *ResourceDetailPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return

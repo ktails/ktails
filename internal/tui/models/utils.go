@@ -23,6 +23,18 @@ func rowsEqual(a, b []msgs.RowData) bool {
 	return true
 }
 
+// halfViewportStep is the horizontal-scroll step size shared by the Detail
+// and Log panes' Shift+Left/Right handling: half the viewport's width, so a
+// press reaches far-right content in a couple of steps regardless of
+// terminal size.
+func halfViewportStep(viewportWidth int) int {
+	step := viewportWidth / 2
+	if step < 1 {
+		step = 1
+	}
+	return step
+}
+
 func cloneRows(rows []msgs.RowData) []msgs.RowData {
 	if len(rows) == 0 {
 		return make([]msgs.RowData, 0)
