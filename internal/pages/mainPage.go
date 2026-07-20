@@ -1085,7 +1085,17 @@ func (m *MainPage) renderView() string {
 	// padding included), unlike v1 where it set the content width only — so
 	// the target here is simply tabHeaders' own width, with no frame-size
 	// subtraction needed to line up the two borders.
-	tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders)).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
+	boxWidth := lipgloss.Width(tabHeaders)
+	// Style.Render's Width() word-*wraps* overflowing lines rather than
+	// truncating them — it does not clip. Any table row that ends up even
+	// one cell wider than the box's content width (e.g. from flex-column
+	// rounding at narrow terminal widths) silently becomes two physical
+	// lines, blowing the pane's height budget no matter how carefully the
+	// row *count* was bounded elsewhere. padLinesToMinWidth already exists
+	// to truncate-rather-than-wrap for the detail/log split case below; apply
+	// it here too so the plain table case gets the same guarantee.
+	m.tabContent = padLinesToMinWidth(m.tabContent, boxWidth-tabBottom.GetHorizontalFrameSize())
+	tabs.WriteString(tabBottom.Width(boxWidth).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
 
 	// lipgloss's Height()+Border()+Padding() frame math doesn't add up to a
 	// fixed constant across every width/content combination — real content
