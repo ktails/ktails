@@ -135,7 +135,7 @@ Focus: Make it easy to find pods and filter logs in large clusters.
   - Filter by label selector
   - Status: ❌ Not started
 
-- [ ] **Horizontal Scrolling** (table, Detail, and Log panes — spec locked via
+- [x] **Horizontal Scrolling** (table, Detail, and Log panes — spec locked via
   grilling session, 2026-07-19; expanded well beyond the original bullet
   below, see `plan-horizontal-scroll.md` for the execution plan)
   - **Library migration**: adopt `github.com/evertras/bubble-table` for the
@@ -193,10 +193,10 @@ Focus: Make it easy to find pods and filter logs in large clusters.
     `Shift+Right` scroll by **half the viewport's width** per press.
     Status-bar indicator: percentage scrolled, e.g. `◂ 40% ▸`. Scroll
     position survives refresh/new log lines; resets on resize.
-  - Status: ⚠️ Partial — library migration + tables (narrow/wide mode,
-    including the wide-mode new-columns re-scope) ✅ done (Tracks M/M2, see
-    `plan-horizontal-scroll.md`); Detail pane's horizontal scroll ✅ done
-    (Track F); Log pane's horizontal scroll ❌ not started (Track G)
+  - Status: ✅ Done — library migration + tables (narrow/wide mode,
+    including the wide-mode new-columns re-scope), Detail pane horizontal
+    scroll, and Log pane horizontal scroll all merged (Tracks M/M2/F/G, see
+    `plan-horizontal-scroll.md`)
 
 ---
 
@@ -206,7 +206,7 @@ Focus: Advanced log viewing capabilities.
 
 ### 🟡 MEDIUM Priority
 
-- [ ] **Soft Wrap Toggle** (spec locked via grilling session, 2026-07-19 —
+- [x] **Soft Wrap Toggle** (spec locked via grilling session, 2026-07-19 —
   designed together with Horizontal Scrolling above, see
   `plan-horizontal-scroll.md`)
   - `w` toggles soft wrap (free key, no conflicts). **Off by default** — no
@@ -222,8 +222,9 @@ Focus: Advanced log viewing capabilities.
   - Wrapping must be ANSI-aware (reflow without breaking the per-source-prefix
     colors or the JSON highlighting already shipped) — the main technical
     risk in this item.
-  - Status: ❌ Not started — spec locked via grilling session, ready to
-    implement
+  - Status: ✅ Done (Track G, see `plan-horizontal-scroll.md`) —
+    `github.com/charmbracelet/x/ansi.Wrap` reflows the already-colored line
+    text; `w` wired in `mainPage.go`'s `logsFocused` block next to `c`
 
 - [ ] **Log Export**
   - Press `e` to export current logs to file
