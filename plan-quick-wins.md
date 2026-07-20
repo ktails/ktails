@@ -1,6 +1,6 @@
 # Quick wins — execution plan (phased, parallelizable)
 
-Status: ready to execute. Every item below has its full spec locked in `todo.md`
+Status: ✅ all tracks done — see `todo.md` for per-item status. Every item below had its full spec locked in `todo.md`
 (via a grilling session, 2026-07-19) — this file only sequences *how* to build
 them (phases, tracks, file ownership), not *what* to build. Read the linked
 `todo.md` entry before starting a track; this file won't repeat that detail.

@@ -33,14 +33,14 @@ Focus: Get the basics working - status bar, refresh, error handling.
   - Status: ✅ Done — `state.AppState.Errors`, `renderErrorOverlay`/`renderErrorSummaryOverlay`
   - Still open: hints for common issues (permissions, connectivity), debug-file error logging
 
-- [ ] **Manual Refresh**
+- [x] **Manual Refresh**
   - Press `r` to re-fetch **only the active tab's** resource list (across all
     loaded contexts) — not all three resource types, to avoid 3x API load on
     tabs you're not looking at
   - Reuses the existing `LoadDeploymentInfoCmd`/`LoadPodInfoCmd`/`LoadServiceInfoCmd`
   - Visual feedback during refresh (loading indicator already exists for initial load)
   - Preserve cursor position after refresh
-  - Status: ❌ Not started (only loads once on context selection) — spec locked via grilling session, ready to implement
+  - Status: ✅ Done — `refreshActiveTab` in `internal/pages/mainPage.go`, bound to `r`
 
 - [x] **Basic Log Viewing**
   - Press `l` on a pod to view its logs
@@ -48,7 +48,7 @@ Focus: Get the basics working - status bar, refresh, error handling.
   - Scroll through logs with arrow keys
   - Status: ✅ Done — see `design-log-viewer.md`
 
-- [ ] **Tab Gating Consistency**
+- [x] **Tab Gating Consistency**
   - Only the Deployments tab currently blocks switching-in before contexts
     are loaded (`nextTab == "Deployments"` check in `mainPage.go`'s tab
     navigation); Pods/svc allow switching in and just show the empty-state
@@ -56,18 +56,18 @@ Focus: Get the basics working - status bar, refresh, error handling.
   - Extend the same guard to Pods and svc, so all three tabs behave
     identically (chosen over relaxing Deployments to match Pods/svc — see
     grilling session)
-  - Status: ❌ Not started — spec locked via grilling session, ready to implement (small, mostly one-line-per-tab)
+  - Status: ✅ Done — `nextTab == "Deployments" || nextTab == "Pods" || nextTab == "svc"` in `mainPage.go`'s tab navigation
 
-- [ ] **Checked-Count Indicator**
+- [x] **Checked-Count Indicator**
   - While on the Pods tab with 1+ rows checked (`Space`), show a status bar
     hint: `☑ N checked · l: open merged · Ctrl+X: clear` — mirrors the
     existing `⏳ N loading` status bar pattern
   - Pods-tab only, hidden when nothing's checked
-  - Status: ❌ Not started — spec locked via grilling session, ready to implement (tiny)
+  - Status: ✅ Done — `renderStatusBar` in `internal/pages/mainPage.go`
 
 ### 🟡 MEDIUM Priority
 
-- [ ] **Auto-Refresh**
+- [x] **Auto-Refresh**
   - Wire up the existing (currently unused) `config.Preferences.RefreshInterval`
     to a ticking `tea.Cmd` that refreshes the active tab on that interval —
     finally puts that config field to use
@@ -78,9 +78,9 @@ Focus: Get the basics working - status bar, refresh, error handling.
     per-tab refresh path)
   - Subtle spinner in status bar during refresh
   - Toggle auto-refresh with a key
-  - Status: ❌ Not started — spec locked via grilling session, ready to implement
+  - Status: ✅ Done — `refreshTickCmd`/`RefreshTickMsg` in `internal/pages/mainPage.go`, paused while `showDetail`/`showLogs`, toggled with `R`
 
-- [ ] **Status Colors** (Detail pane + focus/selection — done; resource-table phase coloring — spec'd, not started)
+- [x] **Status Colors** (Detail pane + focus/selection — done; resource-table phase coloring — done for Pods/Deployments, Services out of scope)
   - Color code Detail pane event types (Warning=yellow, Normal=green) — ✅ done
   - Highlight selected row with accent color — ✅ done
   - Show focused pane with distinct border color/thickness — ✅ done
@@ -93,7 +93,7 @@ Focus: Get the basics working - status bar, refresh, error handling.
     zero ready with desired > 0)
   - **Services table** — no natural phase/status field exists today; out of
     scope for this item
-  - Status: ⚠️ Partial — spec locked via grilling session for the Pods/Deployments halves, ready to implement
+  - Status: ✅ Done — `statusCellStyle`/`replicaCellStyle` (`btable.StyledCellFunc`) in `internal/tui/models/table.go`, `k8s.DeploymentInfo.DesiredReplicas` in `internal/k8s/deployments.go`
 
 ---
 
@@ -246,7 +246,7 @@ Focus: Advanced log viewing capabilities.
 
 ### 🟢 LOW Priority
 
-- [ ] **Log Highlighting (JSON)**
+- [x] **Log Highlighting (JSON)**
   - Detect JSON **embedded after a prefix** (e.g. `2026-07-19 INFO {"user":"x"}`)
     — scan for the first `{`/`[` and try parsing from there to end of line;
     whole-line-only detection was considered and rejected (misses the common
@@ -261,7 +261,7 @@ Focus: Advanced log viewing capabilities.
     own line's source-prefix color
   - Self-contained, ~100-150 lines, no shared risk with other log-pane code
   - Custom highlight patterns — not scoped, future idea only
-  - Status: ❌ Not started — spec locked via grilling session, ready to implement
+  - Status: ✅ Done — `highlightJSONLine` in `internal/tui/models/podlogs.go`
 
 - [ ] **Bookmarks**
   - Press `b` to bookmark current log line
@@ -426,8 +426,6 @@ These are ideas for future consideration, not committed to any version:
 
 Track current bugs and limitations:
 
-- ⚠️ Resource table rows aren't color-coded by status/phase — see **Status Colors** above for the
-  locked spec (Pods phase + Deployments ready/desired fraction)
 - ⚠️ No way to deselect/remove a single loaded context's resources without deselecting the context itself
 - ⚠️ Context switching modifies global k8s client state (not thread-safe)
 
