@@ -55,7 +55,7 @@ const (
 	SvcKeyContext     = "context"     // hidden, used by the detail tab
 	SvcKeySelector    = "selector"    // wide mode only
 	SvcKeyExternalIP  = "externalIP"  // wide mode only
-	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "..." until lazily fetched
+	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "…" until lazily fetched
 )
 
 // ContextsSelectedMsg represents a selected context with its namespace

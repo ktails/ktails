@@ -134,7 +134,7 @@ func HelpBoxStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(p.Text).
 		Background(p.Mantle).
-		Border(ASCIIBorder()).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(p.Mauve).
 		Padding(1, 2)
 }
@@ -153,7 +153,7 @@ func CatppuccinMochaListStyles() list.Styles {
 		HelpStyle: lipgloss.NewStyle().
 			Foreground(p.Text).
 			Background(p.Mantle).
-			Border(ASCIIBorder()).
+			Border(lipgloss.RoundedBorder()).
 			BorderForeground(p.Mauve).
 			Padding(1, 2),
 	}
@@ -163,6 +163,6 @@ func CatppuccinMochaListStyles() list.Styles {
 func ListPaneStyle() lipgloss.Style {
 	p := CatppuccinMocha()
 	l := lipgloss.NewStyle().
-		Border(ASCIIBorder()).BorderStyle(ASCIIBorder()).BorderForeground(p.Red)
+		Border(lipgloss.RoundedBorder()).BorderStyle(lipgloss.DoubleBorder()).BorderForeground(p.Red)
 	return l
 }

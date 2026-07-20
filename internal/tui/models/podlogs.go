@@ -386,7 +386,7 @@ func (l *LogPage) SetStreamEnded(key string, err error) {
 
 	p := styles.CatppuccinMocha()
 	banner := lipgloss.NewStyle().Foreground(p.Red).
-		Render(fmt.Sprintf("! log stream ended for %s: %s", src.label(), src.streamErr))
+		Render(fmt.Sprintf("⚠ log stream ended for %s: %s", src.label(), src.streamErr))
 	l.appendTo(src, banner)
 }
 
@@ -470,7 +470,7 @@ func (l *LogPage) Wrap() bool {
 }
 
 // ScrollStatus reports the current horizontal scroll position as a
-// percentage, for the status bar's "< N% >" indicator. ok is false while
+// percentage, for the status bar's "◂ N% ▸" indicator. ok is false while
 // wrapped (nothing to scroll) or when no line overflows the viewport width
 // (nothing to scroll to).
 func (l *LogPage) ScrollStatus() (percent int, ok bool) {
@@ -498,12 +498,12 @@ func (l *LogPage) Header(width int) string {
 		label += "  [wrap]"
 	}
 
-	full := title.Render(fmt.Sprintf("v %s", label)) + "  " +
-		hint.Render("(c: isolate/merge, w: wrap, up/down pgup/pgdn scroll, shift+left/right: pan, End: jump+follow, Esc back)")
+	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
+		hint.Render("(c: isolate/merge, w: wrap, ↑/↓ pgup/pgdn scroll, ⇧←/⇧→: pan, End: jump+follow, Esc back)")
 	if width <= 0 {
 		return full
 	}
-	return ansi.Truncate(full, width, "...")
+	return ansi.Truncate(full, width, "…")
 }
 
 func (l *LogPage) Update(msg tea.Msg) tea.Cmd {

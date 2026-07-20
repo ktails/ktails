@@ -27,18 +27,15 @@ func RenderTabHeaders(activeTab int, tabs []string, w int, blur bool) string {
 			}
 		}
 
-		// ASCII-only (see styles.ASCIIBorder): "|" for the active tab's open
-		// edge, "+" for the junction where an inactive tab's bottom border
-		// meets the pane edge.
 		border, _, _, _, _ := style.GetBorder()
 		if isFirst && isActive {
-			border.BottomLeft = "|"
+			border.BottomLeft = "│"
 		} else if isFirst && !isActive {
-			border.BottomLeft = "+"
+			border.BottomLeft = "├"
 		} else if isLast && isActive {
-			border.BottomRight = "|"
+			border.BottomRight = "│"
 		} else if isLast && !isActive {
-			border.BottomRight = "+"
+			border.BottomRight = "┤"
 		}
 
 		style = style.Border(border)

@@ -130,7 +130,7 @@ func (d *ResourceDetailPage) applyHOffset() {
 }
 
 // HScrollStatus reports the current horizontal scroll position as a
-// percentage, for the status bar's "< 40% >" indicator. ok is false when the
+// percentage, for the status bar's "◂ 40% ▸" indicator. ok is false when the
 // indicator should be hidden — no overflow to scroll, or nothing loaded.
 func (d *ResourceDetailPage) HScrollStatus() (percent int, ok bool) {
 	maxOffset := d.rawLineWidth - d.viewport.Width()
@@ -165,12 +165,12 @@ func (d *ResourceDetailPage) Header(width int) string {
 	if label == ": " {
 		label = "Detail"
 	}
-	full := title.Render(fmt.Sprintf("v %s", label)) + "  " +
-		hint.Render(fmt.Sprintf("(%s - up/down pgup/pgdn scroll, Home/End jump, Esc back, Ctrl+R return)", d.context))
+	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
+		hint.Render(fmt.Sprintf("(%s — ↑/↓ pgup/pgdn scroll, Home/End jump, Esc back, Ctrl+R return)", d.context))
 	if width <= 0 {
 		return full
 	}
-	return ansi.Truncate(full, width, "...")
+	return ansi.Truncate(full, width, "…")
 }
 
 func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
@@ -240,7 +240,7 @@ func (d *ResourceDetailPage) View() string {
 		return lipgloss.NewStyle().Foreground(p.Blue).Render(fmt.Sprintf("Loading detail for %s %s...", d.kind, d.name))
 	}
 	if d.errMsg != "" {
-		return lipgloss.NewStyle().Foreground(p.Red).Render(fmt.Sprintf("! %s", d.errMsg))
+		return lipgloss.NewStyle().Foreground(p.Red).Render(fmt.Sprintf("⚠ %s", d.errMsg))
 	}
 
 	return d.viewport.View()
@@ -251,7 +251,7 @@ func (d *ResourceDetailPage) render(detail k8s.ResourceDetail) string {
 	titleStyle := lipgloss.NewStyle().Foreground(p.Mauve).Bold(true)
 	labelStyle := lipgloss.NewStyle().Foreground(p.Subtext0)
 	sepStyle := lipgloss.NewStyle().Foreground(p.Overlay0)
-	sep := sepStyle.Render(strings.Repeat("-", 60))
+	sep := sepStyle.Render(strings.Repeat("─", 60))
 
 	var b strings.Builder
 
@@ -267,7 +267,7 @@ func (d *ResourceDetailPage) render(detail k8s.ResourceDetail) string {
 	fmt.Fprintln(&b, titleStyle.Render("Status"))
 	fmt.Fprintln(&b, sep)
 	if len(detail.Status) == 0 {
-		fmt.Fprintln(&b, "-")
+		fmt.Fprintln(&b, "—")
 	}
 	for _, s := range detail.Status {
 		fmt.Fprintln(&b, s)

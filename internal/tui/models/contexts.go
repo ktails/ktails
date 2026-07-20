@@ -57,36 +57,32 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	var icon string
 	var iconColor, nameColor color.Color
 
-	// Icons are plain ASCII: Unicode symbols like ✗/✓/◉/○ carry an
-	// "Ambiguous" East Asian Width, so terminals that treat them as
-	// double-width (e.g. Ghostty's default grapheme-width-method = unicode)
-	// disagree with lipgloss's width accounting and drift the layout.
 	switch {
 	case ctx.IsLoading:
-		icon = "."
+		icon = "⏳"
 		iconColor = p.Blue
 		nameColor = p.Blue
 	case ctx.IsError:
-		icon = "x"
+		icon = "✗"
 		iconColor = p.Red
 		nameColor = p.Maroon
 	case ctx.IsLoaded:
-		icon = "+"
+		icon = "✓"
 		iconColor = p.Green
 		nameColor = p.Text
 	case ctx.Selected:
-		icon = "*"
+		icon = "◉"
 		iconColor = p.Mauve
 		nameColor = p.Lavender
 	default:
-		icon = "o"
+		icon = "○"
 		iconColor = p.Overlay1
 		nameColor = p.Subtext0
 	}
 
 	currentMark := ""
 	if ctx.IsCurrent {
-		currentMark = " " + lipgloss.NewStyle().Foreground(p.Yellow).Render("^")
+		currentMark = " " + lipgloss.NewStyle().Foreground(p.Yellow).Render("★")
 	}
 
 	ns := ctx.DefaultNamespace
@@ -95,12 +91,12 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	}
 	cluster := ctx.Cluster
 	if cluster == "" {
-		cluster = "-"
+		cluster = "—"
 	}
 
 	iconStr := lipgloss.NewStyle().Foreground(iconColor).Render(icon)
 	nameStr := lipgloss.NewStyle().Foreground(nameColor).Bold(ctx.IsLoaded || ctx.Selected).Render(ctx.Name)
-	descStr := lipgloss.NewStyle().Foreground(p.Overlay1).Render(ns + " - " + cluster)
+	descStr := lipgloss.NewStyle().Foreground(p.Overlay1).Render(ns + " · " + cluster)
 
 	titleContent := " " + iconStr + " " + nameStr + currentMark
 	descContent := "    " + descStr // indent to align under name
@@ -117,7 +113,7 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 			Background(p.Mauve).
 			Foreground(p.Base).
 			Width(paneWidth).
-			Render("    " + ns + " - " + cluster)
+			Render("    " + ns + " · " + cluster)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
 	} else {
 		titleLine := lipgloss.NewStyle().Width(paneWidth).Render(titleContent)
