@@ -28,16 +28,19 @@ type DeploymentPage struct {
 	wideColCount int
 	scrollable   bool
 
-	// cursorIdx/windowStart: see the identical fields on PodPage in pods.go.
+	// cursorIdx/windowStart/windowSize: see the identical fields on PodPage
+	// in pods.go.
 	cursorIdx   int
 	windowStart int
+	windowSize  int
 }
 
 func NewDeploymentPage(client *k8s.Client) *DeploymentPage {
 	return &DeploymentPage{
-		Client:    client,
-		table:     newBubbleTable(deploymentNarrowColumns()),
-		viewDirty: true,
+		Client:     client,
+		table:      newBubbleTable(deploymentNarrowColumns()),
+		viewDirty:  true,
+		windowSize: defaultRowWindowSize,
 	}
 }
 
@@ -78,7 +81,7 @@ func (d *DeploymentPage) moveCursor(delta int) {
 		d.cursorIdx = 0
 	}
 
-	d.windowStart = computeWindowStart(d.windowStart, d.cursorIdx, len(d.rows))
+	d.windowStart = computeWindowStart(d.windowStart, d.cursorIdx, len(d.rows), d.windowSize)
 	d.pushDisplayRows()
 	d.invalidateView()
 }
@@ -93,7 +96,7 @@ func (d *DeploymentPage) SetRows(rows []msgs.RowData) {
 	if d.cursorIdx >= len(d.rows) {
 		d.cursorIdx = max(len(d.rows)-1, 0)
 	}
-	d.windowStart = computeWindowStart(d.windowStart, d.cursorIdx, len(d.rows))
+	d.windowStart = computeWindowStart(d.windowStart, d.cursorIdx, len(d.rows), d.windowSize)
 	d.applyColumns()
 	d.pushDisplayRows()
 	if d.focused {
@@ -109,7 +112,7 @@ func (d *DeploymentPage) SetRows(rows []msgs.RowData) {
 // replica cell via StyledCell to reflect deployment health. Called whenever
 // raw rows or the cursor/window change.
 func (d *DeploymentPage) pushDisplayRows() {
-	start, end := windowBounds(d.windowStart, len(d.rows))
+	start, end := windowBounds(d.windowStart, len(d.rows), d.windowSize)
 	display := make([]btable.Row, 0, end-start)
 	for _, row := range d.rows[start:end] {
 		display = append(display, btable.NewRow(btable.RowData{
@@ -225,7 +228,8 @@ func (d *DeploymentPage) SetSize(w, h int) {
 		Focused(d.focused)
 	d.wideColCount = len(deploymentNarrowColumns())
 	d.scrollable = false
-	d.windowStart = computeWindowStart(d.windowStart, d.cursorIdx, len(d.rows))
+	d.windowSize = rowWindowSizeFor(h)
+	d.windowStart = computeWindowStart(d.windowStart, d.cursorIdx, len(d.rows), d.windowSize)
 	d.pushDisplayRows()
 	d.invalidateView()
 }

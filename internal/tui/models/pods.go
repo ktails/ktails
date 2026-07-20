@@ -34,10 +34,11 @@ type PodPage struct {
 
 	// cursorIdx is the absolute index into p.rows the user has selected.
 	// bubble-table's own highlighted-row index is relative to the windowed
-	// slice handed to it (see windowStart/rowWindowSize in table.go), so it
+	// slice handed to it (see windowStart/windowSize in table.go), so it
 	// can't be used directly once more rows are loaded than fit in a window.
 	cursorIdx   int
 	windowStart int
+	windowSize  int
 }
 
 func NewPodPageModel(client *k8s.Client) *PodPage {
@@ -45,6 +46,7 @@ func NewPodPageModel(client *k8s.Client) *PodPage {
 		Client:      client,
 		viewDirty:   true,
 		checkedPods: make(map[string]bool),
+		windowSize:  defaultRowWindowSize,
 	}
 	p.table = newBubbleTable(podNarrowColumns())
 	return p
@@ -105,7 +107,7 @@ func (p *PodPage) moveCursor(delta int) {
 		p.cursorIdx = 0
 	}
 
-	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows))
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows), p.windowSize)
 	p.pushDisplayRows()
 	p.invalidateView()
 }
@@ -120,7 +122,7 @@ func (p *PodPage) SetRows(rows []msgs.RowData) {
 	if p.cursorIdx >= len(p.rows) {
 		p.cursorIdx = max(len(p.rows)-1, 0)
 	}
-	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows))
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows), p.windowSize)
 	p.applyColumns()
 	p.pushDisplayRows()
 
@@ -138,7 +140,7 @@ func (p *PodPage) SetRows(rows []msgs.RowData) {
 // coloring Status by phase via StyledCell. Called whenever raw rows, check
 // state, or the cursor/window change.
 func (p *PodPage) pushDisplayRows() {
-	start, end := windowBounds(p.windowStart, len(p.rows))
+	start, end := windowBounds(p.windowStart, len(p.rows), p.windowSize)
 	display := make([]btable.Row, 0, end-start)
 	for _, row := range p.rows[start:end] {
 		// Plain ASCII (see styles.ASCIIBorder for why): ☐/☑ carry an
@@ -318,7 +320,8 @@ func (p *PodPage) SetSize(w, h int) {
 		Focused(p.Focused)
 	p.wideColCount = len(podNarrowColumns())
 	p.scrollable = false
-	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows))
+	p.windowSize = rowWindowSizeFor(h)
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows), p.windowSize)
 	p.pushDisplayRows()
 	p.invalidateView()
 }

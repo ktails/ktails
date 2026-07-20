@@ -83,10 +83,12 @@ func TestPodPageCursorPreservedAcrossRefresh(t *testing.T) {
 // TestPodPageLargeRowSetIsWindowed guards against the perf/clipping bug on
 // real clusters with thousands of pods: WithNoPagination makes bubble-table
 // render every row it's given on every frame (see VisibleIndices in
-// bubble-table's pagination.go), so PodPage must only ever hand it a bounded
-// window (see rowWindowSize in table.go) regardless of how many rows are
-// loaded, and must keep the cursor tracking the right row as it scrolls past
-// a window edge.
+// bubble-table's pagination.go), so PodPage must only ever hand it a window
+// sized to the pane's actual visible height (see rowWindowSizeFor in
+// table.go) regardless of how many rows are loaded — a window bigger than
+// the pane overflows it exactly like the unbounded case, just less
+// severely — and must keep the cursor tracking the right row as it scrolls
+// past a window edge.
 func TestPodPageLargeRowSetIsWindowed(t *testing.T) {
 	p := NewPodPageModel(nil)
 	p.SetSize(60, 20)
@@ -94,20 +96,21 @@ func TestPodPageLargeRowSetIsWindowed(t *testing.T) {
 	rows := samplePodRows(2000)
 	p.SetRows(rows)
 
-	if got := len(p.table.GetVisibleRows()); got > rowWindowSize {
-		t.Fatalf("expected bubble-table to hold at most %d rows, got %d", rowWindowSize, got)
+	wantWindow := rowWindowSizeFor(20)
+	if got := len(p.table.GetVisibleRows()); got > wantWindow {
+		t.Fatalf("expected bubble-table to hold at most %d rows (pane height 20), got %d", wantWindow, got)
 	}
 
 	// Walk the cursor past the first window's edge and confirm both the
 	// selected row and the table's own highlighted row stay in sync with it.
-	for i := 0; i < rowWindowSize; i++ {
+	for i := 0; i < wantWindow; i++ {
 		p.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[rowWindowSize][msgs.PodKeyName] {
-		t.Fatalf("expected cursor at row %d after scrolling past window edge, got %v", rowWindowSize, row)
+	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[wantWindow][msgs.PodKeyName] {
+		t.Fatalf("expected cursor at row %d after scrolling past window edge, got %v", wantWindow, row)
 	}
-	if got := len(p.table.GetVisibleRows()); got > rowWindowSize {
-		t.Fatalf("expected window to stay bounded at %d rows after scrolling, got %d", rowWindowSize, got)
+	if got := len(p.table.GetVisibleRows()); got > wantWindow {
+		t.Fatalf("expected window to stay bounded at %d rows after scrolling, got %d", wantWindow, got)
 	}
 	wantHighlighted := p.cursorIdx - p.windowStart
 	if got := p.table.GetHighlightedRowIndex(); got != wantHighlighted {

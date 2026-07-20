@@ -24,16 +24,19 @@ type ServicePage struct {
 	wideColCount int
 	scrollable   bool
 
-	// cursorIdx/windowStart: see the identical fields on PodPage in pods.go.
+	// cursorIdx/windowStart/windowSize: see the identical fields on PodPage
+	// in pods.go.
 	cursorIdx   int
 	windowStart int
+	windowSize  int
 }
 
 func NewServicePageModel(client *k8s.Client) *ServicePage {
 	return &ServicePage{
-		Client:    client,
-		table:     newBubbleTable(svcNarrowColumns()),
-		viewDirty: true,
+		Client:     client,
+		table:      newBubbleTable(svcNarrowColumns()),
+		viewDirty:  true,
+		windowSize: defaultRowWindowSize,
 	}
 }
 
@@ -74,7 +77,7 @@ func (s *ServicePage) moveCursor(delta int) {
 		s.cursorIdx = 0
 	}
 
-	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows))
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows), s.windowSize)
 	s.pushDisplayRows()
 	s.invalidateView()
 }
@@ -89,7 +92,7 @@ func (s *ServicePage) SetRows(rows []msgs.RowData) {
 	if s.cursorIdx >= len(s.rows) {
 		s.cursorIdx = max(len(s.rows)-1, 0)
 	}
-	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows))
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows), s.windowSize)
 	s.applyColumns()
 	s.pushDisplayRows()
 
@@ -106,7 +109,7 @@ func (s *ServicePage) SetRows(rows []msgs.RowData) {
 // (see windowBounds in table.go) into s.rows. Called whenever raw rows or
 // the cursor/window change.
 func (s *ServicePage) pushDisplayRows() {
-	start, end := windowBounds(s.windowStart, len(s.rows))
+	start, end := windowBounds(s.windowStart, len(s.rows), s.windowSize)
 	display := make([]btable.Row, 0, end-start)
 	for _, row := range s.rows[start:end] {
 		display = append(display, btable.NewRow(btable.RowData{
@@ -223,7 +226,8 @@ func (s *ServicePage) SetSize(w, h int) {
 		Focused(s.Focused)
 	s.wideColCount = len(svcNarrowColumns())
 	s.scrollable = false
-	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows))
+	s.windowSize = rowWindowSizeFor(h)
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows), s.windowSize)
 	s.pushDisplayRows()
 	s.invalidateView()
 }

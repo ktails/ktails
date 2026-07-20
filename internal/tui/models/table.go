@@ -20,57 +20,61 @@ func newBubbleTable(cols []btable.Column) btable.Model {
 	return btable.New(cols).WithNoPagination().Border(btable.Border{})
 }
 
-// rowWindowRadius/rowWindowSize bound how many rows a resource table ever
-// hands to bubble-table at once. With WithNoPagination, bubble-table's
-// VisibleIndices() always returns the *entire* row set — every row is
-// re-styled into the rendered string on every keypress and refresh tick, and
-// the result overflows the fixed-height pane it's rendered into instead of
-// clipping to it. On a real cluster with thousands of pods that's both slow
-// and visibly broken (content pushes the rest of the layout off-screen).
-//
-// Rather than switching to bubble-table's own discrete pagination (which
-// would replace continuous cursor movement with page turns), each resource
-// page keeps only a rowWindowSize-row slice of its full row set loaded into
-// the table, centered on the cursor, and slides that window via
-// computeWindowStart as the cursor approaches either edge.
-const (
-	rowWindowRadius = 75
-	rowWindowSize   = rowWindowRadius * 2
-)
+// defaultRowWindowSize is the row-window size used before a table has ever
+// had a real height (SetSize not yet called, or a degenerate height). It's
+// also roughly what a typical terminal pane ends up showing.
+const defaultRowWindowSize = 20
 
-// computeWindowStart returns the start index of the rowWindowSize-row window
-// that should be visible for the given absolute cursor position, reusing
-// prevStart unless the cursor has moved within rowWindowRadius rows of
-// either edge — so normal up/down scrolling only recenters occasionally
-// rather than on every keypress.
-func computeWindowStart(prevStart, cursor, total int) int {
-	if total <= rowWindowSize {
+// rowWindowSizeFor returns how many rows a resource table's window should
+// hold for a pane of height tableH. With WithNoPagination, bubble-table's
+// VisibleIndices() always renders the *entire* row set it's given — not just
+// whatever fits in WithMinimumHeight — so the window must be sized to what
+// actually fits on screen, not just to "small enough to be fast": any window
+// taller than the visible pane still overflows it and pushes the rest of the
+// layout (including the bottom status bar) off-screen, just less severely
+// than rendering every row would. tableH includes bubble-table's own header
+// line, hence the -1.
+func rowWindowSizeFor(tableH int) int {
+	size := tableH - 1
+	if size < 5 {
+		return defaultRowWindowSize
+	}
+	return size
+}
+
+// computeWindowStart returns the start index of the windowSize-row window
+// that should be visible for the given absolute cursor position. It scrolls
+// by the minimum amount needed to keep the cursor in view — the same
+// behavior as a normal scrolling list — rather than recentering, so the
+// window only ever holds exactly as many rows as the pane can show.
+func computeWindowStart(prevStart, cursor, total, windowSize int) int {
+	if total <= windowSize {
 		return 0
 	}
 
 	start := prevStart
-	if cursor < start+rowWindowRadius {
-		start = cursor - rowWindowRadius
-	} else if cursor > start+rowWindowSize-rowWindowRadius {
-		start = cursor - rowWindowSize + rowWindowRadius
+	if cursor < start {
+		start = cursor
+	} else if cursor >= start+windowSize {
+		start = cursor - windowSize + 1
 	}
 
 	if start < 0 {
 		start = 0
 	}
-	if start > total-rowWindowSize {
-		start = total - rowWindowSize
+	if start > total-windowSize {
+		start = total - windowSize
 	}
 	return start
 }
 
 // windowBounds returns the [start, end) slice bounds of the current window
-// into a total-length row set, given the window's start index.
-func windowBounds(start, total int) (int, int) {
-	if total <= rowWindowSize {
+// into a total-length row set, given the window's start index and size.
+func windowBounds(start, total, windowSize int) (int, int) {
+	if total <= windowSize {
 		return 0, total
 	}
-	end := start + rowWindowSize
+	end := start + windowSize
 	if end > total {
 		end = total
 	}
