@@ -14,7 +14,7 @@ that detail.
   IP/Pod IP; Deployments: Available/Updated/Strategy/Selector; Services:
   Selector/External IP/Endpoint IPs). Done, merged.
 - ⬜ **Track F** — Detail pane horizontal scroll. Not started.
-- ⬜ **Track G** — Log pane wrap toggle + horizontal scroll. Not started.
+- ✅ **Track G** — Log pane wrap toggle + horizontal scroll. Done, merged.
 
 F and G are independent of each other and of M/M2 (different files —
 `resourcedetail.go` and `podlogs.go` respectively) and can run in parallel
@@ -182,7 +182,21 @@ viewport it affects).
 Files: `internal/tui/models/resourcedetail.go`, `internal/pages/mainPage.go`
 (detail-focused key handling + status bar — different region than Track M/G).
 
-### Track G — Log pane wrap toggle + horizontal scroll
+### Track G — Log pane wrap toggle + horizontal scroll — ✅ done, merged
+
+Landed as scoped below. `w` (off by default) soft-wraps via
+`github.com/charmbracelet/x/ansi.Wrap`, operating on the already-colored,
+already-merged line text (`LogPage.rawLines`) so neither the source-prefix
+nor JSON-highlight colors need to be re-derived. Unwrapped horizontal scroll
+turned out to already be native to the vendored `bubbles/viewport`
+(`v0.21.0` ships `xOffset`/`ScrollLeft`/`ScrollRight`/
+`HorizontalScrollPercent`, cropping each visible line via the same
+`ansi.Cut` under the hood) — `Shift+Left`/`Shift+Right` call straight
+through to it rather than hand-rolling cropping. Wrap/scroll mutual
+exclusivity and the reset-on-resize/reset-on-wrap-on rules are enforced in
+`LogPage.ToggleWrap`/`SetSize`. See `internal/tui/models/podlogs_test.go`
+for the ANSI-survival tests (wrap reflow, horizontal crop) that back this.
+
 
 `todo.md`, Soft Wrap Toggle + Horizontal Scrolling's Log-pane half. `w` toggles
 soft wrap (off by default); mutually exclusive with horizontal scroll (wrap

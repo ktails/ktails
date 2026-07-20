@@ -195,8 +195,8 @@ Focus: Make it easy to find pods and filter logs in large clusters.
     position survives refresh/new log lines; resets on resize.
   - Status: ⚠️ Partial — library migration + tables (narrow/wide mode,
     including the wide-mode new-columns re-scope) ✅ done (Tracks M/M2, see
-    `plan-horizontal-scroll.md`); Detail & Log panes' horizontal scroll ❌
-    not started (Track F/G)
+    `plan-horizontal-scroll.md`); Log pane's horizontal scroll ✅ done
+    (Track G); Detail pane's horizontal scroll ❌ not started (Track F)
 
 ---
 
@@ -222,8 +222,9 @@ Focus: Advanced log viewing capabilities.
   - Wrapping must be ANSI-aware (reflow without breaking the per-source-prefix
     colors or the JSON highlighting already shipped) — the main technical
     risk in this item.
-  - Status: ❌ Not started — spec locked via grilling session, ready to
-    implement
+  - Status: ✅ Done (Track G, see `plan-horizontal-scroll.md`) —
+    `github.com/charmbracelet/x/ansi.Wrap` reflows the already-colored line
+    text; `w` wired in `mainPage.go`'s `logsFocused` block next to `c`
 
 - [ ] **Log Export**
   - Press `e` to export current logs to file

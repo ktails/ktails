@@ -220,11 +220,16 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// While the log pane has keyboard focus, it captures everything except
-		// 'c', which MainPage intercepts to isolate/return-to-merged a single
-		// source — a pure view toggle, no stream side effects.
+		// 'c' and 'w', which MainPage intercepts directly — both are pure view
+		// toggles with no stream side effects (isolate/return-to-merged a
+		// single source, and soft-wrap on/off).
 		if m.logsFocused {
-			if keypress == "c" {
+			switch keypress {
+			case "c":
 				m.podLogs.CycleIsolation()
+				return m, nil
+			case "w":
+				m.podLogs.ToggleWrap()
 				return m, nil
 			}
 			cmd := m.podLogs.Update(msg)
@@ -1167,6 +1172,11 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	if t := m.activeResourceTable(); t != nil {
 		if offset, total, ok := t.ScrollStatus(); ok {
 			statusBits = append(statusBits, fmt.Sprintf("◂ col %d/%d ▸", offset, total))
+		}
+	}
+	if m.showLogs {
+		if percent, ok := m.podLogs.ScrollStatus(); ok {
+			statusBits = append(statusBits, fmt.Sprintf("◂ %d%% ▸", percent))
 		}
 	}
 	if len(statusBits) == 0 {

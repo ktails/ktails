@@ -217,6 +217,24 @@ type LogPage struct {
 	isolatedIdx int
 
 	focused bool
+
+	// wrap toggles soft-wrap of rawLines. Off by default (no behavior change
+	// for existing users on their first log view), and mutually exclusive
+	// with horizontal scroll: wrapping reflows lines to fit the viewport, so
+	// there's nothing left to scroll to. This is a single in-memory flag on
+	// this one long-lived LogPage instance — it persists across different
+	// pods/log views for the process's lifetime, but is never written to
+	// disk (no config-file I/O exists in this codebase yet).
+	wrap bool
+
+	// rawLines is the last computed set of already-colored, unwrapped lines
+	// (source-prefixed and JSON-highlighted) backing the viewport's content.
+	// Kept around so toggling wrap, or resizing, can re-derive the viewport
+	// content without re-running the merge/highlight pipeline. maxLineWidth
+	// is its longest line's on-screen width, cached alongside it so the
+	// horizontal-scroll status indicator doesn't rescan every render.
+	rawLines     []string
+	maxLineWidth int
 }
 
 func NewLogPage() *LogPage {
@@ -371,39 +389,94 @@ func (l *LogPage) SetStreamEnded(key string, err error) {
 	l.appendTo(src, banner)
 }
 
-// refreshContent rebuilds the viewport's content from either the isolated
-// source or a chronological merge of every source's buffer (interleaved by
-// global arrival sequence — each source's own lines are already
-// seq-ordered, so this is a straightforward merge-and-sort over a bounded
-// number of lines).
+// refreshContent rebuilds rawLines from either the isolated source or a
+// chronological merge of every source's buffer (interleaved by global
+// arrival sequence — each source's own lines are already seq-ordered, so
+// this is a straightforward merge-and-sort over a bounded number of lines),
+// then hands the result to applyContent to become the viewport's content.
 func (l *LogPage) refreshContent() {
 	p := styles.CatppuccinMocha()
 
+	var rendered []string
 	if l.isolatedIdx >= 0 && l.isolatedIdx < len(l.order) {
 		src := l.sources[l.order[l.isolatedIdx]]
-		rendered := make([]string, len(src.lines))
+		rendered = make([]string, len(src.lines))
 		for i, ln := range src.lines {
 			rendered[i] = highlightJSONLine(ln.text, p)
 		}
-		l.viewport.SetContent(strings.Join(rendered, "\n"))
+	} else {
+		var all []logLine
+		for _, key := range l.order {
+			src := l.sources[key]
+			prefix := lipgloss.NewStyle().Foreground(src.color).Bold(true).Render(src.label() + " |")
+			for _, ln := range src.lines {
+				all = append(all, logLine{seq: ln.seq, text: prefix + " " + highlightJSONLine(ln.text, p)})
+			}
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i].seq < all[j].seq })
+
+		rendered = make([]string, len(all))
+		for i, ln := range all {
+			rendered[i] = ln.text
+		}
+	}
+
+	l.rawLines = rendered
+	l.maxLineWidth = 0
+	for _, s := range rendered {
+		if w := ansi.StringWidth(s); w > l.maxLineWidth {
+			l.maxLineWidth = w
+		}
+	}
+	l.applyContent()
+}
+
+// applyContent renders rawLines into the viewport for the current wrap
+// state. Both paths reflow/crop the already-colored line text rather than
+// re-deriving colors, so the per-source-prefix and JSON-highlighting colors
+// survive intact: unwrapped, the lines are handed to the viewport as-is and
+// its own xOffset-based cropping (github.com/charmbracelet/x/ansi.Cut under
+// the hood) handles horizontal scroll ANSI-aware at render time; wrapped,
+// ansi.Wrap reflows each line to the viewport width, preserving ANSI escape
+// sequences and only ever splitting on grapheme boundaries.
+func (l *LogPage) applyContent() {
+	if !l.wrap || l.viewport.Width < 1 {
+		l.viewport.SetContent(strings.Join(l.rawLines, "\n"))
 		return
 	}
 
-	var all []logLine
-	for _, key := range l.order {
-		src := l.sources[key]
-		prefix := lipgloss.NewStyle().Foreground(src.color).Bold(true).Render(src.label() + " |")
-		for _, ln := range src.lines {
-			all = append(all, logLine{seq: ln.seq, text: prefix + " " + highlightJSONLine(ln.text, p)})
-		}
+	wrapped := make([]string, len(l.rawLines))
+	for i, s := range l.rawLines {
+		wrapped[i] = ansi.Wrap(s, l.viewport.Width, "")
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].seq < all[j].seq })
+	l.viewport.SetContent(strings.Join(wrapped, "\n"))
+}
 
-	rendered := make([]string, len(all))
-	for i, ln := range all {
-		rendered[i] = ln.text
+// ToggleWrap flips soft-wrap on/off. Wrap and horizontal scroll are
+// mutually exclusive, so turning wrap on resets the scroll position back to
+// the left edge — wrapped lines reflow to fit, leaving nothing to scroll to.
+func (l *LogPage) ToggleWrap() {
+	l.wrap = !l.wrap
+	if l.wrap {
+		l.viewport.SetXOffset(0)
 	}
-	l.viewport.SetContent(strings.Join(rendered, "\n"))
+	l.applyContent()
+}
+
+// Wrap reports whether soft-wrap is currently enabled.
+func (l *LogPage) Wrap() bool {
+	return l.wrap
+}
+
+// ScrollStatus reports the current horizontal scroll position as a
+// percentage, for the status bar's "◂ N% ▸" indicator. ok is false while
+// wrapped (nothing to scroll) or when no line overflows the viewport width
+// (nothing to scroll to).
+func (l *LogPage) ScrollStatus() (percent int, ok bool) {
+	if l.wrap || l.maxLineWidth <= l.viewport.Width {
+		return 0, false
+	}
+	return int(l.viewport.HorizontalScrollPercent() * 100), true
 }
 
 // Header renders a one-line banner summarizing the merged sources (or the
@@ -420,9 +493,12 @@ func (l *LogPage) Header(width int) string {
 	case len(l.order) > 0:
 		label = fmt.Sprintf("Merged: %d source(s)", len(l.order))
 	}
+	if l.wrap {
+		label += "  [wrap]"
+	}
 
 	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
-		hint.Render("(c: isolate/merge, ↑/↓ pgup/pgdn scroll, End: jump+follow, Esc back)")
+		hint.Render("(c: isolate/merge, w: wrap, ↑/↓ pgup/pgdn scroll, ⇧←/⇧→: pan, End: jump+follow, Esc back)")
 	if width <= 0 {
 		return full
 	}
@@ -438,6 +514,16 @@ func (l *LogPage) Update(msg tea.Msg) tea.Cmd {
 		case "end", "G":
 			l.viewport.GotoBottom()
 			return nil
+		case "shift+left":
+			if !l.wrap {
+				l.viewport.ScrollLeft(halfViewportStep(l.viewport.Width))
+			}
+			return nil
+		case "shift+right":
+			if !l.wrap {
+				l.viewport.ScrollRight(halfViewportStep(l.viewport.Width))
+			}
+			return nil
 		}
 	}
 
@@ -446,12 +532,32 @@ func (l *LogPage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+// halfViewportStep is the Shift+Left/Shift+Right scroll distance: half the
+// viewport's current width, so it adapts to terminal size.
+func halfViewportStep(width int) int {
+	if step := width / 2; step > 0 {
+		return step
+	}
+	return 1
+}
+
+// SetSize resizes the viewport. Horizontal scroll resets to the left edge
+// on an actual size change (there's nothing meaningful to preserve once the
+// overflow that produced it has changed shape); wrapped content is re-flowed
+// to the new width so it keeps fitting exactly.
 func (l *LogPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
+	resized := w != l.viewport.Width || h != l.viewport.Height
 	l.viewport.Width = w
 	l.viewport.Height = h
+	if resized {
+		l.viewport.SetXOffset(0)
+		if l.wrap {
+			l.applyContent()
+		}
+	}
 }
 
 func (l *LogPage) SetFocused(f bool) {
