@@ -118,6 +118,103 @@ func TestPodPageLargeRowSetIsWindowed(t *testing.T) {
 	}
 }
 
+// TestPodPageJumpToEndOnLargeRowSet covers Shift+G ("G") jumping straight to
+// the last row of a large row set (e.g. a 2000-pod cluster) without ever
+// needing the full set rendered: p.rows always holds every row (see SetRows),
+// only the window handed to bubble-table is bounded, so a jump is just a
+// window recompute — the last window's worth of rows, with the cursor
+// pinned to the final one.
+func TestPodPageJumpToEndOnLargeRowSet(t *testing.T) {
+	p := NewPodPageModel(nil)
+	p.SetSize(60, 20)
+	p.SetFocused(true)
+	rows := samplePodRows(2000)
+	p.SetRows(rows)
+
+	p.Update(tea.KeyPressMsg{Code: 'G'})
+
+	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[len(rows)-1][msgs.PodKeyName] {
+		t.Fatalf("expected cursor at last row after G, got %v", row)
+	}
+	wantWindow := rowWindowSizeFor(20)
+	if got := len(p.table.GetVisibleRows()); got > wantWindow {
+		t.Fatalf("expected window to stay bounded at %d rows after jumping to end, got %d", wantWindow, got)
+	}
+	wantHighlighted := p.cursorIdx - p.windowStart
+	if got := p.table.GetHighlightedRowIndex(); got != wantHighlighted {
+		t.Fatalf("expected table highlighted row %d, got %d", wantHighlighted, got)
+	}
+
+	// "g"/Home takes it straight back to the first row.
+	p.Update(tea.KeyPressMsg{Code: 'g'})
+	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[0][msgs.PodKeyName] {
+		t.Fatalf("expected cursor at first row after g, got %v", row)
+	}
+	if p.windowStart != 0 {
+		t.Fatalf("expected window start at 0 after jumping to top, got %d", p.windowStart)
+	}
+}
+
+// typeText feeds each rune of s to p as individual printable keypresses,
+// the way bubbletea reports typed characters (Key.Text non-empty).
+func typeText(p *PodPage, s string) {
+	for _, r := range s {
+		p.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+}
+
+// TestPodPageFilterSearchesFullRowSetNotJustWindow guards against the bug
+// found while checking k9s's "/" filter for inspiration: bubble-table's own
+// built-in filter only ever searches whatever was last passed to WithRows,
+// which — now that tables hand it a bounded window instead of every row
+// (see rowWindowSizeFor) — would silently search only whatever's on screen.
+// The row-level rowFilter here must find a match anywhere in the full row
+// set regardless of where the window currently sits.
+func TestPodPageFilterSearchesFullRowSetNotJustWindow(t *testing.T) {
+	p := NewPodPageModel(nil)
+	p.SetSize(60, 20)
+	p.SetFocused(true)
+	rows := samplePodRows(2000)
+	rows[1500][msgs.PodKeyName] = "special-unique-pod-xyz"
+	p.SetRows(rows)
+
+	// Cursor/window start out at row 0 — nowhere near row 1500.
+	if p.windowStart != 0 {
+		t.Fatalf("expected window to start at 0 before filtering, got %d", p.windowStart)
+	}
+
+	p.Update(tea.KeyPressMsg{Code: '/'})
+	typeText(p, "special-unique")
+
+	query, matches, typing, ok := p.FilterStatus()
+	if !ok || query != "special-unique" || matches != 1 || !typing {
+		t.Fatalf("expected FilterStatus query=%q matches=1 typing=true, got query=%q matches=%d typing=%v ok=%v",
+			"special-unique", query, matches, typing, ok)
+	}
+
+	row := p.SelectedRow()
+	if row == nil || row[msgs.PodKeyName] != "special-unique-pod-xyz" {
+		t.Fatalf("expected cursor on the matched row, got %v", row)
+	}
+
+	// Committing with Enter should keep the filter (and the match) active.
+	p.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if _, matches, typing, ok := p.FilterStatus(); !ok || matches != 1 || typing {
+		t.Fatalf("expected filter to stay committed after Enter, got matches=%d typing=%v ok=%v", matches, typing, ok)
+	}
+
+	// Esc should clear the filter entirely, restoring the full row set.
+	p.Update(tea.KeyPressMsg{Code: '/'})
+	typeText(p, "special-unique")
+	p.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if _, _, _, ok := p.FilterStatus(); ok {
+		t.Fatalf("expected filter cleared after Esc, but FilterStatus still reports active")
+	}
+	if got := p.activeLen(); got != len(rows) {
+		t.Fatalf("expected full row set restored after clearing filter, got %d rows", got)
+	}
+}
+
 func TestPodPageScrollPersistsAcrossRefreshResetsOnResize(t *testing.T) {
 	p := NewPodPageModel(nil)
 	p.SetSize(30, 20)

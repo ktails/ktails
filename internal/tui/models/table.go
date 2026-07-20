@@ -5,11 +5,93 @@ import (
 	"strconv"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
 )
+
+// rowFilter implements a k9s-style "/" full-list substring filter shared by
+// the Pods/Deployments/svc tables. bubble-table has its own built-in "/"
+// filter, but it only ever searches whatever was last passed to WithRows —
+// which, since these tables now hand it a bounded window rather than every
+// row (see rowWindowSizeFor), would silently search only the rows currently
+// on screen. rowFilter instead tracks match *positions* into the owning
+// table's full row set, so filtering and the window/cursor machinery both
+// operate over the same "active index space": every row when no filter is
+// active, or just the matches when one is.
+type rowFilter struct {
+	query     string
+	filtering bool
+	matches   []int
+}
+
+// active reports whether a filter is currently narrowing the row set, either
+// mid-edit or already committed with Enter.
+func (f *rowFilter) active() bool {
+	return f.query != ""
+}
+
+// recompute rebuilds f.matches by scanning row positions [0,total) with
+// matchFn, called whenever the query or the underlying row set changes.
+func (f *rowFilter) recompute(total int, matchFn func(i int) bool) {
+	if f.query == "" {
+		f.matches = nil
+		return
+	}
+	f.matches = f.matches[:0]
+	for i := 0; i < total; i++ {
+		if matchFn(i) {
+			f.matches = append(f.matches, i)
+		}
+	}
+}
+
+// len returns how many rows are currently selectable: the full row count
+// when no filter is active, or the match count otherwise.
+func (f *rowFilter) len(total int) int {
+	if !f.active() {
+		return total
+	}
+	return len(f.matches)
+}
+
+// absolute maps a position in the active index space back to an absolute
+// row index.
+func (f *rowFilter) absolute(pos int) int {
+	if !f.active() {
+		return pos
+	}
+	return f.matches[pos]
+}
+
+// handleKey processes one keypress while filter-typing mode is on,
+// mutating the query (and re-running matchFn) as needed. Enter commits the
+// query and exits typing mode without changing it further; Esc clears the
+// query entirely and exits typing mode; Backspace/printable text edit the
+// query live.
+func (f *rowFilter) handleKey(key tea.KeyPressMsg, total int, matchFn func(i int) bool) {
+	switch key.String() {
+	case "enter":
+		f.filtering = false
+	case "esc":
+		f.filtering = false
+		f.query = ""
+		f.recompute(total, matchFn)
+	case "backspace":
+		if f.query != "" {
+			r := []rune(f.query)
+			f.query = string(r[:len(r)-1])
+			f.recompute(total, matchFn)
+		}
+	default:
+		if key.Text != "" {
+			f.query += key.Text
+			f.recompute(total, matchFn)
+		}
+	}
+}
 
 // newBubbleTable builds a bubble-table Model with the options common to
 // every resource table: no pagination (the spec keeps today's continuous

@@ -1,6 +1,8 @@
 package models
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/k8s"
@@ -24,8 +26,13 @@ type ServicePage struct {
 	wideColCount int
 	scrollable   bool
 
+	// filter is a k9s-style "/" filter over the Name column — see rowFilter
+	// in table.go for why this exists instead of bubble-table's own filter.
+	filter rowFilter
+
 	// cursorIdx/windowStart/windowSize: see the identical fields on PodPage
-	// in pods.go.
+	// in pods.go. cursorIdx is a position in the active index space (see
+	// activeLen/activeRow), not a raw index into s.rows.
 	cursorIdx   int
 	windowStart int
 	windowSize  int
@@ -47,12 +54,26 @@ func (s *ServicePage) Init() tea.Cmd {
 func (s *ServicePage) Update(msg tea.Msg) tea.Cmd {
 	if s.Focused {
 		if key, ok := msg.(tea.KeyPressMsg); ok {
+			if s.filter.filtering {
+				s.filter.handleKey(key, len(s.rows), s.filterMatch)
+				s.afterFilterChange()
+				return nil
+			}
 			switch key.String() {
 			case "down", "j":
 				s.moveCursor(1)
 				return nil
 			case "up", "k":
 				s.moveCursor(-1)
+				return nil
+			case "home", "g":
+				s.jumpTo(0)
+				return nil
+			case "end", "G":
+				s.jumpTo(s.activeLen() - 1)
+				return nil
+			case "/":
+				s.filter.filtering = true
 				return nil
 			}
 		}
@@ -64,20 +85,71 @@ func (s *ServicePage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+// filterMatch is the rowFilter matchFn for Services: a case-insensitive
+// substring match against the Name column.
+func (s *ServicePage) filterMatch(i int) bool {
+	name, _ := s.rows[i][msgs.SvcKeyName].(string)
+	return strings.Contains(strings.ToLower(name), strings.ToLower(s.filter.query))
+}
+
+// afterFilterChange: see PodPage.afterFilterChange in pods.go.
+func (s *ServicePage) afterFilterChange() {
+	s.cursorIdx = 0
+	s.windowStart = computeWindowStart(0, s.cursorIdx, s.activeLen(), s.windowSize)
+	s.pushDisplayRows()
+	s.invalidateView()
+}
+
+// activeLen/activeRow: see PodPage in pods.go.
+func (s *ServicePage) activeLen() int {
+	return s.filter.len(len(s.rows))
+}
+
+func (s *ServicePage) activeRow(pos int) msgs.RowData {
+	return s.rows[s.filter.absolute(pos)]
+}
+
+// FilterStatus: see PodPage.FilterStatus in pods.go.
+func (s *ServicePage) FilterStatus() (query string, matches int, typing bool, ok bool) {
+	if !s.filter.filtering && s.filter.query == "" {
+		return "", 0, false, false
+	}
+	return s.filter.query, s.activeLen(), s.filter.filtering, true
+}
+
 // moveCursor: see PodPage.moveCursor in pods.go.
 func (s *ServicePage) moveCursor(delta int) {
-	if len(s.rows) == 0 {
+	total := s.activeLen()
+	if total == 0 {
 		return
 	}
 
 	s.cursorIdx += delta
 	if s.cursorIdx < 0 {
-		s.cursorIdx = len(s.rows) - 1
-	} else if s.cursorIdx >= len(s.rows) {
+		s.cursorIdx = total - 1
+	} else if s.cursorIdx >= total {
 		s.cursorIdx = 0
 	}
 
-	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows), s.windowSize)
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, total, s.windowSize)
+	s.pushDisplayRows()
+	s.invalidateView()
+}
+
+// jumpTo: see PodPage.jumpTo in pods.go.
+func (s *ServicePage) jumpTo(idx int) {
+	total := s.activeLen()
+	if total == 0 {
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	} else if idx >= total {
+		idx = total - 1
+	}
+
+	s.cursorIdx = idx
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, total, s.windowSize)
 	s.pushDisplayRows()
 	s.invalidateView()
 }
@@ -89,10 +161,11 @@ func (s *ServicePage) SetRows(rows []msgs.RowData) {
 
 	s.rows = cloneRows(rows)
 	s.rowsSet = true
-	if s.cursorIdx >= len(s.rows) {
-		s.cursorIdx = max(len(s.rows)-1, 0)
+	s.filter.recompute(len(s.rows), s.filterMatch)
+	if s.cursorIdx >= s.activeLen() {
+		s.cursorIdx = max(s.activeLen()-1, 0)
 	}
-	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows), s.windowSize)
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, s.activeLen(), s.windowSize)
 	s.applyColumns()
 	s.pushDisplayRows()
 
@@ -106,12 +179,15 @@ func (s *ServicePage) SetRows(rows []msgs.RowData) {
 }
 
 // pushDisplayRows rebuilds the table's rows from the current row window
-// (see windowBounds in table.go) into s.rows. Called whenever raw rows or
-// the cursor/window change.
+// (see windowBounds in table.go) into the active index space (s.rows
+// directly, or the filtered subset — see activeRow). Called whenever raw
+// rows, the filter, or the cursor/window change.
 func (s *ServicePage) pushDisplayRows() {
-	start, end := windowBounds(s.windowStart, len(s.rows), s.windowSize)
+	total := s.activeLen()
+	start, end := windowBounds(s.windowStart, total, s.windowSize)
 	display := make([]btable.Row, 0, end-start)
-	for _, row := range s.rows[start:end] {
+	for i := start; i < end; i++ {
+		row := s.activeRow(i)
 		display = append(display, btable.NewRow(btable.RowData{
 			msgs.SvcKeyName:        row[msgs.SvcKeyName],
 			msgs.SvcKeyNamespace:   row[msgs.SvcKeyNamespace],
@@ -185,10 +261,10 @@ func (s *ServicePage) ScrollRight() {
 // SelectedRow returns the raw (un-prefixed) row currently under the cursor,
 // or nil if there are no rows.
 func (s *ServicePage) SelectedRow() msgs.RowData {
-	if s.cursorIdx < 0 || s.cursorIdx >= len(s.rows) {
+	if s.cursorIdx < 0 || s.cursorIdx >= s.activeLen() {
 		return nil
 	}
-	return s.rows[s.cursorIdx]
+	return s.activeRow(s.cursorIdx)
 }
 
 func (s *ServicePage) SetFocused(f bool) {
@@ -227,7 +303,7 @@ func (s *ServicePage) SetSize(w, h int) {
 	s.wideColCount = len(svcNarrowColumns())
 	s.scrollable = false
 	s.windowSize = rowWindowSizeFor(h)
-	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, len(s.rows), s.windowSize)
+	s.windowStart = computeWindowStart(s.windowStart, s.cursorIdx, s.activeLen(), s.windowSize)
 	s.pushDisplayRows()
 	s.invalidateView()
 }

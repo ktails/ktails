@@ -168,6 +168,26 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// While a resource table is actively capturing filter text (see
+		// rowFilter in models/table.go), every keypress must reach it
+		// untouched — otherwise single-letter global shortcuts like "r"
+		// (refresh) or "l" (open logs) below would get swallowed into a
+		// command instead of becoming part of the filter query.
+		if m.focus == focusTabs && !m.detailFocused && !m.logsFocused {
+			if t := m.activeResourceTable(); t != nil {
+				if _, _, typing, ok := t.FilterStatus(); ok && typing {
+					switch m.tabs[m.activeTab] {
+					case "Deployments":
+						return m, m.deploymentList.Update(msg)
+					case "Pods":
+						return m, m.podList.Update(msg)
+					case "svc":
+						return m, m.svcList.Update(msg)
+					}
+				}
+			}
+		}
+
 		// Global keys
 		switch keypress {
 		case "ctrl+c", "q":
@@ -735,14 +755,16 @@ func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
 }
 
 // wideModeTable is implemented identically by DeploymentPage/PodPage/
-// ServicePage — the Ctrl+W wide-mode toggle and Shift+Left/Right column
-// scroll operate on whichever of the three is the active tab.
+// ServicePage — the Ctrl+W wide-mode toggle, Shift+Left/Right column scroll,
+// and the "/" filter status all operate on whichever of the three is the
+// active tab.
 type wideModeTable interface {
 	ToggleWideMode()
 	WideMode() bool
 	ScrollLeft()
 	ScrollRight()
 	ScrollStatus() (offset, total int, ok bool)
+	FilterStatus() (query string, matches int, typing bool, ok bool)
 }
 
 // activeResourceTable returns the active tab's table as a wideModeTable, or
@@ -1197,6 +1219,13 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 		if offset, total, ok := t.ScrollStatus(); ok {
 			statusBits = append(statusBits, fmt.Sprintf("< col %d/%d >", offset, total))
 		}
+		if query, matches, typing, ok := t.FilterStatus(); ok {
+			cursor := ""
+			if typing {
+				cursor = "_"
+			}
+			statusBits = append(statusBits, fmt.Sprintf("/%s%s (%d match(es))", query, cursor, matches))
+		}
 	}
 	if m.showDetail {
 		if percent, ok := m.deploymentDetail.HScrollStatus(); ok {
@@ -1247,6 +1276,8 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"[ / ]", "Navigate tabs"},
 		{"<- / ->", "Navigate tabs (alias)"},
 		{"up / down   j / k", "Move up / down"},
+		{"g / Home   G / End", "Jump to first / last row (Deployments, Pods, svc tabs)"},
+		{"/", "Filter the active table by name across all rows, not just the visible ones; Enter to keep it, Esc to clear"},
 		{"Space", "Toggle context selection / check a Pods row for log tailing"},
 		{"Enter", "Confirm selection & load / open + focus detail pane (refocuses instantly if already loaded)"},
 		{"l (Pods tab)", "Open/reconcile the merged log pane for checked rows (or the row under the cursor)"},

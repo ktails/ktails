@@ -1,6 +1,8 @@
 package models
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/k8s"
@@ -32,10 +34,16 @@ type PodPage struct {
 	wideColCount int
 	scrollable   bool
 
-	// cursorIdx is the absolute index into p.rows the user has selected.
-	// bubble-table's own highlighted-row index is relative to the windowed
-	// slice handed to it (see windowStart/windowSize in table.go), so it
-	// can't be used directly once more rows are loaded than fit in a window.
+	// filter is a k9s-style "/" filter over the Name column — see rowFilter
+	// in table.go for why this exists instead of bubble-table's own filter.
+	filter rowFilter
+
+	// cursorIdx is a position in the *active index space* — p.rows directly
+	// when filter is inactive, or filter.matches when it's not (see
+	// activeLen/activeRow) — not a raw index into p.rows. bubble-table's own
+	// highlighted-row index is relative to the windowed slice handed to it
+	// (see windowStart/windowSize in table.go), so it can't be used directly
+	// once more rows are loaded than fit in a window either.
 	cursorIdx   int
 	windowStart int
 	windowSize  int
@@ -75,12 +83,26 @@ func (p *PodPage) Init() tea.Cmd {
 func (p *PodPage) Update(msg tea.Msg) tea.Cmd {
 	if p.Focused {
 		if key, ok := msg.(tea.KeyPressMsg); ok {
+			if p.filter.filtering {
+				p.filter.handleKey(key, len(p.rows), p.filterMatch)
+				p.afterFilterChange()
+				return nil
+			}
 			switch key.String() {
 			case "down", "j":
 				p.moveCursor(1)
 				return nil
 			case "up", "k":
 				p.moveCursor(-1)
+				return nil
+			case "home", "g":
+				p.jumpTo(0)
+				return nil
+			case "end", "G":
+				p.jumpTo(p.activeLen() - 1)
+				return nil
+			case "/":
+				p.filter.filtering = true
 				return nil
 			}
 		}
@@ -92,22 +114,84 @@ func (p *PodPage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// moveCursor shifts the absolute row cursor by delta, wrapping at either end
-// of p.rows (mirroring bubble-table's own moveHighlightUp/Down), then slides
-// the row window to keep the new cursor visible.
+// filterMatch is the rowFilter matchFn for Pods: a case-insensitive
+// substring match against the Name column.
+func (p *PodPage) filterMatch(i int) bool {
+	name, _ := p.rows[i][msgs.PodKeyName].(string)
+	return strings.Contains(strings.ToLower(name), strings.ToLower(p.filter.query))
+}
+
+// afterFilterChange re-syncs the cursor/window to the (possibly just
+// changed) filtered index space, jumping to the first match — mirroring
+// k9s, which jumps to the first match as you type rather than leaving the
+// cursor at a now-meaningless position.
+func (p *PodPage) afterFilterChange() {
+	p.cursorIdx = 0
+	p.windowStart = computeWindowStart(0, p.cursorIdx, p.activeLen(), p.windowSize)
+	p.pushDisplayRows()
+	p.invalidateView()
+}
+
+// activeLen returns how many rows are currently selectable: the full row
+// count when no filter is active, or the match count otherwise.
+func (p *PodPage) activeLen() int {
+	return p.filter.len(len(p.rows))
+}
+
+// activeRow returns the raw row at position pos in the active index space.
+func (p *PodPage) activeRow(pos int) msgs.RowData {
+	return p.rows[p.filter.absolute(pos)]
+}
+
+// FilterStatus reports the current filter text and match count, for the
+// status bar's "/query (N matches)" indicator. ok is false when no filter
+// is active — neither being typed nor already committed.
+func (p *PodPage) FilterStatus() (query string, matches int, typing bool, ok bool) {
+	if !p.filter.filtering && p.filter.query == "" {
+		return "", 0, false, false
+	}
+	return p.filter.query, p.activeLen(), p.filter.filtering, true
+}
+
+// moveCursor shifts the cursor by delta within the active index space,
+// wrapping at either end (mirroring bubble-table's own moveHighlightUp/
+// Down), then slides the row window to keep the new cursor visible.
 func (p *PodPage) moveCursor(delta int) {
-	if len(p.rows) == 0 {
+	total := p.activeLen()
+	if total == 0 {
 		return
 	}
 
 	p.cursorIdx += delta
 	if p.cursorIdx < 0 {
-		p.cursorIdx = len(p.rows) - 1
-	} else if p.cursorIdx >= len(p.rows) {
+		p.cursorIdx = total - 1
+	} else if p.cursorIdx >= total {
 		p.cursorIdx = 0
 	}
 
-	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows), p.windowSize)
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, total, p.windowSize)
+	p.pushDisplayRows()
+	p.invalidateView()
+}
+
+// jumpTo moves the cursor directly to the given position in the active
+// index space (clamped), then slides the window to keep it visible — the
+// whole row set is always held in p.rows (see SetRows), only the *rendered*
+// window is bounded, so jumping straight to the last row of a 2000-pod list
+// is just a window recompute, not a full re-fetch or re-render of every row.
+func (p *PodPage) jumpTo(idx int) {
+	total := p.activeLen()
+	if total == 0 {
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	} else if idx >= total {
+		idx = total - 1
+	}
+
+	p.cursorIdx = idx
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, total, p.windowSize)
 	p.pushDisplayRows()
 	p.invalidateView()
 }
@@ -119,10 +203,11 @@ func (p *PodPage) SetRows(rows []msgs.RowData) {
 
 	p.rows = cloneRows(rows)
 	p.rowsSet = true
-	if p.cursorIdx >= len(p.rows) {
-		p.cursorIdx = max(len(p.rows)-1, 0)
+	p.filter.recompute(len(p.rows), p.filterMatch)
+	if p.cursorIdx >= p.activeLen() {
+		p.cursorIdx = max(p.activeLen()-1, 0)
 	}
-	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows), p.windowSize)
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, p.activeLen(), p.windowSize)
 	p.applyColumns()
 	p.pushDisplayRows()
 
@@ -135,14 +220,17 @@ func (p *PodPage) SetRows(rows []msgs.RowData) {
 	p.invalidateView()
 }
 
-// pushDisplayRows rebuilds the table's rows from the current row window (see
-// windowBounds in table.go) into p.rows, prepending a checkbox glyph and
-// coloring Status by phase via StyledCell. Called whenever raw rows, check
-// state, or the cursor/window change.
+// pushDisplayRows rebuilds the table's rows from the current row window
+// (see windowBounds in table.go) into the active index space (p.rows
+// directly, or the filtered subset — see activeRow), prepending a checkbox
+// glyph and coloring Status by phase via StyledCell. Called whenever raw
+// rows, check state, the filter, or the cursor/window change.
 func (p *PodPage) pushDisplayRows() {
-	start, end := windowBounds(p.windowStart, len(p.rows), p.windowSize)
+	total := p.activeLen()
+	start, end := windowBounds(p.windowStart, total, p.windowSize)
 	display := make([]btable.Row, 0, end-start)
-	for _, row := range p.rows[start:end] {
+	for i := start; i < end; i++ {
+		row := p.activeRow(i)
 		// Plain ASCII (see styles.ASCIIBorder for why): ☐/☑ carry an
 		// Ambiguous East Asian Width that some terminals (e.g. Ghostty's
 		// default grapheme-width-method) render as double-width.
@@ -280,6 +368,7 @@ func (p *PodPage) Reset() {
 	p.rowsSet = false
 	p.cursorIdx = 0
 	p.windowStart = 0
+	p.filter = rowFilter{}
 	p.table = p.table.WithRows(nil)
 	p.invalidateView()
 }
@@ -321,7 +410,7 @@ func (p *PodPage) SetSize(w, h int) {
 	p.wideColCount = len(podNarrowColumns())
 	p.scrollable = false
 	p.windowSize = rowWindowSizeFor(h)
-	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, len(p.rows), p.windowSize)
+	p.windowStart = computeWindowStart(p.windowStart, p.cursorIdx, p.activeLen(), p.windowSize)
 	p.pushDisplayRows()
 	p.invalidateView()
 }
@@ -330,10 +419,10 @@ func (p *PodPage) SetSize(w, h int) {
 // or nil if there are no rows. Raw rows are what callers should read pod
 // identity out of — the table itself renders a checkbox-prefixed copy.
 func (p *PodPage) SelectedRow() msgs.RowData {
-	if p.cursorIdx < 0 || p.cursorIdx >= len(p.rows) {
+	if p.cursorIdx < 0 || p.cursorIdx >= p.activeLen() {
 		return nil
 	}
-	return p.rows[p.cursorIdx]
+	return p.activeRow(p.cursorIdx)
 }
 
 func (p *PodPage) invalidateView() {
