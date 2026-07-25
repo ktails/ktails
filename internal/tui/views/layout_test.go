@@ -89,3 +89,18 @@ func TestTitledBoxEmbedsTitle(t *testing.T) {
 		t.Fatalf("expected title embedded in top border, got %q", topRow)
 	}
 }
+
+func TestFitsTitleAgreesWithTitledBoxFallback(t *testing.T) {
+	titles := []string{"Contexts", "Contexts · Namespaces · Clusters", "", "X"}
+	for _, title := range titles {
+		for _, boxW := range []int{10, 22, 24, 30, 40, 60} {
+			fits := FitsTitle(title, boxW)
+			box := TitledBox(title, "x", boxW, 5, lipgloss.Color("#cba6f7"))
+			topRow := strings.Split(box, "\n")[0]
+			embedded := title != "" && strings.Contains(topRow, title)
+			if fits != embedded {
+				t.Errorf("FitsTitle(%q, %d) = %v, but TitledBox embedding = %v", title, boxW, fits, embedded)
+			}
+		}
+	}
+}

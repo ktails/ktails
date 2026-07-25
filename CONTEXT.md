@@ -19,7 +19,13 @@ The single owner of the terminal's width/height budget (`views.Solve`): a pure f
 Which of the two main areas — **Context List** (left) or **Tab Area** (right) — currently receives keyboard input. Switched with `Tab` / `Shift+Tab`.
 
 ## Context List
-The left pane showing available Kubernetes contexts. Items are toggled with `Space` and confirmed with `Enter`.
+The left pane, divided into three always-visible, stacked sections — **Contexts** (the interactive selection list; items toggled with `Space`, confirmed with `Enter`), **Namespaces**, and **Clusters** — each with its own one-line header, sized by `pages.splitLeftSections` (Contexts gets the most room). Only the Contexts section is interactive; Namespaces and Clusters are read-only summaries derived from the selected contexts, re-rendered on every frame rather than switched to.
+
+## Namespaces Section
+Lists every namespace available in each selected context (fetched once per selection via `LoadNamespacesCmd`), with the namespace currently being watched marked. Read-only for now — there is no binding yet to switch a context's watched namespace from here; it always watches the namespace kubeconfig names as that context's default.
+
+## Clusters Section
+Gives each selected context's cluster name, watched namespace, and connection status (Pending/Connecting/Connected/Error) in one dashboard-style view — the same status a Contexts row's icon carries, gathered in one place instead of read off each row.
 
 ## Tab Area
 The right pane containing named tabs (Deployments, Pods, svc). Active tab is switched with `[` / `]` or `←` / `→`. Gated: a tab that needs loaded data (e.g. Deployments) refuses to become active until contexts are selected and loaded.

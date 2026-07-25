@@ -40,6 +40,18 @@ func LoadServiceEndpointsCmd(client *k8s.Client, kubeContext, namespace string) 
 	}
 }
 
+// LoadNamespacesCmd fetches every namespace available in a context, for the
+// Context List's Namespaces tab. Dispatched once per newly-selected context.
+func LoadNamespacesCmd(client *k8s.Client, kubeContext string) tea.Cmd {
+	return func() tea.Msg {
+		namespaces, err := client.ListNamespaces(kubeContext)
+		if err != nil {
+			return msgs.NamespacesMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.NamespacesMsg{Context: kubeContext, Namespaces: namespaces}
+	}
+}
+
 // LoadDeploymentDetailCmd fetches detailed information for a single deployment
 func LoadDeploymentDetailCmd(client *k8s.Client, kubeContext, namespace, deploymentName string) tea.Cmd {
 	return func() tea.Msg {

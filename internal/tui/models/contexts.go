@@ -210,6 +210,18 @@ func (c *ContextsInfo) toggleSelection() {
 	c.list.Select(idx)
 }
 
+// anySelected reports whether any context is currently checked (toggled
+// with Space), regardless of whether it's newly checked or already
+// confirmed from a previous Enter.
+func (c *ContextsInfo) anySelected() bool {
+	for _, item := range c.list.Items() {
+		if ctx, ok := item.(contextList); ok && ctx.Selected {
+			return true
+		}
+	}
+	return false
+}
+
 // SetContextStates updates loading, error, and loaded state for each context in the list.
 func (c *ContextsInfo) SetContextStates(loading map[string]bool, errors map[string]string, loaded map[string]bool) {
 	items := c.list.Items()
@@ -241,22 +253,30 @@ func (c *ContextsInfo) SetContextStates(loading map[string]bool, errors map[stri
 	}
 }
 
-// getAllContextStates returns currently selected contexts and contexts that were deselected.
+// getAllContextStates diffs the current checked contexts against
+// previouslySelected (as of the last confirm) and returns exactly what
+// changed: newly checked contexts as Added, no-longer-checked ones as
+// Deselected. This is the one place that diff happens — callers never need
+// their own "is this genuinely new" bookkeeping.
 func (c *ContextsInfo) getAllContextStates() msgs.ContextsStateMsg {
-	selected := []msgs.ContextsSelectedMsg{}
 	currentSelected := make(map[string]bool)
+	var added []msgs.ContextsSelectedMsg
 
 	for _, item := range c.list.Items() {
-		if ctx, ok := item.(contextList); ok && ctx.Selected {
-			selected = append(selected, msgs.ContextsSelectedMsg{
+		ctx, ok := item.(contextList)
+		if !ok || !ctx.Selected {
+			continue
+		}
+		currentSelected[ctx.Name] = true
+		if !c.previouslySelected[ctx.Name] {
+			added = append(added, msgs.ContextsSelectedMsg{
 				ContextName:      ctx.Name,
 				DefaultNamespace: ctx.DefaultNamespace,
 			})
-			currentSelected[ctx.Name] = true
 		}
 	}
 
-	deselected := []string{}
+	var deselected []string
 	for prevContext := range c.previouslySelected {
 		if !currentSelected[prevContext] {
 			deselected = append(deselected, prevContext)
@@ -264,34 +284,21 @@ func (c *ContextsInfo) getAllContextStates() msgs.ContextsStateMsg {
 	}
 
 	c.previouslySelected = currentSelected
-
-	return msgs.ContextsStateMsg{
-		Selected:   selected,
-		Deselected: deselected,
-	}
+	return msgs.ContextsStateMsg{Added: added, Deselected: deselected}
 }
 
 func (c *ContextsInfo) confirmSelection() tea.Cmd {
-	state := c.getAllContextStates()
-
-	// If nothing selected via Space, treat the focused item as a quick-select
-	if len(state.Selected) == 0 && len(state.Deselected) == 0 {
-		idx := c.list.Index()
-		if idx >= 0 && idx < len(c.list.Items()) {
-			if item, ok := c.list.Items()[idx].(contextList); ok {
-				state.Selected = append(state.Selected, msgs.ContextsSelectedMsg{
-					ContextName:      item.Name,
-					DefaultNamespace: item.DefaultNamespace,
-				})
-				c.previouslySelected[item.Name] = true
-			}
-		}
+	if !c.anySelected() {
+		// Nothing was toggled with Space — treat the row under the cursor as
+		// a quick-select shortcut so Enter alone can confirm a single
+		// context.
+		c.toggleSelection()
 	}
 
-	if len(state.Selected) == 0 && len(state.Deselected) == 0 {
+	state := c.getAllContextStates()
+	if len(state.Added) == 0 && len(state.Deselected) == 0 {
 		return nil
 	}
-
 	return func() tea.Msg { return state }
 }
 
@@ -302,6 +309,22 @@ func (c *ContextsInfo) View() string {
 		return ""
 	}
 	return c.list.View()
+}
+
+// ClusterFor returns the cluster name backing a context, as loaded from
+// kubeconfig at startup — used by the Context List's Clusters tab, which
+// otherwise has no cheap way to know a context's cluster without a second
+// ListContexts round trip. "—" if the context isn't known.
+func (c *ContextsInfo) ClusterFor(contextName string) string {
+	for _, item := range c.list.Items() {
+		if ctx, ok := item.(contextList); ok && ctx.Name == contextName {
+			if ctx.Cluster == "" {
+				return "—"
+			}
+			return ctx.Cluster
+		}
+	}
+	return "—"
 }
 
 func (c *ContextsInfo) initContextPane() {

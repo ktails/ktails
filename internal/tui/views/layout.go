@@ -41,9 +41,15 @@ const boxFrameH = 2
 func Solve(w, h int) Rects {
 	boxH := h - FooterHeight
 
-	leftW := w / 4
+	// The Context List's content (context names, a namespace/cluster line
+	// per entry) never needs a full quarter of the window — a narrower
+	// fixed-ish column reads more like lazygit's sidebar and leaves more
+	// room for the Tab Area's table columns.
+	leftW := w / 5
 	if leftW > MaxLeftPaneWidth {
 		leftW = MaxLeftPaneWidth
+	} else if leftW < MinLeftPaneWidth {
+		leftW = MinLeftPaneWidth
 	}
 	rightW := w - leftW
 
@@ -86,6 +92,17 @@ func FitBlock(content string, w, h int) string {
 		fitted[i] = line
 	}
 	return strings.Join(fitted, "\n")
+}
+
+// FitsTitle reports whether a title (already styled) fits in a box's top
+// border alongside its "╭─ " / " ─…─╮" decoration — the same check
+// TitledBox itself uses before silently falling back to a bare rule.
+// Callers with more than one candidate title (e.g. a full tab strip vs. just
+// the active tab's name) use this to pick the better one, rather than
+// letting a too-wide title vanish entirely.
+func FitsTitle(title string, boxW int) bool {
+	span := boxW - 2
+	return lipgloss.Width(title) > 0 && lipgloss.Width(title)+3 <= span
 }
 
 // TitledBox draws a single-line rounded border of exactly w×h cells around

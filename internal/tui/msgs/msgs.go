@@ -182,9 +182,21 @@ type ServiceEndpointsMsg struct {
 	Err       error
 }
 
-// ContextsStateMsg represents the current state of context selections
+// NamespacesMsg carries the full list of namespaces available in one
+// context, or an error — fetched once per newly-selected context, for the
+// Context List's Namespaces tab.
+type NamespacesMsg struct {
+	Context    string
+	Namespaces []string
+	Err        error
+}
+
+// ContextsStateMsg reports how the context selection changed since the last
+// time it was confirmed — Added and Deselected are already diffed against
+// the previous confirm, so a consumer never needs to re-diff against its
+// own prior snapshot to find out what's genuinely new.
 type ContextsStateMsg struct {
-	Selected   []ContextsSelectedMsg
+	Added      []ContextsSelectedMsg
 	Deselected []string // context names to remove
 }
 

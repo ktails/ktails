@@ -14,5 +14,9 @@ const (
 	// to grow on wide terminals — its content (short context names) never
 	// needs a fixed fraction of a very wide window, so beyond this the extra
 	// space goes to the tab area instead.
-	MaxLeftPaneWidth = 40
+	MaxLeftPaneWidth = 32
+	// MinLeftPaneWidth floors the left pane's width on narrow terminals, so
+	// it stays readable instead of shrinking in lockstep with the whole
+	// window.
+	MinLeftPaneWidth = 24
 )
