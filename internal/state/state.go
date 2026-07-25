@@ -5,9 +5,11 @@
 package state
 
 import (
+	"image/color"
 	"sync"
 
 	"github.com/ktails/ktails/internal/tui/msgs"
+	"github.com/ktails/ktails/internal/tui/styles"
 )
 
 type AppState struct {
@@ -23,6 +25,12 @@ type AppState struct {
 	// Contexts that have completed at least one successful load cycle
 	LoadedContexts map[string]bool
 
+	// contextColors assigns each context its identity colour (styles.IdentityColor)
+	// the first time it's added, in rotation order. Entries are never removed on
+	// RemoveContext so a context re-added within the same session keeps its colour.
+	contextColors map[string]color.Color
+	nextColorIdx  int
+
 	// Mutex to protect concurrent access
 	mu sync.RWMutex
 }
@@ -33,6 +41,7 @@ type Snapshot struct {
 	LoadingStates    map[string]bool // Combined across resource kinds
 	LoadedContexts   map[string]bool // Contexts with at least one successful load
 	Errors           map[string]string
+	ContextColors    map[string]color.Color
 }
 
 func NewAppState() *AppState {
@@ -45,15 +54,21 @@ func NewAppState() *AppState {
 		loading:          loading,
 		Errors:           make(map[string]string),
 		LoadedContexts:   make(map[string]bool),
+		contextColors:    make(map[string]color.Color),
 	}
 }
 
-// AddContext adds or updates a context selection
+// AddContext adds or updates a context selection, assigning it an identity
+// colour (in rotation order) the first time it's seen.
 func (a *AppState) AddContext(context, namespace string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	a.SelectedContexts[context] = namespace
+	if _, ok := a.contextColors[context]; !ok {
+		a.contextColors[context] = styles.IdentityColor(a.nextColorIdx)
+		a.nextColorIdx++
+	}
 }
 
 // SetLoading marks one resource kind as loading (or not) for a context.
@@ -122,6 +137,7 @@ func (a *AppState) Snapshot() Snapshot {
 		LoadingStates:    a.combinedLoadingStates(),
 		LoadedContexts:   copyBoolMap(a.LoadedContexts),
 		Errors:           copyStringMap(a.Errors),
+		ContextColors:    copyColorMap(a.contextColors),
 	}
 }
 
@@ -158,6 +174,17 @@ func copyBoolMap(src map[string]bool) map[string]bool {
 		return map[string]bool{}
 	}
 	dst := make(map[string]bool, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func copyColorMap(src map[string]color.Color) map[string]color.Color {
+	if len(src) == 0 {
+		return map[string]color.Color{}
+	}
+	dst := make(map[string]color.Color, len(src))
 	for k, v := range src {
 		dst[k] = v
 	}

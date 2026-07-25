@@ -88,7 +88,7 @@ func CatppuccinBubbleTableStyle() BubbleTableStyle {
 			Bold(true),
 		Highlight: lipgloss.NewStyle().
 			Foreground(p.Base).
-			Background(p.Blue).
+			Background(FocusColor).
 			Bold(true),
 		Base: lipgloss.NewStyle().
 			Foreground(p.Subtext1),

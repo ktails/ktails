@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
@@ -24,6 +25,12 @@ type contextList struct {
 	IsLoading        bool
 	IsError          bool
 	IsLoaded         bool
+	// Color is this context's identity colour (styles.IdentityColor),
+	// assigned by AppState.AddContext once the context is confirmed
+	// (Enter), pushed down via SetContextColors. Nil until then — a
+	// checked-but-unconfirmed row shows a neutral pending dot instead of
+	// guessing at a colour that may not match once confirmed.
+	Color color.Color
 }
 
 func (cl contextList) Title() string       { return cl.Name }
@@ -52,30 +59,44 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		paneWidth = 30
 	}
 
-	// State icon and colours
+	// The identity dot is this context's stable per-session colour (§2.1),
+	// set once it's confirmed (Enter). A checked-but-unconfirmed row shows
+	// a neutral pending dot rather than guessing; an untouched row shows a
+	// hollow gray dot.
+	dot := "○"
+	dotColor := p.Overlay1
+	switch {
+	case ctx.Selected && ctx.Color != nil:
+		// Colour persists in AppState across a deselect (so re-selecting
+		// keeps the same identity), but the dot itself must not — a
+		// deselected row falls through to the hollow default below.
+		dot = "●"
+		dotColor = ctx.Color
+	case ctx.Selected:
+		dot = "◉"
+		dotColor = p.Subtext0
+	}
+
+	// Status icon and colours — semantic, fixed (§2.2), and takes visual
+	// priority over identity when it signals a problem (error outranks the
+	// identity dot for attention; loading/loaded are quieter).
 	var icon string
-	var iconColor, nameColor color.Color
+	var iconColor color.Color
+	nameColor := p.Text
 
 	switch {
 	case ctx.IsLoading:
 		icon = "⏳"
-		iconColor = p.Blue
-		nameColor = p.Blue
+		iconColor = p.Subtext0
 	case ctx.IsError:
 		icon = "✗"
-		iconColor = p.Red
-		nameColor = p.Maroon
+		iconColor = styles.StatusError
+		nameColor = styles.StatusError
 	case ctx.IsLoaded:
 		icon = "✓"
-		iconColor = p.Green
-		nameColor = p.Text
-	case ctx.Selected:
-		icon = "◉"
-		iconColor = p.Mauve
-		nameColor = p.Lavender
+		iconColor = styles.StatusHealthy
 	default:
-		icon = "○"
-		iconColor = p.Overlay1
+		icon = ""
 		nameColor = p.Subtext0
 	}
 
@@ -93,26 +114,44 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		cluster = "—"
 	}
 
-	iconStr := lipgloss.NewStyle().Foreground(iconColor).Render(icon)
-	nameStr := lipgloss.NewStyle().Foreground(nameColor).Bold(ctx.IsLoaded || ctx.Selected).Render(ctx.Name)
-	descStr := lipgloss.NewStyle().Foreground(p.Overlay1).Render(ns + " · " + cluster)
+	statusSuffix := ""
+	if icon != "" {
+		statusSuffix = " " + icon
+	}
 
-	titleContent := " " + iconStr + " " + nameStr + currentMark
+	// Fixed-width rows must never let lipgloss wrap a long, unbroken context
+	// name onto extra lines — truncate with an ellipsis instead, since the
+	// pane column is a fixed and often narrow (~24-32 col) width.
+	prefixW := 1 + lipgloss.Width(dot) + 1                                // " " + dot + " "
+	suffixW := lipgloss.Width(currentMark) + lipgloss.Width(statusSuffix) // mark + " " + icon
+	name := ansi.TruncateWc(ctx.Name, max(paneWidth-prefixW-suffixW, 0), "…")
+
+	descFixed := 4 // "    " indent
+	descText := ns + " · " + cluster
+	descText = ansi.TruncateWc(descText, max(paneWidth-descFixed, 0), "…")
+
+	dotStr := lipgloss.NewStyle().Foreground(dotColor).Render(dot)
+	statusStr := lipgloss.NewStyle().Foreground(iconColor).Render(statusSuffix)
+	nameStr := lipgloss.NewStyle().Foreground(nameColor).Bold(ctx.IsLoaded || ctx.Selected).Render(name)
+	descStr := lipgloss.NewStyle().Foreground(p.Overlay1).Render(descText)
+
+	titleContent := " " + dotStr + " " + nameStr + currentMark + statusStr
 	descContent := "    " + descStr // indent to align under name
 
 	if isCursor {
-		// Mauve bg + Base fg — canonical Catppuccin selection, matches the pane border accent
+		// Focus accent bg + Base fg — the one selection/focus colour used
+		// everywhere (sidebar cursor, table row, active tab, pane border).
 		titleLine := lipgloss.NewStyle().
-			Background(p.Mauve).
+			Background(styles.FocusColor).
 			Foreground(p.Base).
 			Bold(true).
 			Width(paneWidth).
-			Render(" " + icon + " " + ctx.Name + currentMark)
+			Render(" " + dot + " " + name + currentMark + statusSuffix)
 		descLine := lipgloss.NewStyle().
-			Background(p.Mauve).
+			Background(styles.FocusColor).
 			Foreground(p.Base).
 			Width(paneWidth).
-			Render("    " + ns + " · " + cluster)
+			Render("    " + descText)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
 	} else {
 		titleLine := lipgloss.NewStyle().Width(paneWidth).Render(titleContent)
@@ -244,6 +283,32 @@ func (c *ContextsInfo) SetContextStates(loading map[string]bool, errors map[stri
 		ctx.IsLoading = newLoading
 		ctx.IsError = newError
 		ctx.IsLoaded = newLoaded
+		items[idx] = ctx
+		updated = true
+	}
+
+	if updated {
+		c.list.SetItems(items)
+	}
+}
+
+// SetContextColors pushes each confirmed context's identity colour
+// (state.AppState.Snapshot().ContextColors) down into the list so the
+// sidebar dot and the resource table's Context swatch agree on colour.
+func (c *ContextsInfo) SetContextColors(colors map[string]color.Color) {
+	items := c.list.Items()
+	updated := false
+
+	for idx, item := range items {
+		ctx, ok := item.(contextList)
+		if !ok {
+			continue
+		}
+		newColor := colors[ctx.Name]
+		if ctx.Color == newColor {
+			continue
+		}
+		ctx.Color = newColor
 		items[idx] = ctx
 		updated = true
 	}

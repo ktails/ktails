@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
@@ -218,6 +219,68 @@ func totalColumnsWidth(cols []btable.Column) int {
 	return total + len(cols) + 1
 }
 
+// contextShortCodeLen is the fixed length of the Context column's short
+// code (§3.3.1): long enough to disambiguate typical context names, short
+// enough that the column never needs to compete with Name for width.
+const contextShortCodeLen = 10
+
+// contextColWidth is the Context column's fixed content width: a 1-cell
+// identity dot, a space, then the short code. Every resource table uses
+// this exact width via contextColumn so the column lines up across tabs.
+const contextColWidth = 1 + 1 + contextShortCodeLen
+
+// contextShortCode returns a fixed-length prefix of a context name for the
+// Context column. This is a short code, not an ellipsis-truncation: the
+// design spec forbids the context identifier ever ending in "…", so a
+// longer name is simply cut to a fixed length with no truncation marker.
+func contextShortCode(name string) string {
+	if lipgloss.Width(name) <= contextShortCodeLen {
+		return name
+	}
+	return string([]rune(name)[:contextShortCodeLen])
+}
+
+// contextColumn returns the Context column shared by every resource table:
+// always the first data column (after the Pods checkbox), fixed-width, and
+// never a flex column — it must never be squeezed or truncated the way
+// Name is allowed to be.
+func contextColumn(key string) btable.Column {
+	return paddedColumn(key, "Context", contextColWidth)
+}
+
+// ansiForegroundReset is SGR 39 ("default foreground"), used in place of
+// lipgloss's own full reset (SGR 0) after the Context column's identity
+// dot — a full reset also clears whatever background the surrounding cell
+// already set (e.g. the highlighted row's FocusColor fill), which silently
+// breaks the highlight for every character after the dot. Resetting only
+// the foreground leaves that background intact.
+const ansiForegroundReset = "\x1b[39m"
+
+// contextCell builds the Context column's cell content: an identity dot
+// plus short code (state.AppState.AddContext assigns the colour once a
+// context is confirmed; a context with no colour yet gets a hollow dot in
+// neutral gray instead of guessing). Only the dot glyph itself carries the
+// identity colour — the short code is left in whatever foreground the
+// surrounding row/cell style already provides. This is deliberately
+// self-contained: an identity hue rendered across a whole colored word
+// clashes badly with the Blue focus-accent background on the highlighted
+// row (see the "painful on the eye" report), but a single colored dot next
+// to plain text doesn't compete with it the same way — so there's no need
+// to know whether this particular row happens to be highlighted at all.
+func contextCell(name string, colors map[string]color.Color) btable.StyledCell {
+	p := styles.CatppuccinMocha()
+	col, hasColor := colors[name]
+	dot := "●"
+	if !hasColor {
+		dot = "○"
+		col = p.Overlay1
+	}
+	rendered := lipgloss.NewStyle().Foreground(col).Render(dot)
+	rendered = strings.TrimSuffix(rendered, ansi.ResetStyle) + ansiForegroundReset
+	text := rendered + " " + contextShortCode(name)
+	return btable.NewStyledCell(text, lipgloss.NewStyle())
+}
+
 // statusColor maps a pod phase (PodInfo.Status) to its Catppuccin Mocha
 // status color, per the Status Colors spec: Running=Green, Pending=Yellow,
 // Failed/Unknown=Red, Succeeded=Overlay1 (dim). Unrecognized phases are
@@ -280,22 +343,39 @@ func replicaCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(color)
 }
 
-func podNarrowColumns() []btable.Column {
-	return []btable.Column{
+// podNarrowColumns and every other *NarrowColumns/*WideColumns function
+// below share one column order (§3.4): Context (fixed, never truncated),
+// Namespace, Name, then resource-specific columns — Nodes excepted, since
+// it's cluster-scoped and carries no Namespace at all. Each *NarrowColumns
+// function also follows the column-priority order in §8.3: Context and the
+// resource's status-ish column never drop; Age is the lowest-priority fixed
+// column and the first (here, only) one dropped when compact is true
+// (TierCompact — see views.WidthTier).
+func appendAge(cols []btable.Column, compact bool, ageCol btable.Column) []btable.Column {
+	if compact {
+		return cols
+	}
+	return append(cols, ageCol)
+}
+
+func podNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
 		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
-		paddedFlexColumn(msgs.PodKeyName, "Name", 10),
+		contextColumn(msgs.PodKeyContext),
 		paddedFlexColumn(msgs.PodKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.PodKeyName, "Name", 10),
 		paddedFlexColumn(msgs.PodKeyStatus, "Status", 4),
 		paddedFlexColumn(msgs.PodKeyRestarts, "Restarts", 3),
-		paddedFlexColumn(msgs.PodKeyAge, "Age", 3),
 	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.PodKeyAge, "Age", 3))
 }
 
 func podWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
 		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
-		paddedColumn(msgs.PodKeyName, "Name", widestValue(rows, msgs.PodKeyName, "Name")),
+		contextColumn(msgs.PodKeyContext),
 		paddedColumn(msgs.PodKeyNamespace, "Namespace", widestValue(rows, msgs.PodKeyNamespace, "Namespace")),
+		paddedColumn(msgs.PodKeyName, "Name", widestValue(rows, msgs.PodKeyName, "Name")),
 		paddedColumn(msgs.PodKeyStatus, "Status", widestValue(rows, msgs.PodKeyStatus, "Status")),
 		paddedColumn(msgs.PodKeyReady, "Ready", widestValue(rows, msgs.PodKeyReady, "Ready")),
 		paddedColumn(msgs.PodKeyRestarts, "Restarts", widestValue(rows, msgs.PodKeyRestarts, "Restarts")),
@@ -306,43 +386,47 @@ func podWideColumns(rows []msgs.RowData) []btable.Column {
 	}
 }
 
-func deploymentNarrowColumns() []btable.Column {
-	return []btable.Column{
+func deploymentNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.DeployKeyContext),
+		paddedFlexColumn(msgs.DeployKeyNamespace, "Namespace", 5),
 		paddedFlexColumn(msgs.DeployKeyName, "Name", 8),
-		paddedFlexColumn(msgs.DeployKeyAge, "Age", 3),
-		paddedFlexColumn(msgs.DeployKeyReplicas, "ReadyReplicas", 4),
-		paddedFlexColumn(msgs.DeployKeyContext, "Context", 5),
 	}
+	cols = appendAge(cols, compact, paddedFlexColumn(msgs.DeployKeyAge, "Age", 3))
+	return append(cols, paddedFlexColumn(msgs.DeployKeyReplicas, "ReadyReplicas", 4))
 }
 
 func deploymentWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
+		contextColumn(msgs.DeployKeyContext),
+		paddedColumn(msgs.DeployKeyNamespace, "Namespace", widestValue(rows, msgs.DeployKeyNamespace, "Namespace")),
 		paddedColumn(msgs.DeployKeyName, "Name", widestValue(rows, msgs.DeployKeyName, "Name")),
 		paddedColumn(msgs.DeployKeyAge, "Age", widestValue(rows, msgs.DeployKeyAge, "Age")),
 		paddedColumn(msgs.DeployKeyReplicas, "ReadyReplicas", widestValue(rows, msgs.DeployKeyReplicas, "ReadyReplicas")),
 		paddedColumn(msgs.DeployKeyAvailable, "Available", widestValue(rows, msgs.DeployKeyAvailable, "Available")),
 		paddedColumn(msgs.DeployKeyUpdated, "Updated", widestValue(rows, msgs.DeployKeyUpdated, "Updated")),
 		paddedColumn(msgs.DeployKeyStrategy, "Strategy", widestValue(rows, msgs.DeployKeyStrategy, "Strategy")),
-		paddedColumn(msgs.DeployKeyContext, "Context", widestValue(rows, msgs.DeployKeyContext, "Context")),
 		paddedColumn(msgs.DeployKeySelector, "Selector", widestValue(rows, msgs.DeployKeySelector, "Selector")),
 	}
 }
 
-func svcNarrowColumns() []btable.Column {
-	return []btable.Column{
-		paddedFlexColumn(msgs.SvcKeyName, "Name", 28),
+func svcNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.SvcKeyContext),
 		paddedFlexColumn(msgs.SvcKeyNamespace, "Namespace", 18),
+		paddedFlexColumn(msgs.SvcKeyName, "Name", 28),
 		paddedFlexColumn(msgs.SvcKeyType, "Type", 14),
 		paddedFlexColumn(msgs.SvcKeyClusterIP, "ClusterIP", 18),
 		paddedFlexColumn(msgs.SvcKeyPorts, "Ports", 12),
-		paddedFlexColumn(msgs.SvcKeyAge, "Age", 10),
 	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.SvcKeyAge, "Age", 10))
 }
 
 func svcWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
-		paddedColumn(msgs.SvcKeyName, "Name", widestValue(rows, msgs.SvcKeyName, "Name")),
+		contextColumn(msgs.SvcKeyContext),
 		paddedColumn(msgs.SvcKeyNamespace, "Namespace", widestValue(rows, msgs.SvcKeyNamespace, "Namespace")),
+		paddedColumn(msgs.SvcKeyName, "Name", widestValue(rows, msgs.SvcKeyName, "Name")),
 		paddedColumn(msgs.SvcKeyType, "Type", widestValue(rows, msgs.SvcKeyType, "Type")),
 		paddedColumn(msgs.SvcKeyClusterIP, "ClusterIP", widestValue(rows, msgs.SvcKeyClusterIP, "ClusterIP")),
 		paddedColumn(msgs.SvcKeyPorts, "Ports", widestValue(rows, msgs.SvcKeyPorts, "Ports")),
@@ -353,66 +437,71 @@ func svcWideColumns(rows []msgs.RowData) []btable.Column {
 	}
 }
 
-func configMapNarrowColumns() []btable.Column {
-	return []btable.Column{
-		paddedFlexColumn(msgs.ConfigMapKeyName, "Name", 10),
+func configMapNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.ConfigMapKeyContext),
 		paddedFlexColumn(msgs.ConfigMapKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.ConfigMapKeyName, "Name", 10),
 		paddedFlexColumn(msgs.ConfigMapKeyKeys, "Keys", 2),
-		paddedFlexColumn(msgs.ConfigMapKeyAge, "Age", 3),
-		paddedFlexColumn(msgs.ConfigMapKeyContext, "Context", 5),
 	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.ConfigMapKeyAge, "Age", 3))
 }
 
 func configMapWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
-		paddedColumn(msgs.ConfigMapKeyName, "Name", widestValue(rows, msgs.ConfigMapKeyName, "Name")),
+		contextColumn(msgs.ConfigMapKeyContext),
 		paddedColumn(msgs.ConfigMapKeyNamespace, "Namespace", widestValue(rows, msgs.ConfigMapKeyNamespace, "Namespace")),
+		paddedColumn(msgs.ConfigMapKeyName, "Name", widestValue(rows, msgs.ConfigMapKeyName, "Name")),
 		paddedColumn(msgs.ConfigMapKeyKeys, "Keys", widestValue(rows, msgs.ConfigMapKeyKeys, "Keys")),
 		paddedColumn(msgs.ConfigMapKeyAge, "Age", widestValue(rows, msgs.ConfigMapKeyAge, "Age")),
-		paddedColumn(msgs.ConfigMapKeyContext, "Context", widestValue(rows, msgs.ConfigMapKeyContext, "Context")),
 		paddedColumn(msgs.ConfigMapKeyKeyNames, "Data Keys", widestValue(rows, msgs.ConfigMapKeyKeyNames, "Data Keys")),
 	}
 }
 
-func secretNarrowColumns() []btable.Column {
-	return []btable.Column{
-		paddedFlexColumn(msgs.SecretKeyName, "Name", 10),
+func secretNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.SecretKeyContext),
 		paddedFlexColumn(msgs.SecretKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.SecretKeyName, "Name", 10),
 		paddedFlexColumn(msgs.SecretKeyType, "Type", 6),
 		paddedFlexColumn(msgs.SecretKeyKeys, "Keys", 2),
-		paddedFlexColumn(msgs.SecretKeyAge, "Age", 3),
 	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.SecretKeyAge, "Age", 3))
 }
 
 func secretWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
-		paddedColumn(msgs.SecretKeyName, "Name", widestValue(rows, msgs.SecretKeyName, "Name")),
+		contextColumn(msgs.SecretKeyContext),
 		paddedColumn(msgs.SecretKeyNamespace, "Namespace", widestValue(rows, msgs.SecretKeyNamespace, "Namespace")),
+		paddedColumn(msgs.SecretKeyName, "Name", widestValue(rows, msgs.SecretKeyName, "Name")),
 		paddedColumn(msgs.SecretKeyType, "Type", widestValue(rows, msgs.SecretKeyType, "Type")),
 		paddedColumn(msgs.SecretKeyKeys, "Keys", widestValue(rows, msgs.SecretKeyKeys, "Keys")),
 		paddedColumn(msgs.SecretKeyAge, "Age", widestValue(rows, msgs.SecretKeyAge, "Age")),
-		paddedColumn(msgs.SecretKeyContext, "Context", widestValue(rows, msgs.SecretKeyContext, "Context")),
 	}
 }
 
-func nodeNarrowColumns() []btable.Column {
-	return []btable.Column{
+// nodeNarrowColumns/nodeWideColumns omit Namespace: Nodes are cluster-scoped
+// (see msgs.NodeKeyName's doc comment), so Context is followed directly by
+// Name rather than a Namespace column that would always read empty.
+func nodeNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.NodeKeyContext),
 		paddedFlexColumn(msgs.NodeKeyName, "Name", 12),
 		paddedFlexColumn(msgs.NodeKeyStatus, "Status", 4),
 		paddedFlexColumn(msgs.NodeKeyRoles, "Roles", 5),
-		paddedFlexColumn(msgs.NodeKeyAge, "Age", 3),
-		paddedFlexColumn(msgs.NodeKeyVersion, "Version", 4),
 	}
+	cols = appendAge(cols, compact, paddedFlexColumn(msgs.NodeKeyAge, "Age", 3))
+	return append(cols, paddedFlexColumn(msgs.NodeKeyVersion, "Version", 4))
 }
 
 func nodeWideColumns(rows []msgs.RowData) []btable.Column {
 	return []btable.Column{
+		contextColumn(msgs.NodeKeyContext),
 		paddedColumn(msgs.NodeKeyName, "Name", widestValue(rows, msgs.NodeKeyName, "Name")),
 		paddedColumn(msgs.NodeKeyStatus, "Status", widestValue(rows, msgs.NodeKeyStatus, "Status")),
 		paddedColumn(msgs.NodeKeyRoles, "Roles", widestValue(rows, msgs.NodeKeyRoles, "Roles")),
 		paddedColumn(msgs.NodeKeyAge, "Age", widestValue(rows, msgs.NodeKeyAge, "Age")),
 		paddedColumn(msgs.NodeKeyVersion, "Version", widestValue(rows, msgs.NodeKeyVersion, "Version")),
-		paddedColumn(msgs.NodeKeyContext, "Context", widestValue(rows, msgs.NodeKeyContext, "Context")),
 		paddedColumn(msgs.NodeKeyInternalIP, "InternalIP", widestValue(rows, msgs.NodeKeyInternalIP, "InternalIP")),
 		paddedColumn(msgs.NodeKeyOS, "OS/Arch", widestValue(rows, msgs.NodeKeyOS, "OS/Arch")),
 	}

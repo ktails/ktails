@@ -64,6 +64,45 @@ func TestFitBlockExactDimensions(t *testing.T) {
 	}
 }
 
+// TestWidthTierBoundaries checks the exact tier boundaries from §8.1's
+// table (80-109 Compact, 110-159 Standard, 160+ Wide) — off-by-one here
+// would mean a terminal renders half-Compact/half-Standard, per §8.6's
+// testing checklist.
+func TestWidthTierBoundaries(t *testing.T) {
+	cases := []struct {
+		width int
+		want  Tier
+	}{
+		{MinContentWidth, TierCompact}, // 80, the hard floor
+		{81, TierCompact},
+		{109, TierCompact},
+		{110, TierStandard},
+		{159, TierStandard},
+		{160, TierWide},
+		{250, TierWide},
+	}
+	for _, tc := range cases {
+		if got := WidthTier(tc.width); got != tc.want {
+			t.Errorf("WidthTier(%d) = %v, want %v", tc.width, got, tc.want)
+		}
+	}
+}
+
+// TestSolveAtTierBoundaries exercises Solve itself at every §8.1 boundary
+// width, confirming the sidebar stays within its clamped bounds and the
+// layout never degenerates right at a tier edge.
+func TestSolveAtTierBoundaries(t *testing.T) {
+	for _, w := range []int{80, 81, 109, 110, 159, 160, 250} {
+		r := Solve(w, MinHeight)
+		if r.LeftBoxW+r.RightBoxW != w {
+			t.Errorf("Solve(%d): boxes %d+%d don't span the width", w, r.LeftBoxW, r.RightBoxW)
+		}
+		if r.LeftBoxW < MinLeftPaneWidth || r.LeftBoxW > MaxLeftPaneWidth {
+			t.Errorf("Solve(%d): left box %d outside [%d,%d]", w, r.LeftBoxW, MinLeftPaneWidth, MaxLeftPaneWidth)
+		}
+	}
+}
+
 func TestTitledBoxExactDimensions(t *testing.T) {
 	borderColor := lipgloss.Color("#cba6f7")
 	const w, h = 30, 8

@@ -42,10 +42,11 @@ func Solve(w, h int) Rects {
 	boxH := h - FooterHeight
 
 	// The Context List's content (context names, a namespace/cluster line
-	// per entry) never needs a full quarter of the window — a narrower
-	// fixed-ish column reads more like lazygit's sidebar and leaves more
-	// room for the Tab Area's table columns.
-	leftW := w / 5
+	// per entry) never needs a full quarter of the window — a proportional
+	// column (clamped, §8.2) reads more like lazygit's sidebar and leaves
+	// more room for the Tab Area's table columns as the window grows,
+	// rather than a fixed cell width that wastes space at both ends.
+	leftW := w * 22 / 100
 	if leftW > MaxLeftPaneWidth {
 		leftW = MaxLeftPaneWidth
 	} else if leftW < MinLeftPaneWidth {

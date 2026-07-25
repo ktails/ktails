@@ -1,6 +1,10 @@
 package styles
 
-import "charm.land/lipgloss/v2"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 // ASCIIBorder is a lipgloss.Border built entirely from plain ASCII
 // (-, |, +). Unicode box-drawing characters (U+2500-U+257F) and several
@@ -29,9 +33,48 @@ func ASCIIBorder() lipgloss.Border {
 
 // FocusColor/BlurColor are the single accent pair used across the TUI:
 // focused panes get the vibrant accent, blurred panes the subtle overlay.
+// FocusColor is Blue exclusively — Blue never appears in IdentityColors or
+// the status set (see below), so "focused" can never be confused with
+// "which cluster" or "what's broken".
 var (
-	FocusColor = CatppuccinMocha().Mauve
+	FocusColor = CatppuccinMocha().Blue
 	BlurColor  = CatppuccinMocha().Overlay0
+)
+
+// IdentityColors is the context/cluster identity rotation: the first
+// selected context gets IdentityColors[0], the second IdentityColors[1],
+// and so on. Deliberately excludes Red/Yellow/Green (status, see below) and
+// Blue (focus accent) so the three colour systems never collide.
+var IdentityColors = []color.Color{
+	CatppuccinMocha().Mauve,     // 1
+	CatppuccinMocha().Teal,      // 2
+	CatppuccinMocha().Peach,     // 3
+	CatppuccinMocha().Pink,      // 4
+	CatppuccinMocha().Sapphire,  // 5
+	CatppuccinMocha().Flamingo,  // 6
+	CatppuccinMocha().Rosewater, // 7
+	CatppuccinMocha().Maroon,    // 8 and fallback for every context beyond it
+}
+
+// IdentityColor returns the identity colour for the n-th selected context
+// (0-indexed), repeating the last (Maroon) colour for every context beyond
+// the rotation's length rather than reusing an earlier context's colour.
+func IdentityColor(n int) color.Color {
+	if n < 0 {
+		n = 0
+	}
+	if n >= len(IdentityColors) {
+		n = len(IdentityColors) - 1
+	}
+	return IdentityColors[n]
+}
+
+// Status colors (semantic, fixed — never reassigned to identity or focus).
+var (
+	StatusHealthy = CatppuccinMocha().Green
+	StatusWarning = CatppuccinMocha().Yellow
+	StatusError   = CatppuccinMocha().Red
+	StatusNeutral = CatppuccinMocha().Subtext0
 )
 
 // StatusBar is the one-line bar at the bottom of the TUI. The background

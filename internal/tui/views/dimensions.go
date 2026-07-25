@@ -18,5 +18,44 @@ const (
 	// MinLeftPaneWidth floors the left pane's width on narrow terminals, so
 	// it stays readable instead of shrinking in lockstep with the whole
 	// window.
-	MinLeftPaneWidth = 24
+	MinLeftPaneWidth = 18
 )
+
+// Tier is one of the three adaptive-layout width bands (§8.1): a pass/fail
+// "resize prompt or one fixed layout" gate has no room between broken and
+// fully rendered, so components that want intermediate behavior (a
+// narrower sidebar, fewer table columns) key off this instead of the raw
+// pixel width directly.
+type Tier int
+
+const (
+	// TierCompact is 80-109 cols — the floor (MinContentWidth) up to just
+	// under Standard.
+	TierCompact Tier = iota
+	// TierStandard is 110-159 cols — today's default rendering.
+	TierStandard
+	// TierWide is 160+ cols — room for extras beyond Standard (see §8.4's
+	// optional Detail side-panel).
+	TierWide
+)
+
+// tierStandardMin and tierWideMin are the tier boundaries (§8.1's table).
+const (
+	tierStandardMin = 110
+	tierWideMin     = 160
+)
+
+// WidthTier returns which adaptive-layout tier a terminal width falls into.
+// Below MinContentWidth is the hard floor (unchanged resize-prompt
+// behavior, see MinContentWidth) — WidthTier still returns TierCompact for
+// it since callers only consult this once past that floor.
+func WidthTier(width int) Tier {
+	switch {
+	case width >= tierWideMin:
+		return TierWide
+	case width >= tierStandardMin:
+		return TierStandard
+	default:
+		return TierCompact
+	}
+}

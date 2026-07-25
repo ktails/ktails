@@ -1,12 +1,14 @@
 package models
 
 import (
+	"image/color"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	btable "github.com/evertras/bubble-table/table"
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
+	"github.com/ktails/ktails/internal/tui/views"
 )
 
 // tableSpec is everything that genuinely differs between the three resource
@@ -15,9 +17,15 @@ import (
 // else — cursor, windowing, "/" filter, wide mode, column scroll, view
 // caching — is ResourceTable's implementation, shared by all three.
 type tableSpec struct {
-	narrowColumns func() []btable.Column
+	// narrowColumns builds narrow-mode columns; compact drops the lowest-
+	// priority fixed column (Age) per the column-priority order in §8.3,
+	// for TierCompact terminals.
+	narrowColumns func(compact bool) []btable.Column
 	wideColumns   func(rows []msgs.RowData) []btable.Column
-	displayRow    func(row msgs.RowData, checked bool) btable.RowData
+	// displayRow converts one raw row into bubble-table's row format;
+	// colors is the context->identity-colour map for the Context column
+	// (see contextCell in table.go), refreshed via ResourceTable.SetContextColors.
+	displayRow func(row msgs.RowData, checked bool, colors map[string]color.Color) btable.RowData
 	// freezeColumns pins the first N columns during horizontal scroll
 	// (the Pods checkbox column).
 	freezeColumns int
@@ -31,7 +39,10 @@ func specFor(kind msgs.ResourceKind) tableSpec {
 			narrowColumns: podNarrowColumns,
 			wideColumns:   podWideColumns,
 			displayRow:    podDisplayRow,
-			freezeColumns: 1,
+			// Checkbox + Context: the Context column is the tool's core
+			// differentiator (§3.4) and must never scroll out of view in
+			// wide mode, same as the checkbox.
+			freezeColumns: 2,
 			checkable:     true,
 		}
 	case msgs.KindDeployments:
@@ -39,48 +50,61 @@ func specFor(kind msgs.ResourceKind) tableSpec {
 			narrowColumns: deploymentNarrowColumns,
 			wideColumns:   deploymentWideColumns,
 			displayRow:    deploymentDisplayRow,
+			freezeColumns: 1,
 		}
 	case msgs.KindServices:
 		return tableSpec{
 			narrowColumns: svcNarrowColumns,
 			wideColumns:   svcWideColumns,
 			displayRow:    svcDisplayRow,
+			freezeColumns: 1,
 		}
 	case msgs.KindConfigMaps:
 		return tableSpec{
 			narrowColumns: configMapNarrowColumns,
 			wideColumns:   configMapWideColumns,
 			displayRow:    configMapDisplayRow,
+			freezeColumns: 1,
 		}
 	case msgs.KindSecrets:
 		return tableSpec{
 			narrowColumns: secretNarrowColumns,
 			wideColumns:   secretWideColumns,
 			displayRow:    secretDisplayRow,
+			freezeColumns: 1,
 		}
 	case msgs.KindNodes:
 		return tableSpec{
 			narrowColumns: nodeNarrowColumns,
 			wideColumns:   nodeWideColumns,
+			freezeColumns: 1,
 			displayRow:    nodeDisplayRow,
 		}
 	}
 	return tableSpec{}
 }
 
-func podDisplayRow(row msgs.RowData, checked bool) btable.RowData {
+// rowContext reads a raw row's context name for the Context column's
+// colour lookup — every kind shares msgs.KeyContext under the hood (see
+// the *KeyContext aliases in msgs.go).
+func rowContext(row msgs.RowData) string {
+	name, _ := row[msgs.KeyContext].(string)
+	return name
+}
+
+func podDisplayRow(row msgs.RowData, checked bool, colors map[string]color.Color) btable.RowData {
 	glyph := "☐"
 	if checked {
 		glyph = "☑"
 	}
 	return btable.RowData{
 		msgs.PodKeyCheck:      glyph,
-		msgs.PodKeyName:       row[msgs.PodKeyName],
+		msgs.PodKeyContext:    contextCell(rowContext(row), colors),
 		msgs.PodKeyNamespace:  row[msgs.PodKeyNamespace],
+		msgs.PodKeyName:       row[msgs.PodKeyName],
 		msgs.PodKeyStatus:     btable.NewStyledCellWithStyleFunc(row[msgs.PodKeyStatus], statusCellStyle),
 		msgs.PodKeyRestarts:   row[msgs.PodKeyRestarts],
 		msgs.PodKeyAge:        row[msgs.PodKeyAge],
-		msgs.PodKeyContext:    row[msgs.PodKeyContext],
 		msgs.PodKeyContainers: row[msgs.PodKeyContainers],
 		msgs.PodKeyNode:       row[msgs.PodKeyNode],
 		msgs.PodKeyNodeIP:     row[msgs.PodKeyNodeIP],
@@ -89,13 +113,13 @@ func podDisplayRow(row msgs.RowData, checked bool) btable.RowData {
 	}
 }
 
-func deploymentDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+func deploymentDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
+		msgs.DeployKeyContext:   contextCell(rowContext(row), colors),
+		msgs.DeployKeyNamespace: row[msgs.DeployKeyNamespace],
 		msgs.DeployKeyName:      row[msgs.DeployKeyName],
 		msgs.DeployKeyAge:       row[msgs.DeployKeyAge],
 		msgs.DeployKeyReplicas:  btable.NewStyledCellWithStyleFunc(row[msgs.DeployKeyReplicas], replicaCellStyle),
-		msgs.DeployKeyContext:   row[msgs.DeployKeyContext],
-		msgs.DeployKeyNamespace: row[msgs.DeployKeyNamespace],
 		msgs.DeployKeyStrategy:  row[msgs.DeployKeyStrategy],
 		msgs.DeployKeyAvailable: row[msgs.DeployKeyAvailable],
 		msgs.DeployKeyUpdated:   row[msgs.DeployKeyUpdated],
@@ -103,51 +127,51 @@ func deploymentDisplayRow(row msgs.RowData, _ bool) btable.RowData {
 	}
 }
 
-func svcDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+func svcDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.SvcKeyName:        row[msgs.SvcKeyName],
+		msgs.SvcKeyContext:     contextCell(rowContext(row), colors),
 		msgs.SvcKeyNamespace:   row[msgs.SvcKeyNamespace],
+		msgs.SvcKeyName:        row[msgs.SvcKeyName],
 		msgs.SvcKeyType:        row[msgs.SvcKeyType],
 		msgs.SvcKeyClusterIP:   row[msgs.SvcKeyClusterIP],
 		msgs.SvcKeyPorts:       row[msgs.SvcKeyPorts],
 		msgs.SvcKeyAge:         row[msgs.SvcKeyAge],
-		msgs.SvcKeyContext:     row[msgs.SvcKeyContext],
 		msgs.SvcKeySelector:    row[msgs.SvcKeySelector],
 		msgs.SvcKeyExternalIP:  row[msgs.SvcKeyExternalIP],
 		msgs.SvcKeyEndpointIPs: row[msgs.SvcKeyEndpointIPs],
 	}
 }
 
-func configMapDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+func configMapDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.ConfigMapKeyName:      row[msgs.ConfigMapKeyName],
+		msgs.ConfigMapKeyContext:   contextCell(rowContext(row), colors),
 		msgs.ConfigMapKeyNamespace: row[msgs.ConfigMapKeyNamespace],
+		msgs.ConfigMapKeyName:      row[msgs.ConfigMapKeyName],
 		msgs.ConfigMapKeyKeys:      row[msgs.ConfigMapKeyKeys],
 		msgs.ConfigMapKeyAge:       row[msgs.ConfigMapKeyAge],
-		msgs.ConfigMapKeyContext:   row[msgs.ConfigMapKeyContext],
 		msgs.ConfigMapKeyKeyNames:  row[msgs.ConfigMapKeyKeyNames],
 	}
 }
 
-func secretDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+func secretDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.SecretKeyName:      row[msgs.SecretKeyName],
+		msgs.SecretKeyContext:   contextCell(rowContext(row), colors),
 		msgs.SecretKeyNamespace: row[msgs.SecretKeyNamespace],
+		msgs.SecretKeyName:      row[msgs.SecretKeyName],
 		msgs.SecretKeyType:      row[msgs.SecretKeyType],
 		msgs.SecretKeyKeys:      row[msgs.SecretKeyKeys],
 		msgs.SecretKeyAge:       row[msgs.SecretKeyAge],
-		msgs.SecretKeyContext:   row[msgs.SecretKeyContext],
 	}
 }
 
-func nodeDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+func nodeDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
+		msgs.NodeKeyContext:    contextCell(rowContext(row), colors),
 		msgs.NodeKeyName:       row[msgs.NodeKeyName],
 		msgs.NodeKeyStatus:     row[msgs.NodeKeyStatus],
 		msgs.NodeKeyRoles:      row[msgs.NodeKeyRoles],
 		msgs.NodeKeyAge:        row[msgs.NodeKeyAge],
 		msgs.NodeKeyVersion:    row[msgs.NodeKeyVersion],
-		msgs.NodeKeyContext:    row[msgs.NodeKeyContext],
 		msgs.NodeKeyInternalIP: row[msgs.NodeKeyInternalIP],
 		msgs.NodeKeyOS:         row[msgs.NodeKeyOS],
 	}
@@ -172,6 +196,16 @@ type ResourceTable struct {
 	// PodRowKey. Persists across SetRows/reopening the log pane until
 	// explicitly cleared. Nil unless spec.checkable.
 	checked map[string]bool
+
+	// contextColors is the context->identity-colour map for the Context
+	// column (see SetContextColors), kept in sync with
+	// state.AppState.Snapshot().ContextColors.
+	contextColors map[string]color.Color
+
+	// tier is the current adaptive-layout width tier (§8.1), set via
+	// SetTier — TierCompact drops the lowest-priority narrow-mode column
+	// (§8.3).
+	tier views.Tier
 
 	// wideMode is sticky per tab and only reset on resize — see SetSize.
 	wideMode     bool
@@ -206,8 +240,21 @@ func NewResourceTable(kind msgs.ResourceKind) *ResourceTable {
 	if spec.checkable {
 		t.checked = make(map[string]bool)
 	}
-	t.table = newBubbleTable(spec.narrowColumns())
+	t.table = newBubbleTable(spec.narrowColumns(false))
 	return t
+}
+
+// SetTier updates the adaptive-layout width tier (§8.1) and, if narrow mode
+// is active, rebuilds columns for it (TierCompact drops Age — see §8.3).
+func (t *ResourceTable) SetTier(tier views.Tier) {
+	if t.tier == tier {
+		return
+	}
+	t.tier = tier
+	if !t.wideMode {
+		t.applyColumns()
+		t.invalidateView()
+	}
 }
 
 // PodRowKey identifies a raw (un-prefixed) Pods-table row for check-state
@@ -368,6 +415,32 @@ func (t *ResourceTable) SetRows(rows []msgs.RowData) {
 	t.invalidateView()
 }
 
+// SetContextColors refreshes the Context column's colour lookup and
+// re-renders the visible row window so every table's Context swatch stays
+// in sync with the sidebar's (see ContextsInfo.SetContextColors).
+func (t *ResourceTable) SetContextColors(colors map[string]color.Color) {
+	if colorMapsEqual(t.contextColors, colors) {
+		return
+	}
+	t.contextColors = colors
+	if t.rowsSet {
+		t.pushDisplayRows()
+		t.invalidateView()
+	}
+}
+
+func colorMapsEqual(a, b map[string]color.Color) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 // pushDisplayRows rebuilds the table's rows from the current row window
 // (see windowBounds in table.go) into the active index space (t.rows
 // directly, or the filtered subset — see activeRow), converting each raw
@@ -379,7 +452,7 @@ func (t *ResourceTable) pushDisplayRows() {
 	display := make([]btable.Row, 0, end-start)
 	for i := start; i < end; i++ {
 		row := t.activeRow(i)
-		display = append(display, btable.NewRow(t.spec.displayRow(row, t.checked[PodRowKey(row)])))
+		display = append(display, btable.NewRow(t.spec.displayRow(row, t.checked[PodRowKey(row)], t.contextColors)))
 	}
 	t.table = t.table.WithRows(display).WithHighlightedRow(t.cursorIdx - start)
 }
@@ -391,7 +464,7 @@ func (t *ResourceTable) applyColumns() {
 	if t.wideMode {
 		cols = t.spec.wideColumns(t.rows)
 	} else {
-		cols = t.spec.narrowColumns()
+		cols = t.spec.narrowColumns(t.tier == views.TierCompact)
 	}
 	t.wideColCount = len(cols)
 	t.scrollable = t.wideMode && totalColumnsWidth(cols) > t.tableW
@@ -516,8 +589,9 @@ func (t *ResourceTable) SetSize(w, h int) {
 	t.tableW, t.tableH = w, h
 	t.wideMode = false
 
+	compact := t.tier == views.TierCompact
 	st := styles.CatppuccinBubbleTableStyle()
-	t.table = newBubbleTable(t.spec.narrowColumns()).
+	t.table = newBubbleTable(t.spec.narrowColumns(compact)).
 		WithMinimumHeight(h).
 		WithTargetWidth(w).
 		WithMaxTotalWidth(w).
@@ -526,7 +600,7 @@ func (t *ResourceTable) SetSize(w, h int) {
 		WithBaseStyle(st.Base).
 		WithHorizontalFreezeColumnCount(t.spec.freezeColumns).
 		Focused(t.focused)
-	t.wideColCount = len(t.spec.narrowColumns())
+	t.wideColCount = len(t.spec.narrowColumns(compact))
 	t.scrollable = false
 	t.windowSize = rowWindowSizeFor(h)
 	t.windowStart = computeWindowStart(t.windowStart, t.cursorIdx, t.activeLen(), t.windowSize)

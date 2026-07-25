@@ -3,6 +3,7 @@ package models
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -151,22 +152,37 @@ func (d *ResourceDetailPage) Matches(kind, name, context string) bool {
 	return d.HasContent() && d.kind == kind && d.name == name && d.context == context
 }
 
+// Context returns the loaded resource's context name, so a caller can look
+// up its identity colour (state.AppState.Snapshot().ContextColors) to pass
+// into Header.
+func (d *ResourceDetailPage) Context() string {
+	return d.context
+}
+
 // Header renders a one-line banner identifying the loaded resource and the
 // pane's own close hint, meant to sit above the scrollable viewport so the
 // pane reads as a distinct region rather than a peer tab. width caps the
 // line so it never becomes the widest line in the pane at narrow terminal
-// sizes — an unbounded line here forced the whole block to wrap.
-func (d *ResourceDetailPage) Header(width int) string {
+// sizes — an unbounded line here forced the whole block to wrap. dotColor
+// is the resource's context's identity colour (nil if not yet assigned) —
+// shown here because this pane can replace the list entirely (overlay mode,
+// or a narrow terminal), so its own header is the only place the Context
+// column's identity swatch is still visible while it's open.
+func (d *ResourceDetailPage) Header(width int, dotColor color.Color) string {
 	p := styles.CatppuccinMocha()
 	title := lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true)
+	if dotColor == nil {
+		dotColor = p.Overlay1
+	}
+	dot := lipgloss.NewStyle().Foreground(dotColor).Render("●")
 
 	label := fmt.Sprintf("%s: %s", d.kind, d.name)
 	if label == ": " {
 		label = "Detail"
 	}
-	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
-		hint.Render(fmt.Sprintf("(%s — ↑/↓ pgup/pgdn scroll, Home/End jump, Esc back, Ctrl+R return)", d.context))
+	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " + dot + " " +
+		hint.Render(fmt.Sprintf("%s (↑/↓ pgup/pgdn scroll, Home/End jump, Esc back, Ctrl+R return)", d.context))
 	if width <= 0 {
 		return full
 	}

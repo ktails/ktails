@@ -38,7 +38,7 @@ func (k ResourceKind) Title() string {
 	case KindPods:
 		return "Pods"
 	case KindServices:
-		return "svc"
+		return "Services"
 	case KindConfigMaps:
 		return "ConfigMaps"
 	case KindSecrets:
@@ -95,7 +95,7 @@ const (
 	PodKeyStatus     = "status"
 	PodKeyRestarts   = "restarts"
 	PodKeyAge        = "age"
-	PodKeyContext    = KeyContext   // hidden, used by the detail tab
+	PodKeyContext    = KeyContext   // Context column; also used by the detail tab
 	PodKeyContainers = "containers" // hidden, comma-separated, used by the log pane
 	PodKeyNode       = "node"       // wide mode only
 	PodKeyNodeIP     = "nodeIP"     // wide mode only
@@ -109,11 +109,11 @@ const (
 	DeployKeyAge       = "age"
 	DeployKeyReplicas  = "replicas"
 	DeployKeyContext   = KeyContext
-	DeployKeyNamespace = KeyNamespace // hidden, used by the detail panel
-	DeployKeyStrategy  = "strategy"   // wide mode only
-	DeployKeyAvailable = "available"  // wide mode only
-	DeployKeyUpdated   = "updated"    // wide mode only
-	DeployKeySelector  = "selector"   // wide mode only
+	DeployKeyNamespace = KeyNamespace
+	DeployKeyStrategy  = "strategy"  // wide mode only
+	DeployKeyAvailable = "available" // wide mode only
+	DeployKeyUpdated   = "updated"   // wide mode only
+	DeployKeySelector  = "selector"  // wide mode only
 )
 
 // Column keys for svc rows.
@@ -124,7 +124,7 @@ const (
 	SvcKeyClusterIP   = "clusterIP"
 	SvcKeyPorts       = "ports"
 	SvcKeyAge         = "age"
-	SvcKeyContext     = KeyContext    // hidden, used by the detail tab
+	SvcKeyContext     = KeyContext    // Context column; also used by the detail tab
 	SvcKeySelector    = "selector"    // wide mode only
 	SvcKeyExternalIP  = "externalIP"  // wide mode only
 	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "…" until lazily fetched
@@ -136,7 +136,7 @@ const (
 	ConfigMapKeyNamespace = KeyNamespace
 	ConfigMapKeyKeys      = "keys" // count of data keys, e.g. "3"
 	ConfigMapKeyAge       = "age"
-	ConfigMapKeyContext   = KeyContext // hidden, used by the detail tab
+	ConfigMapKeyContext   = KeyContext // Context column; also used by the detail tab
 	ConfigMapKeyKeyNames  = "keyNames" // wide mode only, comma-joined data keys
 )
 
@@ -149,7 +149,7 @@ const (
 	SecretKeyType      = "type"
 	SecretKeyKeys      = "keys" // count of data keys, e.g. "2"
 	SecretKeyAge       = "age"
-	SecretKeyContext   = KeyContext // hidden, used by the detail tab
+	SecretKeyContext   = KeyContext // Context column; also used by the detail tab
 )
 
 // Column keys for Nodes rows. Nodes are cluster-scoped: there is no
@@ -160,7 +160,7 @@ const (
 	NodeKeyRoles      = "roles"
 	NodeKeyAge        = "age"
 	NodeKeyVersion    = "version"
-	NodeKeyContext    = KeyContext   // hidden, used by the detail tab
+	NodeKeyContext    = KeyContext   // Context column; also used by the detail tab
 	NodeKeyInternalIP = "internalIP" // wide mode only
 	NodeKeyOS         = "os"         // wide mode only
 )

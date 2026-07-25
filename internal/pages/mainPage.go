@@ -165,7 +165,7 @@ func (m *MainPage) renderTabStrip(titles []string, active int, focused bool) str
 		if i == active {
 			st = st.Bold(true).Foreground(p.Subtext1)
 			if focused {
-				st = st.Foreground(p.Mauve)
+				st = st.Foreground(styles.FocusColor)
 			}
 		}
 		parts = append(parts, st.Render(title))
@@ -185,7 +185,13 @@ func (m *MainPage) tabTitles() []string {
 // renderTabTitle renders the Tab Area box's top-border tab strip — the full
 // "Deployments · Pods · svc · ..." when boxW has room for it (see
 // views.FitsTitle), or just the active tab's name with ◂ ▸ hints when it
-// doesn't (a narrow terminal with all six resource kinds as tabs).
+// doesn't (a narrow terminal with all six resource kinds as tabs). This is
+// the tab bar's overflow strategy (§8.5): rather than wrapping to a second
+// line (which would compete with the sidebar's vertical space and reflow
+// the whole header on resize), a too-narrow strip collapses to just the
+// active tab — always legible, never silently truncated mid-strip — and
+// [ / ] (already bound to tab switching, see the Update handler) moves
+// through the same set one at a time regardless of which mode is showing.
 func (m *MainPage) renderTabTitle(focused bool, boxW int) string {
 	full := m.renderTabStrip(m.tabTitles(), m.activeTab, focused)
 	if views.FitsTitle(full, boxW) {
@@ -195,7 +201,7 @@ func (m *MainPage) renderTabTitle(focused bool, boxW int) string {
 	p := styles.CatppuccinMocha()
 	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(p.Subtext1)
 	if focused {
-		activeStyle = activeStyle.Foreground(p.Mauve)
+		activeStyle = activeStyle.Foreground(styles.FocusColor)
 	}
 	hint := lipgloss.NewStyle().Foreground(p.Overlay0)
 	return hint.Render("◂ ") + activeStyle.Render(m.activeKind().Title()) + hint.Render(" ▸")
@@ -466,6 +472,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// gets exactly its solved content rectangle.
 		r := views.Solve(m.width, m.height)
 		m.tableW, m.tableH = r.RightContentW, r.RightContentH
+		tier := views.WidthTier(m.width)
+		for _, kind := range m.tabs {
+			m.tables[kind].SetTier(tier)
+		}
 		m.applyContentSizes()
 
 		contextsH, _, _ := splitLeftSections(r.LeftContentH)
@@ -634,6 +644,10 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 func (m *MainPage) syncContextStates() {
 	s := m.appState.Snapshot()
 	m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+	m.contextList.SetContextColors(s.ContextColors)
+	for _, kind := range m.tabs {
+		m.tables[kind].SetContextColors(s.ContextColors)
+	}
 }
 
 func (m *MainPage) logSlowUpdate(start time.Time) {
@@ -666,20 +680,48 @@ func (m *MainPage) updateFocusStates() {
 // detail pane, out of the remainder after list rows.
 const detailPaneHeightPercent = 45
 
+// detailMinRows is the minimum number of usable rows the Detail/Log pane
+// needs to be worth opening as a bottom split (§8.4) — below this, two
+// half-broken panes are worse than one full-screen one.
+const detailMinRows = 8
+
+// listMinRows is the minimum usable rows the resource list needs to stay
+// worth showing at all alongside a split Detail/Log pane.
+const listMinRows = 5
+
+// wantsDetailOverlay reports whether the Detail/Log pane should replace the
+// list entirely (a full-screen overlay) rather than split the tab content
+// area, given the current tab area's height: true whenever a split would
+// leave the Detail pane with fewer than detailMinRows usable rows once the
+// list keeps its own minimum.
+func (m *MainPage) wantsDetailOverlay() bool {
+	available := m.tableH - 2 // divider + pane header
+	return available-listMinRows < detailMinRows
+}
+
 // applyContentSizes resizes the resource tables and the bottom pane (Detail
 // or Logs — mutually exclusive) to split the tab content area in two
-// whenever either is open.
+// whenever either is open — or, on a short terminal where a split would
+// leave too little room for either half, gives the Detail/Log pane the
+// entire tab content area instead (§8.4; see wantsDetailOverlay).
 func (m *MainPage) applyContentSizes() {
 	listH := m.tableH
 	detailH := 0
 	if m.showDetail || m.showLogs {
-		detailH = m.tableH * detailPaneHeightPercent / 100
-		if detailH < 6 {
-			detailH = 6
-		}
-		listH = m.tableH - detailH - 2 // 2 lines reserved: the divider and the pane header
-		if listH < 3 {
-			listH = 3
+		if m.wantsDetailOverlay() {
+			detailH = m.tableH - 1 // 1 line reserved: the pane header
+			if detailH < 3 {
+				detailH = 3
+			}
+		} else {
+			detailH = m.tableH * detailPaneHeightPercent / 100
+			if detailH < detailMinRows {
+				detailH = detailMinRows
+			}
+			listH = m.tableH - detailH - 2 // 2 lines reserved: the divider and the pane header
+			if listH < listMinRows {
+				listH = listMinRows
+			}
 		}
 	}
 	for _, kind := range m.tabs {
@@ -956,7 +998,7 @@ func (m *MainPage) renderView() string {
 	// top to bottom rather than tab-switched.
 	leftTitleStyle := lipgloss.NewStyle().Foreground(p.Overlay1).Bold(true)
 	if leftFocused {
-		leftTitleStyle = leftTitleStyle.Foreground(p.Mauve)
+		leftTitleStyle = leftTitleStyle.Foreground(styles.FocusColor)
 	}
 	leftBox := views.TitledBox(leftTitleStyle.Render("Contexts"), m.renderLeftBox(r, leftFocused), r.LeftBoxW, r.BoxH, leftBorder)
 
@@ -980,18 +1022,24 @@ func (m *MainPage) renderView() string {
 
 		// The bottom pane (Detail or Logs — mutually exclusive) is
 		// cross-cutting: it splits whichever top tab's content area is
-		// active in two, rather than being a peer tab of its own.
+		// active in two, rather than being a peer tab of its own — unless
+		// the terminal is too short for a split to be worth it (§8.4), in
+		// which case it replaces the list entirely.
 		if m.showDetail || m.showLogs {
-			divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", r.RightContentW))
 			var header, body string
 			if m.showDetail {
-				header = m.deploymentDetail.Header(r.RightContentW)
+				header = m.deploymentDetail.Header(r.RightContentW, snapshot.ContextColors[m.deploymentDetail.Context()])
 				body = m.deploymentDetail.View()
 			} else {
 				header = m.podLogs.Header(r.RightContentW)
 				body = m.podLogs.View()
 			}
-			content = lipgloss.JoinVertical(lipgloss.Left, content, divider, header, body)
+			if m.wantsDetailOverlay() {
+				content = lipgloss.JoinVertical(lipgloss.Left, header, body)
+			} else {
+				divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", r.RightContentW))
+				content = lipgloss.JoinVertical(lipgloss.Left, content, divider, header, body)
+			}
 		}
 	}
 	rightBox := views.TitledBox(m.renderTabTitle(!leftFocused, r.RightBoxW), content, r.RightBoxW, r.BoxH, rightBorder)
@@ -1042,8 +1090,10 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	left := leftStyle.Render(fmt.Sprintf("Contexts: %d", selectedCtx))
 	mid := midStyle.Render(fmt.Sprintf("Tab: %s | Focus: %s", activeTabName, focusStr))
 
-	// Dynamic status bits (loading / count / errors) — count reflects
-	// whichever tab currently has focus, not always Deployments.
+	// Everything below is state — what's currently selected/loading/focused
+	// — and belongs on the left (§3.5). The right zone is reserved entirely
+	// for keybind hints so the two zones never both report the same kind of
+	// thing.
 	var statusBits []string
 	if loadingCount > 0 {
 		statusBits = append(statusBits, fmt.Sprintf("⏳ %d loading", loadingCount))
@@ -1055,7 +1105,7 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	}
 	if m.activeKind() == msgs.KindPods {
 		if checkedCount := len(m.tables[msgs.KindPods].CheckedKeys()); checkedCount > 0 {
-			statusBits = append(statusBits, fmt.Sprintf("☑ %d checked · l: open merged · Ctrl+X: clear", checkedCount))
+			statusBits = append(statusBits, fmt.Sprintf("☑ %d checked", checkedCount))
 		}
 	}
 	if offset, total, ok := m.activeTable().ScrollStatus(); ok {
@@ -1083,12 +1133,14 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	}
 	status := rightStyle.Render(strings.Join(statusBits, "  |  "))
 
-	// Hints are a fixed, separate element anchored to the far right
-	hints := lipgloss.NewStyle().Foreground(p.Overlay1).Background(p.Mantle).Faint(true).Render("Tab:focus  [ ]:tabs  ?:help  q:quit ")
+	// Hints are the right zone's only content — a context-sensitive
+	// keybind list (§4), never state, so the two footer zones never
+	// duplicate the same kind of information.
+	hints := lipgloss.NewStyle().Foreground(p.Overlay1).Background(p.Mantle).Faint(true).Render(m.footerHints() + " ")
 
 	gap := styles.StatusBar.Render("  ")
-	leftMid := lipgloss.JoinHorizontal(lipgloss.Top, left, gap, mid)
-	rightSection := lipgloss.JoinHorizontal(lipgloss.Top, status, gap, hints)
+	leftMid := lipgloss.JoinHorizontal(lipgloss.Top, left, gap, mid, gap, status)
+	rightSection := hints
 	spacerWidth := m.width - lipgloss.Width(leftMid) - lipgloss.Width(rightSection)
 	if spacerWidth < 1 {
 		spacerWidth = 1
@@ -1096,6 +1148,25 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	spacer := styles.StatusBar.Render(strings.Repeat(" ", spacerWidth))
 
 	return leftMid + spacer + rightSection
+}
+
+// footerHints returns the right footer zone's keybind hint list (§4),
+// picking the 4-6 keys relevant to whatever currently has focus rather than
+// always showing the same fixed set — e.g. "d delete" makes no sense while
+// the context picker has focus.
+func (m *MainPage) footerHints() string {
+	switch {
+	case m.showLogs:
+		return "↑↓ scroll  w wrap  c isolate  esc close  q quit"
+	case m.showDetail:
+		return "↑↓ scroll  y yaml  ctrl+r focus  esc close  q quit"
+	case m.focus == focusLeftPane:
+		return "space select  ↵ confirm  tab focus  ?  help  q quit"
+	case m.activeKind() == msgs.KindPods:
+		return "/ filter  [ ] tabs  space check  l logs  ↵ describe  ?  help"
+	default:
+		return "/ filter  [ ] tabs  ↵ describe  r refresh  ?  help  q quit"
+	}
 }
 
 func (m *MainPage) renderHelpOverlay() string {
@@ -1286,10 +1357,10 @@ func splitLeftSections(total int) (contextsH, namespacesH, clustersH int) {
 }
 
 // renderLeftBox renders the Context List box's content: the interactive
-// Contexts list, then blank Namespaces and Clusters sections (each just a
-// header over empty space — placeholders, not yet backed by any data),
-// each clipped (views.FitBlock) to its allotted height so one section can
-// never push the others out of place. Only the first section gets the
+// Contexts list, then Namespaces and Clusters sections (each a header over
+// an explanatory placeholder line — not yet backed by any data), each
+// clipped (views.FitBlock) to its allotted height so one section can never
+// push the others out of place. Only the first section gets the
 // interactive list itself; Contexts' own header is the outer box's border
 // title, so it isn't repeated here.
 func (m *MainPage) renderLeftBox(r views.Rects, focused bool) string {
@@ -1298,15 +1369,16 @@ func (m *MainPage) renderLeftBox(r views.Rects, focused bool) string {
 	p := styles.CatppuccinMocha()
 	headerStyle := lipgloss.NewStyle().Foreground(p.Overlay1).Bold(true)
 	if focused {
-		headerStyle = headerStyle.Foreground(p.Mauve)
+		headerStyle = headerStyle.Foreground(styles.FocusColor)
 	}
+	placeholderStyle := lipgloss.NewStyle().Foreground(p.Overlay0).Italic(true)
 
 	blocks := []string{
 		views.FitBlock(m.contextList.View(), r.LeftContentW, contextsH),
 		headerStyle.Render("Namespaces"),
-		views.FitBlock("", r.LeftContentW, namespacesH),
+		views.FitBlock(placeholderStyle.Render("no namespaces loaded"), r.LeftContentW, namespacesH),
 		headerStyle.Render("Clusters"),
-		views.FitBlock("", r.LeftContentW, clustersH),
+		views.FitBlock(placeholderStyle.Render("no clusters loaded"), r.LeftContentW, clustersH),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
 }
