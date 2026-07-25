@@ -9,21 +9,76 @@ import (
 	"github.com/ktails/ktails/internal/k8s"
 )
 
+// ResourceKind identifies one of the three watched resource types. It is the
+// single tab/watch/cache identity used everywhere a "Deployments" | "Pods" |
+// "svc" string switch used to live.
+type ResourceKind int
+
+const (
+	KindDeployments ResourceKind = iota
+	KindPods
+	KindServices
+)
+
+// Kinds returns every ResourceKind in tab order.
+func Kinds() []ResourceKind {
+	return []ResourceKind{KindDeployments, KindPods, KindServices}
+}
+
+// Title is the tab label shown in the Tab Area header.
+func (k ResourceKind) Title() string {
+	switch k {
+	case KindDeployments:
+		return "Deployments"
+	case KindPods:
+		return "Pods"
+	case KindServices:
+		return "svc"
+	}
+	return ""
+}
+
+// Kind is the Kubernetes kind name, as shown in the Detail Pane.
+func (k ResourceKind) Kind() string {
+	switch k {
+	case KindDeployments:
+		return "Deployment"
+	case KindPods:
+		return "Pod"
+	case KindServices:
+		return "Service"
+	}
+	return ""
+}
+
+func (k ResourceKind) String() string {
+	return k.Title()
+}
+
 // RowData is a keyed row of field values for the Pods/Deployments/svc
 // tables. Keys matching a table.Column's key are displayed; others (e.g.
-// PodKeyContext/PodKeyContainers) ride along as hidden metadata for the
+// KeyContext/PodKeyContainers) ride along as hidden metadata for the
 // Detail pane / Log pane to read without a visible column of their own.
 type RowData = map[string]any
 
-// Column keys for Pods rows (see cmds.PodWatchCache.Rows / models.PodPage).
+// Shared row keys — deliberately identical across all three resource kinds,
+// so kind-agnostic callers (the Detail Pane's row→identity extraction) can
+// read a selected row without switching on its kind.
+const (
+	KeyName      = "name"
+	KeyNamespace = "namespace"
+	KeyContext   = "context"
+)
+
+// Column keys for Pods rows (see watch.Supervisor / models.ResourceTable).
 const (
 	PodKeyCheck      = "check"
-	PodKeyName       = "name"
-	PodKeyNamespace  = "namespace"
+	PodKeyName       = KeyName
+	PodKeyNamespace  = KeyNamespace
 	PodKeyStatus     = "status"
 	PodKeyRestarts   = "restarts"
 	PodKeyAge        = "age"
-	PodKeyContext    = "context"    // hidden, used by the detail tab
+	PodKeyContext    = KeyContext   // hidden, used by the detail tab
 	PodKeyContainers = "containers" // hidden, comma-separated, used by the log pane
 	PodKeyNode       = "node"       // wide mode only
 	PodKeyNodeIP     = "nodeIP"     // wide mode only
@@ -31,28 +86,28 @@ const (
 	PodKeyReady      = "ready"      // wide mode only, "ready/total" containers
 )
 
-// Column keys for Deployments rows (see cmds.DeploymentWatchCache.Rows).
+// Column keys for Deployments rows.
 const (
-	DeployKeyName      = "name"
+	DeployKeyName      = KeyName
 	DeployKeyAge       = "age"
 	DeployKeyReplicas  = "replicas"
-	DeployKeyContext   = "context"
-	DeployKeyNamespace = "namespace" // hidden, used by the detail panel
-	DeployKeyStrategy  = "strategy"  // wide mode only
-	DeployKeyAvailable = "available" // wide mode only
-	DeployKeyUpdated   = "updated"   // wide mode only
-	DeployKeySelector  = "selector"  // wide mode only
+	DeployKeyContext   = KeyContext
+	DeployKeyNamespace = KeyNamespace // hidden, used by the detail panel
+	DeployKeyStrategy  = "strategy"   // wide mode only
+	DeployKeyAvailable = "available"  // wide mode only
+	DeployKeyUpdated   = "updated"    // wide mode only
+	DeployKeySelector  = "selector"   // wide mode only
 )
 
-// Column keys for svc rows (see cmds.ServiceWatchCache.Rows).
+// Column keys for svc rows.
 const (
-	SvcKeyName        = "name"
-	SvcKeyNamespace   = "namespace"
+	SvcKeyName        = KeyName
+	SvcKeyNamespace   = KeyNamespace
 	SvcKeyType        = "type"
 	SvcKeyClusterIP   = "clusterIP"
 	SvcKeyPorts       = "ports"
 	SvcKeyAge         = "age"
-	SvcKeyContext     = "context"     // hidden, used by the detail tab
+	SvcKeyContext     = KeyContext    // hidden, used by the detail tab
 	SvcKeySelector    = "selector"    // wide mode only
 	SvcKeyExternalIP  = "externalIP"  // wide mode only
 	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "…" until lazily fetched
@@ -89,13 +144,6 @@ type ResourceDetailMsg struct {
 	Err     error
 }
 
-// ErrorMsg is a general error message for displaying errors to users
-type ErrorMsg struct {
-	Context string // Which context caused the error (if applicable)
-	Title   string // Short error title
-	Err     error  // The actual error
-}
-
 // LogStreamOpenedMsg carries a freshly opened pod log stream for one source
 // in the merged Log pane. SourceKey identifies which pod/container/context
 // this belongs to; Generation must match that source's current generation
@@ -129,70 +177,31 @@ type LogStreamClosedMsg struct {
 // calls) — see MainPage's RefreshTickMsg handler.
 type RefreshTickMsg struct{}
 
-// PodWatchOpenedMsg carries a freshly opened Pods watch for one
-// context+namespace. Generation must match that context's current
-// generation in MainPage before the watch is adopted — otherwise it's been
-// superseded (a manual "r" restart or context deselect) and should just be
-// stopped.
-type PodWatchOpenedMsg struct {
+// WatchOpenedMsg carries a freshly opened watch for one resource kind in one
+// context+namespace. Generation must match that (kind, context)'s current
+// generation in the watch Supervisor before the watch is adopted — otherwise
+// it's been superseded (a manual "r" restart or context deselect) and should
+// just be stopped.
+type WatchOpenedMsg struct {
+	Kind       ResourceKind
 	Context    string
 	Generation int
 	Watcher    watch.Interface
 }
 
-// PodWatchEventMsg carries a freshly rebuilt row set for one context's Pods
+// WatchEventMsg carries a freshly rebuilt row set for one (kind, context)
 // watch cache, after applying one or more buffered watch events.
-type PodWatchEventMsg struct {
+type WatchEventMsg struct {
+	Kind       ResourceKind
 	Context    string
 	Generation int
 	Rows       []RowData
 }
 
-// PodWatchClosedMsg reports that one context's Pods watch ended, either
+// WatchClosedMsg reports that one (kind, context) watch ended, either
 // cleanly (Err == nil) or because opening/reading it failed (Err != nil).
-type PodWatchClosedMsg struct {
-	Context    string
-	Generation int
-	Err        error
-}
-
-// DeploymentWatchOpenedMsg mirrors PodWatchOpenedMsg for Deployments.
-type DeploymentWatchOpenedMsg struct {
-	Context    string
-	Generation int
-	Watcher    watch.Interface
-}
-
-// DeploymentWatchEventMsg mirrors PodWatchEventMsg for Deployments.
-type DeploymentWatchEventMsg struct {
-	Context    string
-	Generation int
-	Rows       []RowData
-}
-
-// DeploymentWatchClosedMsg mirrors PodWatchClosedMsg for Deployments.
-type DeploymentWatchClosedMsg struct {
-	Context    string
-	Generation int
-	Err        error
-}
-
-// ServiceWatchOpenedMsg mirrors PodWatchOpenedMsg for Services.
-type ServiceWatchOpenedMsg struct {
-	Context    string
-	Generation int
-	Watcher    watch.Interface
-}
-
-// ServiceWatchEventMsg mirrors PodWatchEventMsg for Services.
-type ServiceWatchEventMsg struct {
-	Context    string
-	Generation int
-	Rows       []RowData
-}
-
-// ServiceWatchClosedMsg mirrors PodWatchClosedMsg for Services.
-type ServiceWatchClosedMsg struct {
+type WatchClosedMsg struct {
+	Kind       ResourceKind
 	Context    string
 	Generation int
 	Err        error

@@ -189,29 +189,6 @@ func (c *Client) GetCurrentContext() string {
 	return c.currentContext
 }
 
-// SetCurrentContext changes the current context (doesn't affect cached clients)
-func (c *Client) SetCurrentContext(contextName string) error {
-	// Verify context exists
-	c.mu.RLock()
-	_, exists := c.rawConfig.Contexts[contextName]
-	c.mu.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("context %s not found in kubeconfig", contextName)
-	}
-
-	// Ensure client exists for this context
-	if _, err := c.GetClientForContext(contextName); err != nil {
-		return err
-	}
-
-	c.mu.Lock()
-	c.currentContext = contextName
-	c.mu.Unlock()
-
-	return nil
-}
-
 // DefaultNamespace returns the default namespace for the specified context
 func (c *Client) DefaultNamespace(kubeContext string) string {
 	c.mu.RLock()
@@ -240,45 +217,6 @@ func (c *Client) ListContexts() ([]ContextsInfo, error) {
 		contexts = append(contexts, ctx)
 	}
 	return contexts, nil
-}
-
-// ListNamespaces returns namespaces from the specified Kubernetes context
-func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
-	// Get client for this context
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	// List namespaces
-	ctx := context.Background()
-	namespaceList, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces in context %s: %w", kubeContext, err)
-	}
-
-	// Extract namespace names
-	namespaces := make([]string, 0, len(namespaceList.Items))
-	for _, ns := range namespaceList.Items {
-		namespaces = append(namespaces, ns.Name)
-	}
-
-	return namespaces, nil
-}
-
-// ListPods returns pods in the given namespace
-func (c *Client) ListPods(kubeContext, namespace string) ([]v1.Pod, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	pList, err := clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pods in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-
-	return pList.Items, nil
 }
 
 // WatchPods opens a watch on pods in the given namespace. A bare Watch with
@@ -326,38 +264,6 @@ func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace strin
 		return nil, fmt.Errorf("failed to watch services in namespace %s (context %s): %w", namespace, kubeContext, err)
 	}
 	return w, nil
-}
-
-// ListPodInfo returns pods with detailed information
-func (c *Client) ListPodInfo(kubeContext, namespace string) ([]*PodInfo, error) {
-	pods, err := c.ListPods(kubeContext, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	podInfos := make([]*PodInfo, 0, len(pods))
-	for _, pod := range pods {
-		info := PodToPodInfo(&pod, kubeContext)
-		podInfos = append(podInfos, info)
-	}
-
-	return podInfos, nil
-}
-
-// GetPodInfo fetches detailed pod information
-func (c *Client) GetPodInfo(kubeContext, namespace, podName string) (*PodInfo, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	ctx := context.Background()
-	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pod %s in namespace %s (context %s): %w", podName, namespace, kubeContext, err)
-	}
-
-	return PodToPodInfo(pod, kubeContext), nil
 }
 
 // GetPodDetail fetches a single pod's status, rendered YAML, and recent events.
@@ -514,19 +420,4 @@ func (c *Client) StreamLogs(kubeContext, namespace, podName string, opts *v1.Pod
 	}
 
 	return stream, nil
-}
-
-// ClearClientCache removes cached client for a specific context
-// Useful if connection needs to be refreshed
-func (c *Client) ClearClientCache(contextName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.clientsByContext, contextName)
-}
-
-// ClearAllClientCaches removes all cached clients
-func (c *Client) ClearAllClientCaches() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.clientsByContext = make(map[string]kubernetes.Interface)
 }

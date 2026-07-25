@@ -25,10 +25,6 @@ func int64Ptr(v int64) *int64 {
 	return &v
 }
 
-// endpointIPsPlaceholder is shown in the Endpoint IPs wide-mode column until
-// LoadServiceEndpointsCmd's lazy fetch resolves for that context+namespace.
-const endpointIPsPlaceholder = "…"
-
 // LoadServiceEndpointsCmd fetches Endpoint IPs for every service in one
 // context+namespace via a single EndpointSlices list call. It's triggered
 // lazily (see mainPage.go's Ctrl+W handling for the svc tab), independent of

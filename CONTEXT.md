@@ -1,5 +1,17 @@
 # ktails — Glossary
 
+## Resource Kind
+The identity of one watched resource type — Deployments, Pods, or svc — as a value (`msgs.ResourceKind`), not a string. It names a tab in the Tab Area, keys that tab's Resource Table, and tags every watch message. Anywhere the code needs "which of the three," it dispatches on a Resource Kind.
+
+## Resource Table
+The single table module (`models.ResourceTable`) behind all three Tab Area tabs. Cursor/window management, the "/" filter, wide mode, column scroll, and view caching are its implementation; what differs per Resource Kind (columns, row rendering, the Pods checkbox) lives in its per-kind spec. There is one instance per tab, but one implementation.
+
+## Watch Supervisor
+The module (`watch.Supervisor`) owning the full watch lifecycle: opening Watch() streams per selected context, applying events to local caches, reconnect backoff, generation-based staleness guards, and the svc Endpoint-IPs overlay. Its seam to the cluster is the `watch.Cluster` interface (`*k8s.Client` in production, a fake event stream in tests). Rows live only in its caches — `MainPage` and `state.AppState` never store them.
+
+## Layout Solver
+The single owner of the terminal's width/height budget (`views.Solve`): a pure function from terminal size to every pane's exact box and content rectangle. Panes render into pre-fitted blocks (`views.FitBlock` / `views.TitledBox`), so the two boxes' borders align by construction — there is no post-render height reconciliation, and no layout constant lives outside `views`.
+
 ## Pane Focus
 Which of the two main areas — **Context List** (left) or **Tab Area** (right) — currently receives keyboard input. Switched with `Tab` / `Shift+Tab`.
 

@@ -2,11 +2,6 @@ package styles
 
 import "charm.land/lipgloss/v2"
 
-const (
-	DefaultHeaderMargin int = 5
-	DefaultFooterMargin int = 3
-)
-
 // ASCIIBorder is a lipgloss.Border built entirely from plain ASCII
 // (-, |, +). Unicode box-drawing characters (U+2500-U+257F) and several
 // decorative glyphs used elsewhere in this package carry the "Ambiguous"
@@ -32,35 +27,14 @@ func ASCIIBorder() lipgloss.Border {
 	}
 }
 
+// FocusColor/BlurColor are the single accent pair used across the TUI:
+// focused panes get the vibrant accent, blurred panes the subtle overlay.
 var (
-	// Use a single palette across the TUI for consistency
-	// Focused elements use a vibrant accent; blurred elements use a subtle overlay
-	focusColor = CatppuccinMocha().Mauve
-	blurColor  = CatppuccinMocha().Overlay0
-	LeftPane   = lipgloss.NewStyle().Border(lipgloss.DoubleBorder(), true).
-			Padding(2, 0).BorderForeground(focusColor)
-	LeftPaneBlur = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).
-			Padding(2, 0).BorderForeground(blurColor)
-
-	DefaultTabs          = []string{"Deployments", "Pods"}
-	InactiveTabBorder    = TabBorderWithBottom("┴", "─", "┴")
-	ActiveTabBorder      = TabBorderWithBottom("┘", " ", "└")
-	DocStyle             = lipgloss.NewStyle().Padding(1, 2, 1, 2).BorderStyle(lipgloss.InnerHalfBlockBorder())
-	InactiveTabStyle     = lipgloss.NewStyle().Border(InactiveTabBorder, true).BorderForeground(focusColor).Padding(0, 1)
-	ActiveTabStyle       = InactiveTabStyle.Border(ActiveTabBorder, true)
-	WindowStyle          = lipgloss.NewStyle().BorderForeground(focusColor).Padding(2, 0).Align(lipgloss.Center).Border(lipgloss.DoubleBorder()).UnsetBorderTop()
-	InactiveTabBlurStyle = lipgloss.NewStyle().Border(InactiveTabBorder, true).BorderForeground(blurColor).Padding(0, 1)
-	ActiveTabBlurStyle   = InactiveTabBlurStyle.Border(ActiveTabBorder, true)
-	WindowBlurStyle      = lipgloss.NewStyle().BorderForeground(blurColor).Padding(2, 0).Align(lipgloss.Center).Border(lipgloss.NormalBorder()).UnsetBorderTop()
-
-	// status bar
-	StatusBar = lipgloss.NewStyle()
+	FocusColor = CatppuccinMocha().Mauve
+	BlurColor  = CatppuccinMocha().Overlay0
 )
 
-func TabBorderWithBottom(left, middle, right string) lipgloss.Border {
-	border := lipgloss.RoundedBorder()
-	border.BottomLeft = left
-	border.Bottom = middle
-	border.BottomRight = right
-	return border
-}
+// StatusBar is the one-line bar at the bottom of the TUI. The background
+// fill is what makes it read as a bar rather than floating text — segments
+// rendered onto it must carry the same background.
+var StatusBar = lipgloss.NewStyle().Background(CatppuccinMocha().Mantle)

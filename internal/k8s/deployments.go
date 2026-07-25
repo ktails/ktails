@@ -23,33 +23,6 @@ type DeploymentInfo struct {
 	Status            []string
 }
 
-// GetDeploymentInfo retrieves deployment information for a specific context and namespace
-func (c *Client) GetDeploymentInfo(kubeContextName, namespace string) ([]DeploymentInfo, error) {
-	// Get the appropriate client for this context
-	clientset, err := c.GetClientForContext(kubeContextName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
-	}
-
-	// List deployments
-	deploymentList, err := clientset.AppsV1().Deployments(namespace).List(
-		context.Background(),
-		v1.ListOptions{},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments in namespace %s (context %s): %w",
-			namespace, kubeContextName, err)
-	}
-
-	// Convert to DeploymentInfo
-	deploymentInfoList := make([]DeploymentInfo, 0, len(deploymentList.Items))
-	for _, deployment := range deploymentList.Items {
-		deploymentInfoList = append(deploymentInfoList, DeploymentToDeploymentInfo(&deployment))
-	}
-
-	return deploymentInfoList, nil
-}
-
 // DeploymentToDeploymentInfo converts a deployment object to DeploymentInfo.
 func DeploymentToDeploymentInfo(deployment *appsv1.Deployment) DeploymentInfo {
 	age := formatDuration(time.Since(deployment.CreationTimestamp.Time))

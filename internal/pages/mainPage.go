@@ -12,9 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
-	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/state"
@@ -23,6 +21,7 @@ import (
 	"github.com/ktails/ktails/internal/tui/msgs"
 	"github.com/ktails/ktails/internal/tui/styles"
 	"github.com/ktails/ktails/internal/tui/views"
+	"github.com/ktails/ktails/internal/tui/watch"
 )
 
 type focusTarget int
@@ -37,48 +36,43 @@ type MainPage struct {
 	width  int
 	height int
 
-	// tabs
-	tabs       []string
-	tabContent string
-	activeTab  int
+	// tabs — one per resource kind, in msgs.Kinds() order
+	tabs      []msgs.ResourceKind
+	activeTab int
 
-	// App state
+	// App state — per-context UI status (selection, loading, errors). Rows
+	// live in the watch Supervisor's caches, not here.
 	appState       *state.AppState
 	appStateLoaded bool
 
 	// base models
-	contextList      *models.ContextsInfo
-	deploymentList   *models.DeploymentPage
-	podList          *models.PodPage
-	svcList          *models.ServicePage
+	contextList *models.ContextsInfo
+	// tables holds the one resource table per tab; all three share the
+	// models.ResourceTable implementation and differ only by spec.
+	tables           map[msgs.ResourceKind]*models.ResourceTable
 	deploymentDetail *models.ResourceDetailPage
 	focus            focusTarget
 
 	// k8s client
 	Client *k8s.Client
 
+	// watchSup owns every watch stream, cache, and reconnect decision —
+	// MainPage only starts/stops contexts, forwards watch messages to
+	// Handle, and reads rows back out.
+	watchSup *watch.Supervisor
+
 	// UI overlays
 	errorMessage string
 	showHelp     bool
 
-	// Auto-refresh — a self-rescheduling tick. Table data itself is now kept
-	// current by the watch streams below; the tick's only remaining job is to
+	// Auto-refresh — a self-rescheduling tick. Table data itself is kept
+	// current by the watch streams; the tick's only remaining job is to
 	// re-render Age text from the local watch caches (no API calls). Paused
 	// (tick still reschedules, but the re-render is skipped) while the Detail
 	// or Log pane is open, since a background reorder under a pinned pane is
 	// more disruptive than helpful.
 	autoRefresh     bool
 	refreshInterval time.Duration
-
-	// Watch streams — one per resource type per selected context, replacing
-	// the old poll-on-a-timer refresh with a k9s-style Watch()-backed local
-	// cache. Keyed by context, mirroring logStreams. generation guards
-	// against messages from a since-superseded watch (manual "r" restart or
-	// context deselect) the same way logStreamState.generation does for log
-	// streams.
-	podWatchers        map[string]*resourceWatchState[*cmds.PodWatchCache]
-	deploymentWatchers map[string]*resourceWatchState[*cmds.DeploymentWatchCache]
-	serviceWatchers    map[string]*resourceWatchState[*cmds.ServiceWatchCache]
 
 	// Detail pane — a cross-cutting bottom split opened by Enter from
 	// Deployments or Pods. It's not a peer tab: it stays put, splitting
@@ -112,85 +106,69 @@ type logStreamState struct {
 	generation int
 }
 
-// resourceWatchState is the live watch-plumbing state for one resource
-// type's Watch() stream against one context: the current generation (bumped
-// on every restart, guarding against stale in-flight messages), the open
-// watcher itself (nil between a restart and its WatchOpenedMsg landing),
-// the local cache it's keeping in sync, and a consecutive-failure counter
-// driving reconnect backoff (reset to 0 the moment any event is applied).
-type resourceWatchState[C any] struct {
-	generation int
-	watcher    watch.Interface
-	cache      C
-	failures   int
-}
-
-// maxWatchReconnectFailures is how many consecutive reconnect failures a
-// context+resource watch tolerates before giving up and surfacing an error,
-// rather than backing off forever against a genuinely broken context (bad
-// creds, deleted context, unreachable apiserver).
-const maxWatchReconnectFailures = 6
-
-// maxWatchBackoff caps the exponential reconnect delay (1s, 2s, 4s, 8s,
-// 16s, ...) so a flaky-but-recovering connection doesn't end up waiting
-// minutes between attempts.
-const maxWatchBackoff = 32 * time.Second
-
-// watchBackoffDelay returns the reconnect delay for the Nth consecutive
-// failure (1-indexed): 1s, 2s, 4s, 8s, 16s, capped at maxWatchBackoff.
-func watchBackoffDelay(failures int) time.Duration {
-	if failures < 1 {
-		failures = 1
-	}
-	delay := time.Second << uint(failures-1)
-	if delay <= 0 || delay > maxWatchBackoff {
-		delay = maxWatchBackoff
-	}
-	return delay
-}
-
 // NewMainPageModel builds the top-level page model. refreshIntervalSeconds is
 // config.Preferences.RefreshInterval — the auto-refresh tick period; values
 // below 1 fall back to 5s (the same default as config.DefaultConfig).
 func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
-	ctxInfo := models.NewContextInfo(c)
-	depList := models.NewDeploymentPage(c)
-	pList := models.NewPodPageModel(c)
-	svcList := models.NewServicePageModel(c)
-	detailPage := models.NewResourceDetailPage()
-	logPage := models.NewLogPage()
-	tabs := styles.DefaultTabs
-	tabs = append(tabs, "svc")
-
 	if refreshIntervalSeconds < 1 {
 		refreshIntervalSeconds = 5
 	}
 
+	tables := make(map[msgs.ResourceKind]*models.ResourceTable)
+	for _, kind := range msgs.Kinds() {
+		tables[kind] = models.NewResourceTable(kind)
+	}
+
 	m := &MainPage{
-		Client:             c,
-		appState:           state.NewAppState(),
-		tabs:               tabs,
-		tabContent:         "",
-		contextList:        ctxInfo,
-		deploymentList:     depList,
-		podList:            pList,
-		svcList:            svcList,
-		deploymentDetail:   detailPage,
-		podLogs:            logPage,
-		logStreams:         make(map[string]*logStreamState),
-		podWatchers:        make(map[string]*resourceWatchState[*cmds.PodWatchCache]),
-		deploymentWatchers: make(map[string]*resourceWatchState[*cmds.DeploymentWatchCache]),
-		serviceWatchers:    make(map[string]*resourceWatchState[*cmds.ServiceWatchCache]),
-		appStateLoaded:     false,
-		focus:              focusLeftPane,
-		errorMessage:       "",
-		showHelp:           false,
-		autoRefresh:        true,
-		refreshInterval:    time.Duration(refreshIntervalSeconds) * time.Second,
+		Client:           c,
+		appState:         state.NewAppState(),
+		tabs:             msgs.Kinds(),
+		contextList:      models.NewContextInfo(c),
+		tables:           tables,
+		deploymentDetail: models.NewResourceDetailPage(),
+		podLogs:          models.NewLogPage(),
+		logStreams:       make(map[string]*logStreamState),
+		watchSup:         watch.NewSupervisor(c),
+		appStateLoaded:   false,
+		focus:            focusLeftPane,
+		errorMessage:     "",
+		showHelp:         false,
+		autoRefresh:      true,
+		refreshInterval:  time.Duration(refreshIntervalSeconds) * time.Second,
 	}
 
 	m.updateFocusStates()
 	return m
+}
+
+// activeKind returns the resource kind of the active tab.
+func (m *MainPage) activeKind() msgs.ResourceKind {
+	return m.tabs[m.activeTab]
+}
+
+// activeTable returns the active tab's resource table.
+func (m *MainPage) activeTable() *models.ResourceTable {
+	return m.tables[m.activeKind()]
+}
+
+// renderTabTitle renders the compact tab strip embedded in the Tab Area
+// box's top border — "Deployments · Pods · svc" with the active tab
+// accented (or merely brightened, when the Tab Area isn't focused).
+func (m *MainPage) renderTabTitle(focused bool) string {
+	p := styles.CatppuccinMocha()
+	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(" · ")
+	parts := make([]string, 0, len(m.tabs))
+	for i, kind := range m.tabs {
+		st := lipgloss.NewStyle().Foreground(p.Overlay1)
+		if i == m.activeTab {
+			st = st.Bold(true).Foreground(p.Subtext1)
+			if focused {
+				st = st.Foreground(p.Mauve)
+			}
+		}
+		parts = append(parts, st.Render(kind.Title()))
+	}
+	return strings.Join(parts, sep)
 }
 
 func (m *MainPage) Init() tea.Cmd {
@@ -238,6 +216,13 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	start := time.Now()
 	defer m.logSlowUpdate(start)
 
+	// Watch messages are the Supervisor's to interpret; MainPage only
+	// applies the resulting row/error updates to the UI.
+	if upd, cmd, handled := m.watchSup.Handle(msg); handled {
+		m.applyWatchUpdate(upd)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		keypress := msg.String()
@@ -256,17 +241,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (refresh) or "l" (open logs) below would get swallowed into a
 		// command instead of becoming part of the filter query.
 		if m.focus == focusTabs && !m.detailFocused && !m.logsFocused {
-			if t := m.activeResourceTable(); t != nil {
-				if _, _, typing, ok := t.FilterStatus(); ok && typing {
-					switch m.tabs[m.activeTab] {
-					case "Deployments":
-						return m, m.deploymentList.Update(msg)
-					case "Pods":
-						return m, m.podList.Update(msg)
-					case "svc":
-						return m, m.svcList.Update(msg)
-					}
-				}
+			if _, _, typing, ok := m.activeTable().FilterStatus(); ok && typing {
+				return m, m.activeTable().Update(msg)
 			}
 		}
 
@@ -349,19 +325,16 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Tab navigation (tabs focused) — switching tabs while the detail pane
 		// is open (but unfocused) is allowed; the pane is cross-cutting and
-		// stays put beneath whichever tab you land on.
+		// stays put beneath whichever tab you land on. Every tab needs loaded
+		// data, so navigation is gated on contexts being selected and loaded.
 		switch keypress {
 		case "right", "]":
 			next := m.activeTab + 1
 			if next >= len(m.tabs) {
 				return m, nil
 			}
-			nextTab := m.tabs[next]
-			if nextTab == "Deployments" || nextTab == "Pods" || nextTab == "svc" {
-				snapshot := m.appState.Snapshot()
-				if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-					return m, nil
-				}
+			if !m.appStateLoaded || len(m.appState.Snapshot().SelectedContexts) == 0 {
+				return m, nil
 			}
 			m.activeTab = next
 			m.updateFocusStates()
@@ -376,13 +349,12 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Enter on a selected Deployment/Pod/Service row (re)loads the detail
-		// pane for that row and gives it keyboard focus for scrolling. Detail
-		// and Logs share the same bottom slot and are mutually exclusive.
-		if m.appStateLoaded && keypress == "enter" &&
-			(m.tabs[m.activeTab] == "Deployments" || m.tabs[m.activeTab] == "Pods" || m.tabs[m.activeTab] == "svc") {
+		// Enter on a selected row (re)loads the detail pane for that row and
+		// gives it keyboard focus for scrolling. Detail and Logs share the
+		// same bottom slot and are mutually exclusive.
+		if m.appStateLoaded && keypress == "enter" {
 			m.closeLogs()
-			if cmd := m.openResourceDetail(m.tabs[m.activeTab]); cmd != nil {
+			if cmd := m.openResourceDetail(m.activeKind()); cmd != nil {
 				return m, cmd
 			}
 			return m, nil
@@ -390,20 +362,21 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Space toggles the row under the cursor for inclusion in the next
 		// merged log stream; Ctrl+X clears all checkmarks. Pods-tab only.
-		if m.appStateLoaded && m.tabs[m.activeTab] == "Pods" {
+		if m.appStateLoaded && m.activeKind() == msgs.KindPods {
 			switch keypress {
 			case "space":
-				m.podList.ToggleChecked(models.PodRowKey(m.podList.SelectedRow()))
+				pods := m.tables[msgs.KindPods]
+				pods.ToggleChecked(models.PodRowKey(pods.SelectedRow()))
 				return m, nil
 			case "ctrl+x":
-				m.podList.ClearChecked()
+				m.tables[msgs.KindPods].ClearChecked()
 				return m, nil
 			}
 		}
 
 		// l reconciles the merged log pane to whatever's currently checked in
 		// the Pods tab (or the row under the cursor, if nothing's checked).
-		if m.appStateLoaded && keypress == "l" && m.tabs[m.activeTab] == "Pods" {
+		if m.appStateLoaded && keypress == "l" && m.activeKind() == msgs.KindPods {
 			if cmd := m.openPodLogs(); cmd != nil {
 				return m, cmd
 			}
@@ -411,10 +384,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// r force-restarts the watch(es) for only the active tab's resource
-		// type, across every selected context — not all three resource
-		// types, to avoid tripling API load on tabs the user isn't even
-		// looking at. Table cursor is untouched: SetRows reuses the same
-		// table.Model, it doesn't reset it.
+		// kind, across every selected context — not all three kinds, to
+		// avoid tripling API load on tabs the user isn't even looking at.
+		// Table cursor is untouched: SetRows reuses the same table.Model, it
+		// doesn't reset it.
 		if m.appStateLoaded && keypress == "r" {
 			if cmd := m.restartActiveTabWatch(); cmd != nil {
 				return m, cmd
@@ -424,25 +397,24 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Ctrl+W toggles wide mode on the active tab's table (sticky per tab,
 		// reset on resize); Shift+Left/Right scroll one column at a time while
-		// wide mode is on. Both are a no-op outside the three resource tabs.
+		// wide mode is on.
 		if m.appStateLoaded {
 			switch keypress {
 			case "ctrl+w":
-				if t := m.activeResourceTable(); t != nil {
-					wasWide := t.WideMode()
-					t.ToggleWideMode()
-					if !wasWide && t.WideMode() && m.tabs[m.activeTab] == "svc" {
-						return m, m.fetchServiceEndpointsIfNeeded()
-					}
+				t := m.activeTable()
+				wasWide := t.WideMode()
+				t.ToggleWideMode()
+				if !wasWide && t.WideMode() && m.activeKind() == msgs.KindServices {
+					return m, m.fetchServiceEndpointsIfNeeded()
 				}
 				return m, nil
 			case "shift+left":
-				if t := m.activeResourceTable(); t != nil && t.WideMode() {
+				if t := m.activeTable(); t.WideMode() {
 					t.ScrollLeft()
 				}
 				return m, nil
 			case "shift+right":
-				if t := m.activeResourceTable(); t != nil && t.WideMode() {
+				if t := m.activeTable(); t.WideMode() {
 					t.ScrollRight()
 				}
 				return m, nil
@@ -451,17 +423,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Content keys forwarded to the active tab
 		if m.appStateLoaded {
-			switch m.tabs[m.activeTab] {
-			case "Deployments":
-				cmd := m.deploymentList.Update(msg)
-				return m, cmd
-			case "Pods":
-				cmd := m.podList.Update(msg)
-				return m, cmd
-			case "svc":
-				cmd := m.svcList.Update(msg)
-				return m, cmd
-			}
+			return m, m.activeTable().Update(msg)
 		}
 
 		return m, nil
@@ -470,19 +432,13 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		ctxW, ctxH := getContextPaneDimensions(m.width, m.height)
-		ctxMsg := tea.WindowSizeMsg{Width: ctxW, Height: ctxH}
-
-		leftW := leftPaneWidthFor(m.width)
-		tableW := m.width - leftW - 12
-		tableH := m.height - 16
-		if tableH < 1 {
-			tableH = 1
-		}
-		m.tableW, m.tableH = tableW, tableH
+		// views.Solve is the single owner of the layout budget: every pane
+		// gets exactly its solved content rectangle.
+		r := views.Solve(m.width, m.height)
+		m.tableW, m.tableH = r.RightContentW, r.RightContentH
 		m.applyContentSizes()
 
-		return m, m.contextList.Update(ctxMsg)
+		return m, m.contextList.Update(tea.WindowSizeMsg{Width: r.LeftContentW, Height: r.LeftContentH})
 
 	case msgs.ResourceDetailMsg:
 		if msg.Err != nil {
@@ -524,167 +480,18 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.podLogs.SetStreamEnded(msg.SourceKey, msg.Err)
 		return m, nil
 
-	case msgs.PodWatchOpenedMsg:
-		st, ok := m.podWatchers[msg.Context]
-		if !ok || msg.Generation != st.generation {
-			msg.Watcher.Stop()
-			return m, nil
-		}
-		st.watcher = msg.Watcher
-		return m, cmds.WaitForPodWatchEventCmd(msg.Context, msg.Generation, msg.Watcher, st.cache)
-
-	case msgs.PodWatchEventMsg:
-		st, ok := m.podWatchers[msg.Context]
-		if !ok || msg.Generation != st.generation {
-			return m, nil
-		}
-		st.failures = 0
-		m.applyPodWatchRows(msg.Context, msg.Rows)
-		return m, cmds.WaitForPodWatchEventCmd(msg.Context, msg.Generation, st.watcher, st.cache)
-
-	case msgs.PodWatchClosedMsg:
-		return m, m.onPodWatchClosed(msg)
-
-	case msgs.DeploymentWatchOpenedMsg:
-		st, ok := m.deploymentWatchers[msg.Context]
-		if !ok || msg.Generation != st.generation {
-			msg.Watcher.Stop()
-			return m, nil
-		}
-		st.watcher = msg.Watcher
-		return m, cmds.WaitForDeploymentWatchEventCmd(msg.Context, msg.Generation, msg.Watcher, st.cache)
-
-	case msgs.DeploymentWatchEventMsg:
-		st, ok := m.deploymentWatchers[msg.Context]
-		if !ok || msg.Generation != st.generation {
-			return m, nil
-		}
-		st.failures = 0
-		m.applyDeploymentWatchRows(msg.Context, msg.Rows)
-		return m, cmds.WaitForDeploymentWatchEventCmd(msg.Context, msg.Generation, st.watcher, st.cache)
-
-	case msgs.DeploymentWatchClosedMsg:
-		return m, m.onDeploymentWatchClosed(msg)
-
-	case msgs.ServiceWatchOpenedMsg:
-		st, ok := m.serviceWatchers[msg.Context]
-		if !ok || msg.Generation != st.generation {
-			msg.Watcher.Stop()
-			return m, nil
-		}
-		st.watcher = msg.Watcher
-		return m, cmds.WaitForServiceWatchEventCmd(msg.Context, msg.Generation, msg.Watcher, st.cache)
-
-	case msgs.ServiceWatchEventMsg:
-		st, ok := m.serviceWatchers[msg.Context]
-		if !ok || msg.Generation != st.generation {
-			return m, nil
-		}
-		st.failures = 0
-		m.applyServiceWatchRows(msg.Context, msg.Rows)
-		return m, cmds.WaitForServiceWatchEventCmd(msg.Context, msg.Generation, st.watcher, st.cache)
-
-	case msgs.ServiceWatchClosedMsg:
-		return m, m.onServiceWatchClosed(msg)
-
 	case msgs.ContextsStateMsg:
-		m.errorMessage = ""
-
-		// Snapshot before mutations so we know which contexts were already present
-		prevSelected := m.appState.Snapshot().SelectedContexts
-
-		for _, contextName := range msg.Deselected {
-			m.appState.RemoveContext(contextName)
-			m.stopPodWatch(contextName)
-			m.stopDeploymentWatch(contextName)
-			m.stopServiceWatch(contextName)
-		}
-
-		for _, ms := range msg.Selected {
-			m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
-		}
-
-		snapshot := m.appState.Snapshot()
-		m.deploymentList.SetRows(snapshot.Deployments)
-		m.podList.SetRows(snapshot.Pods)
-		m.svcList.SetRows(snapshot.Services)
-		m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
-
-		if len(snapshot.SelectedContexts) == 0 {
-			m.appStateLoaded = false
-			m.deploymentList.SetRows([]msgs.RowData{})
-			m.podList.SetRows([]msgs.RowData{})
-			m.svcList.SetRows([]msgs.RowData{})
-			m.contextList.SetContextStates(nil, nil, nil)
-			m.updateFocusStates()
-			return m, nil
-		}
-
-		for i, t := range m.tabs {
-			if t == "Deployments" {
-				m.activeTab = i
-				break
-			}
-		}
-
-		// Only load contexts that are genuinely new (not previously selected).
-		// Previously selected contexts that failed stay failed until the user
-		// explicitly deselects and re-selects them — that removes them from
-		// prevSelected and they appear here as new on the next Enter press.
-		cmdSequence := []tea.Cmd{}
-		for context, namespace := range snapshot.SelectedContexts {
-			if _, alreadyPresent := prevSelected[context]; alreadyPresent {
-				continue
-			}
-			m.appState.SetLoading(context, true)
-			m.appState.SetLoadingPods(context, true)
-			m.appState.SetLoadingServices(context, true)
-
-			m.podWatchers[context] = &resourceWatchState[*cmds.PodWatchCache]{generation: 1, cache: cmds.NewPodWatchCache()}
-			m.deploymentWatchers[context] = &resourceWatchState[*cmds.DeploymentWatchCache]{generation: 1, cache: cmds.NewDeploymentWatchCache()}
-			m.serviceWatchers[context] = &resourceWatchState[*cmds.ServiceWatchCache]{generation: 1, cache: cmds.NewServiceWatchCache()}
-
-			cmdSequence = append(cmdSequence,
-				cmds.WatchDeploymentsCmd(m.Client, context, namespace, 1),
-				cmds.WatchPodsCmd(m.Client, context, namespace, 1),
-				cmds.WatchServicesCmd(m.Client, context, namespace, 1),
-			)
-		}
-
-		{
-			s := m.appState.Snapshot()
-			m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-		}
-		m.appStateLoaded = true
-		m.updateFocusStates()
-
-		if len(cmdSequence) == 0 {
-			return m, nil
-		}
-
-		return m, tea.Batch(cmdSequence...)
+		return m, m.applyContextsState(msg)
 
 	case msgs.ServiceEndpointsMsg:
 		if msg.Err != nil {
 			// Allow a later Ctrl+W toggle to retry instead of getting stuck
 			// showing the "…" placeholder forever.
-			m.appState.ClearServiceEndpointsRequested(msg.Context)
+			m.watchSup.ClearEndpointsRequested(msg.Context)
 			return m, nil
 		}
-		m.appState.SetServiceEndpoints(msg.Context, msg.Namespace, msg.Endpoints)
-		snapshot := m.appState.Snapshot()
-		m.svcList.SetRows(snapshot.Services)
-		return m, nil
-
-	case msgs.ErrorMsg:
-		m.errorMessage = fmt.Sprintf("%s: %v", msg.Title, msg.Err)
-		if msg.Context != "" {
-			m.appState.SetError(msg.Context, m.errorMessage)
-			{
-				s := m.appState.Snapshot()
-				m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-			}
-		}
+		m.watchSup.SetEndpoints(msg.Context, msg.Namespace, msg.Endpoints)
+		m.tables[msgs.KindServices].SetRows(m.watchSup.Rows(msgs.KindServices))
 		return m, nil
 
 	case msgs.RefreshTickMsg:
@@ -703,24 +510,14 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Forward non-key messages to the focused component(s)
 	if m.focus == focusTabs && m.appStateLoaded {
-		var forwardCmds []tea.Cmd
-		switch m.tabs[m.activeTab] {
-		case "Deployments":
-			forwardCmds = append(forwardCmds, m.deploymentList.Update(msg))
-		case "Pods":
-			forwardCmds = append(forwardCmds, m.podList.Update(msg))
-		case "svc":
-			forwardCmds = append(forwardCmds, m.svcList.Update(msg))
-		}
+		forwardCmds := []tea.Cmd{m.activeTable().Update(msg)}
 		if m.showDetail {
 			forwardCmds = append(forwardCmds, m.deploymentDetail.Update(msg))
 		}
 		if m.showLogs {
 			forwardCmds = append(forwardCmds, m.podLogs.Update(msg))
 		}
-		if len(forwardCmds) > 0 {
-			return m, tea.Batch(forwardCmds...)
-		}
+		return m, tea.Batch(forwardCmds...)
 	}
 
 	if m.focus == focusLeftPane {
@@ -729,6 +526,95 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// applyWatchUpdate applies a Supervisor update to the UI: fresh rows for one
+// kind's table, or a permanently failed watch surfaced as a context error.
+func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
+	if upd == nil {
+		return
+	}
+	if upd.GaveUp {
+		errMsg := upd.Err.Error()
+		m.appState.SetError(upd.Context, errMsg)
+		m.errorMessage = errMsg
+		m.syncContextStates()
+		return
+	}
+	if upd.RowsChanged {
+		m.appState.MarkLoaded(upd.Kind, upd.Context)
+		m.tables[upd.Kind].SetRows(m.watchSup.Rows(upd.Kind))
+		m.syncContextStates()
+		m.updateFocusStates()
+	}
+}
+
+// applyContextsState reconciles selection changes from the Context List:
+// deselected contexts stop being watched and drop their rows; newly selected
+// contexts start watches for all three resource kinds.
+func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
+	m.errorMessage = ""
+
+	// Snapshot before mutations so we know which contexts were already present
+	prevSelected := m.appState.Snapshot().SelectedContexts
+
+	for _, contextName := range msg.Deselected {
+		m.appState.RemoveContext(contextName)
+		m.watchSup.StopContext(contextName)
+	}
+
+	for _, ms := range msg.Selected {
+		m.appState.AddContext(ms.ContextName, ms.DefaultNamespace)
+	}
+
+	for _, kind := range m.tabs {
+		m.tables[kind].SetRows(m.watchSup.Rows(kind))
+	}
+	m.syncContextStates()
+
+	snapshot := m.appState.Snapshot()
+	if len(snapshot.SelectedContexts) == 0 {
+		m.appStateLoaded = false
+		for _, kind := range m.tabs {
+			m.tables[kind].SetRows([]msgs.RowData{})
+		}
+		m.contextList.SetContextStates(nil, nil, nil)
+		m.updateFocusStates()
+		return nil
+	}
+
+	m.activeTab = 0 // land on the Deployments tab
+
+	// Only load contexts that are genuinely new (not previously selected).
+	// Previously selected contexts that failed stay failed until the user
+	// explicitly deselects and re-selects them — that removes them from
+	// prevSelected and they appear here as new on the next Enter press.
+	cmdSequence := []tea.Cmd{}
+	for context, namespace := range snapshot.SelectedContexts {
+		if _, alreadyPresent := prevSelected[context]; alreadyPresent {
+			continue
+		}
+		for _, kind := range m.tabs {
+			m.appState.SetLoading(kind, context, true)
+		}
+		cmdSequence = append(cmdSequence, m.watchSup.StartContext(context, namespace)...)
+	}
+
+	m.syncContextStates()
+	m.appStateLoaded = true
+	m.updateFocusStates()
+
+	if len(cmdSequence) == 0 {
+		return nil
+	}
+	return tea.Batch(cmdSequence...)
+}
+
+// syncContextStates pushes the current loading/error/loaded status into the
+// Context List's per-context indicators.
+func (m *MainPage) syncContextStates() {
+	s := m.appState.Snapshot()
+	m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
 }
 
 func (m *MainPage) logSlowUpdate(start time.Time) {
@@ -749,13 +635,10 @@ func (m *MainPage) toggleFocus() {
 
 func (m *MainPage) updateFocusStates() {
 	m.contextList.SetFocused(m.focus == focusLeftPane)
-	listActive := m.focus == focusTabs && !m.detailFocused && !m.logsFocused
-	shouldFocusDeployments := listActive && m.tabs[m.activeTab] == "Deployments" && m.appStateLoaded
-	m.deploymentList.SetFocused(shouldFocusDeployments)
-	shouldFocusPods := listActive && m.tabs[m.activeTab] == "Pods" && m.appStateLoaded
-	m.podList.SetFocused(shouldFocusPods)
-	shouldFocusSvc := listActive && m.tabs[m.activeTab] == "svc" && m.appStateLoaded
-	m.svcList.SetFocused(shouldFocusSvc)
+	listActive := m.focus == focusTabs && !m.detailFocused && !m.logsFocused && m.appStateLoaded
+	for _, kind := range m.tabs {
+		m.tables[kind].SetFocused(listActive && kind == m.activeKind())
+	}
 	m.deploymentDetail.SetFocused(m.focus == focusTabs && m.detailFocused)
 	m.podLogs.SetFocused(m.focus == focusTabs && m.logsFocused)
 }
@@ -764,8 +647,8 @@ func (m *MainPage) updateFocusStates() {
 // detail pane, out of the remainder after list rows.
 const detailPaneHeightPercent = 45
 
-// applyContentSizes resizes the Deployments/Pods lists and the bottom pane
-// (Detail or Logs — mutually exclusive) to split the tab content area in two
+// applyContentSizes resizes the resource tables and the bottom pane (Detail
+// or Logs — mutually exclusive) to split the tab content area in two
 // whenever either is open.
 func (m *MainPage) applyContentSizes() {
 	listH := m.tableH
@@ -780,373 +663,92 @@ func (m *MainPage) applyContentSizes() {
 			listH = 3
 		}
 	}
-	m.deploymentList.SetSize(m.tableW, listH)
-	m.podList.SetSize(m.tableW, listH)
-	m.svcList.SetSize(m.tableW, listH)
+	for _, kind := range m.tabs {
+		m.tables[kind].SetSize(m.tableW, listH)
+	}
 	m.deploymentDetail.SetSize(m.tableW, detailH)
 	m.podLogs.SetSize(m.tableW, detailH)
 }
 
 // openResourceDetail loads detail for the currently selected row on the given
-// top tab ("Deployments", "Pods", or "svc") into the shared bottom detail pane.
-// Returns nil if there's no valid selection.
-func (m *MainPage) openResourceDetail(sourceTab string) tea.Cmd {
-	var kind, name, ctxName, namespace string
-
-	switch sourceTab {
-	case "Deployments":
-		row := m.deploymentList.SelectedRow()
-		if row == nil {
-			return nil
-		}
-		kind = "Deployment"
-		name, _ = row[msgs.DeployKeyName].(string)
-		ctxName, _ = row[msgs.DeployKeyContext].(string)
-		namespace, _ = row[msgs.DeployKeyNamespace].(string)
-	case "Pods":
-		row := m.podList.SelectedRow()
-		if row == nil {
-			return nil
-		}
-		kind = "Pod"
-		name, _ = row[msgs.PodKeyName].(string)
-		namespace, _ = row[msgs.PodKeyNamespace].(string)
-		ctxName, _ = row[msgs.PodKeyContext].(string)
-	case "svc":
-		row := m.svcList.SelectedRow()
-		if row == nil {
-			return nil
-		}
-		kind = "Service"
-		name, _ = row[msgs.SvcKeyName].(string)
-		namespace, _ = row[msgs.SvcKeyNamespace].(string)
-		ctxName, _ = row[msgs.SvcKeyContext].(string)
-	default:
+// tab into the shared bottom detail pane. Returns nil if there's no valid
+// selection.
+func (m *MainPage) openResourceDetail(kind msgs.ResourceKind) tea.Cmd {
+	row := m.tables[kind].SelectedRow()
+	if row == nil {
 		return nil
 	}
+	name, _ := row[msgs.KeyName].(string)
+	namespace, _ := row[msgs.KeyNamespace].(string)
+	ctxName, _ := row[msgs.KeyContext].(string)
 
 	// Re-entering the row already shown in the pane just refocuses it instead
 	// of re-fetching — e.g. after Esc dropped back to the list to scroll/pick
 	// a row, Enter on that same row jumps straight back in.
-	if m.showDetail && m.deploymentDetail.Matches(kind, name, ctxName) {
+	if m.showDetail && m.deploymentDetail.Matches(kind.Kind(), name, ctxName) {
 		m.detailFocused = true
 		m.applyContentSizes()
 		m.updateFocusStates()
 		return nil
 	}
 
-	m.deploymentDetail.StartLoading(kind, name, ctxName)
+	m.deploymentDetail.StartLoading(kind.Kind(), name, ctxName)
 	m.showDetail = true
 	m.detailFocused = true
 	m.applyContentSizes()
 	m.updateFocusStates()
 
 	switch kind {
-	case "Pod":
+	case msgs.KindPods:
 		return cmds.LoadPodDetailCmd(m.Client, ctxName, namespace, name)
-	case "Service":
+	case msgs.KindServices:
 		return cmds.LoadServiceDetailCmd(m.Client, ctxName, namespace, name)
 	default:
 		return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
 	}
 }
 
-// wideModeTable is implemented identically by DeploymentPage/PodPage/
-// ServicePage — the Ctrl+W wide-mode toggle, Shift+Left/Right column scroll,
-// and the "/" filter status all operate on whichever of the three is the
-// active tab.
-type wideModeTable interface {
-	ToggleWideMode()
-	WideMode() bool
-	ScrollLeft()
-	ScrollRight()
-	ScrollStatus() (offset, total int, ok bool)
-	FilterStatus() (query string, matches int, typing bool, ok bool)
-}
-
-// activeResourceTable returns the active tab's table as a wideModeTable, or
-// nil if the active tab isn't one of the three resource tables.
-func (m *MainPage) activeResourceTable() wideModeTable {
-	switch m.tabs[m.activeTab] {
-	case "Deployments":
-		return m.deploymentList
-	case "Pods":
-		return m.podList
-	case "svc":
-		return m.svcList
-	}
-	return nil
-}
-
-// applyPodWatchRows applies a freshly rebuilt Pods row set for one context
-// to AppState and the render models — the watch equivalent of the old
-// PodTableMsg success path.
-func (m *MainPage) applyPodWatchRows(context string, rows []msgs.RowData) {
-	m.appState.SetPods(context, rows)
-	snapshot := m.appState.Snapshot()
-	m.podList.SetRows(snapshot.Pods)
-	m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
-}
-
-// applyDeploymentWatchRows mirrors applyPodWatchRows for Deployments.
-func (m *MainPage) applyDeploymentWatchRows(context string, rows []msgs.RowData) {
-	m.appState.SetDeployments(context, rows)
-	snapshot := m.appState.Snapshot()
-	m.deploymentList.SetRows(snapshot.Deployments)
-	m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
-	m.updateFocusStates()
-}
-
-// applyServiceWatchRows mirrors applyPodWatchRows for Services.
-func (m *MainPage) applyServiceWatchRows(context string, rows []msgs.RowData) {
-	m.appState.SetServices(context, rows)
-	snapshot := m.appState.Snapshot()
-	m.svcList.SetRows(snapshot.Services)
-	m.contextList.SetContextStates(snapshot.LoadingStates, snapshot.Errors, snapshot.LoadedContexts)
-}
-
-// onPodWatchClosed handles a stopped/failed Pods watch for one context:
-// dropped if stale or the context is no longer selected, otherwise
-// reconnected with exponential backoff, or — past
-// maxWatchReconnectFailures consecutive failures — given up on with the
-// error surfaced the same way a List-failure error would be.
-func (m *MainPage) onPodWatchClosed(msg msgs.PodWatchClosedMsg) tea.Cmd {
-	st, ok := m.podWatchers[msg.Context]
-	if !ok || msg.Generation != st.generation {
-		return nil
-	}
-	st.watcher = nil
-	st.failures++
-
-	namespace, stillSelected := m.appState.Snapshot().SelectedContexts[msg.Context]
-	if !stillSelected {
-		return nil
-	}
-
-	if st.failures > maxWatchReconnectFailures {
-		errMsg := fmt.Sprintf("Failed to watch pods for context '%s' after %d attempts: %v", msg.Context, st.failures, msg.Err)
-		m.appState.SetError(msg.Context, errMsg)
-		m.errorMessage = errMsg
-		s := m.appState.Snapshot()
-		m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-		return nil
-	}
-
-	return cmds.ReconnectPodsCmd(m.Client, msg.Context, namespace, st.generation, watchBackoffDelay(st.failures))
-}
-
-// onDeploymentWatchClosed mirrors onPodWatchClosed for Deployments.
-func (m *MainPage) onDeploymentWatchClosed(msg msgs.DeploymentWatchClosedMsg) tea.Cmd {
-	st, ok := m.deploymentWatchers[msg.Context]
-	if !ok || msg.Generation != st.generation {
-		return nil
-	}
-	st.watcher = nil
-	st.failures++
-
-	namespace, stillSelected := m.appState.Snapshot().SelectedContexts[msg.Context]
-	if !stillSelected {
-		return nil
-	}
-
-	if st.failures > maxWatchReconnectFailures {
-		errMsg := fmt.Sprintf("Failed to watch deployments for context '%s' after %d attempts: %v", msg.Context, st.failures, msg.Err)
-		m.appState.SetError(msg.Context, errMsg)
-		m.errorMessage = errMsg
-		s := m.appState.Snapshot()
-		m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-		return nil
-	}
-
-	return cmds.ReconnectDeploymentsCmd(m.Client, msg.Context, namespace, st.generation, watchBackoffDelay(st.failures))
-}
-
-// onServiceWatchClosed mirrors onPodWatchClosed for Services.
-func (m *MainPage) onServiceWatchClosed(msg msgs.ServiceWatchClosedMsg) tea.Cmd {
-	st, ok := m.serviceWatchers[msg.Context]
-	if !ok || msg.Generation != st.generation {
-		return nil
-	}
-	st.watcher = nil
-	st.failures++
-
-	namespace, stillSelected := m.appState.Snapshot().SelectedContexts[msg.Context]
-	if !stillSelected {
-		return nil
-	}
-
-	if st.failures > maxWatchReconnectFailures {
-		errMsg := fmt.Sprintf("Failed to watch services for context '%s' after %d attempts: %v", msg.Context, st.failures, msg.Err)
-		m.appState.SetError(msg.Context, errMsg)
-		m.errorMessage = errMsg
-		s := m.appState.Snapshot()
-		m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
-		return nil
-	}
-
-	return cmds.ReconnectServicesCmd(m.Client, msg.Context, namespace, st.generation, watchBackoffDelay(st.failures))
-}
-
-// stopPodWatch stops (if open) and forgets a context's Pods watch — called
-// on context deselect. watch.Interface.Stop() is guaranteed to close
-// ResultChan(), so any goroutine blocked in WaitForPodWatchEventCmd's
-// receive unblocks cleanly rather than leaking; bumping the generation
-// first means that goroutine's eventual message is dropped as stale even if
-// it was already past the blocking receive.
-func (m *MainPage) stopPodWatch(context string) {
-	st, ok := m.podWatchers[context]
-	if !ok {
-		return
-	}
-	st.generation++
-	if st.watcher != nil {
-		st.watcher.Stop()
-	}
-	delete(m.podWatchers, context)
-}
-
-// stopDeploymentWatch mirrors stopPodWatch for Deployments.
-func (m *MainPage) stopDeploymentWatch(context string) {
-	st, ok := m.deploymentWatchers[context]
-	if !ok {
-		return
-	}
-	st.generation++
-	if st.watcher != nil {
-		st.watcher.Stop()
-	}
-	delete(m.deploymentWatchers, context)
-}
-
-// stopServiceWatch mirrors stopPodWatch for Services.
-func (m *MainPage) stopServiceWatch(context string) {
-	st, ok := m.serviceWatchers[context]
-	if !ok {
-		return
-	}
-	st.generation++
-	if st.watcher != nil {
-		st.watcher.Stop()
-	}
-	delete(m.serviceWatchers, context)
-}
-
 // restartActiveTabWatch force-restarts the watch(es) for only the active
-// tab's resource type, across every selected context — the "r" key. The
-// existing watch cache for each context is reused as-is: a fresh watch's
-// Added replay is idempotent against the upsert-based cache.apply.
+// tab's resource kind, across every selected context — the "r" key.
 func (m *MainPage) restartActiveTabWatch() tea.Cmd {
 	snapshot := m.appState.Snapshot()
 	if len(snapshot.SelectedContexts) == 0 {
 		return nil
 	}
 
-	var cmdSequence []tea.Cmd
-	switch m.tabs[m.activeTab] {
-	case "Deployments":
-		for context, namespace := range snapshot.SelectedContexts {
-			if cmd := m.restartDeploymentWatch(context, namespace); cmd != nil {
-				cmdSequence = append(cmdSequence, cmd)
-			}
-		}
-	case "Pods":
-		for context, namespace := range snapshot.SelectedContexts {
-			if cmd := m.restartPodWatch(context, namespace); cmd != nil {
-				cmdSequence = append(cmdSequence, cmd)
-			}
-		}
-	case "svc":
-		for context, namespace := range snapshot.SelectedContexts {
-			if cmd := m.restartServiceWatch(context, namespace); cmd != nil {
-				cmdSequence = append(cmdSequence, cmd)
-			}
-		}
+	kind := m.activeKind()
+	contexts := make([]string, 0, len(snapshot.SelectedContexts))
+	for context := range snapshot.SelectedContexts {
+		contexts = append(contexts, context)
+		m.appState.SetLoading(kind, context, true)
 	}
 
+	cmdSequence := m.watchSup.Restart(kind, contexts)
 	if len(cmdSequence) == 0 {
 		return nil
 	}
 
-	s := m.appState.Snapshot()
-	m.contextList.SetContextStates(s.LoadingStates, s.Errors, s.LoadedContexts)
+	m.syncContextStates()
 	return tea.Batch(cmdSequence...)
 }
 
-// restartPodWatch stops context's current Pods watcher (if any), bumps its
-// generation so any in-flight message from the old watcher is dropped as
-// stale, and issues a fresh WatchPodsCmd. Returns nil if no watcher state
-// exists for context (shouldn't happen for a selected context, but guards
-// against a race with a just-deselected one).
-func (m *MainPage) restartPodWatch(context, namespace string) tea.Cmd {
-	st, ok := m.podWatchers[context]
-	if !ok {
-		return nil
-	}
-	if st.watcher != nil {
-		st.watcher.Stop()
-		st.watcher = nil
-	}
-	st.generation++
-	st.failures = 0
-	m.appState.SetLoadingPods(context, true)
-	return cmds.WatchPodsCmd(m.Client, context, namespace, st.generation)
-}
-
-// restartDeploymentWatch mirrors restartPodWatch for Deployments.
-func (m *MainPage) restartDeploymentWatch(context, namespace string) tea.Cmd {
-	st, ok := m.deploymentWatchers[context]
-	if !ok {
-		return nil
-	}
-	if st.watcher != nil {
-		st.watcher.Stop()
-		st.watcher = nil
-	}
-	st.generation++
-	st.failures = 0
-	m.appState.SetLoading(context, true)
-	return cmds.WatchDeploymentsCmd(m.Client, context, namespace, st.generation)
-}
-
-// restartServiceWatch mirrors restartPodWatch for Services.
-func (m *MainPage) restartServiceWatch(context, namespace string) tea.Cmd {
-	st, ok := m.serviceWatchers[context]
-	if !ok {
-		return nil
-	}
-	if st.watcher != nil {
-		st.watcher.Stop()
-		st.watcher = nil
-	}
-	st.generation++
-	st.failures = 0
-	m.appState.SetLoadingServices(context, true)
-	return cmds.WatchServicesCmd(m.Client, context, namespace, st.generation)
-}
-
-// reRenderAgeFromWatchCaches recomputes every selected context's rows from
-// its local watch caches (re-running the converter/formatDuration against
-// time.Now(), refreshing the Age column text) and reapplies them — purely
-// local, zero API calls. Driven by RefreshTickMsg, replacing the old
-// List()-based polling refresh.
+// reRenderAgeFromWatchCaches recomputes every kind's rows from the local
+// watch caches (re-running the converter/formatDuration against time.Now(),
+// refreshing the Age column text) and reapplies them — purely local, zero
+// API calls. Driven by RefreshTickMsg.
 func (m *MainPage) reRenderAgeFromWatchCaches() {
-	snapshot := m.appState.Snapshot()
-	for context := range snapshot.SelectedContexts {
-		if st, ok := m.podWatchers[context]; ok {
-			m.applyPodWatchRows(context, st.cache.Rows(context))
-		}
-		if st, ok := m.deploymentWatchers[context]; ok {
-			m.applyDeploymentWatchRows(context, st.cache.Rows(context))
-		}
-		if st, ok := m.serviceWatchers[context]; ok {
-			m.applyServiceWatchRows(context, st.cache.Rows(context))
-		}
+	if !m.watchSup.Watching() {
+		return
 	}
+	for _, kind := range m.tabs {
+		m.tables[kind].SetRows(m.watchSup.Rows(kind))
+	}
+	m.syncContextStates()
 }
 
 // fetchServiceEndpointsIfNeeded dispatches LoadServiceEndpointsCmd for every
 // selected context whose current namespace hasn't had its Endpoint IPs
-// fetched yet (see AppState.NeedsServiceEndpoints). Called only when svc
+// fetched yet (see watch.Supervisor.NeedsEndpoints). Called only when svc
 // wide mode turns on — the Ctrl+W toggle itself already revealed the other
 // new columns synchronously; this just fills in the one column that needs
 // a network round trip, without blocking or repeating that round trip.
@@ -1158,10 +760,10 @@ func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 
 	var cmdSequence []tea.Cmd
 	for context, namespace := range snapshot.SelectedContexts {
-		if !m.appState.NeedsServiceEndpoints(context, namespace) {
+		if !m.watchSup.NeedsEndpoints(context, namespace) {
 			continue
 		}
-		m.appState.MarkServiceEndpointsRequested(context, namespace)
+		m.watchSup.MarkEndpointsRequested(context, namespace)
 		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, namespace))
 	}
 
@@ -1208,14 +810,15 @@ func podLogTargets(rows []msgs.RowData) []podLogTarget {
 // present are opened, sources no longer targeted are closed, and unchanged
 // sources are left running untouched. An empty target set closes the pane.
 func (m *MainPage) openPodLogs() tea.Cmd {
+	pods := m.tables[msgs.KindPods]
 	var rows []msgs.RowData
-	if keys := m.podList.CheckedKeys(); len(keys) > 0 {
+	if keys := pods.CheckedKeys(); len(keys) > 0 {
 		for _, key := range keys {
-			if row := m.podList.CheckedRow(key); row != nil {
+			if row := pods.CheckedRow(key); row != nil {
 				rows = append(rows, row)
 			}
 		}
-	} else if row := m.podList.SelectedRow(); row != nil {
+	} else if row := pods.SelectedRow(); row != nil {
 		rows = append(rows, row)
 	}
 
@@ -1313,163 +916,60 @@ func (m *MainPage) renderView() string {
 	}
 
 	snapshot := m.appState.Snapshot()
+	r := views.Solve(m.width, m.height)
+	p := styles.CatppuccinMocha()
 
-	leftPaneWidth := leftPaneWidthFor(m.width)
-	leftPane := ""
-	tabBlur := false
-	tabBottom := styles.WindowStyle
-
-	// Starting guess for the left pane's height; reconciled exactly against
-	// the right side's actual rendered height below (see rightLines/leftLines).
-	leftPaneHeight := m.height - 5
-
-	switch m.focus {
-	case focusLeftPane:
-		leftPane = views.RenderLeftPane(m.contextList.View(), leftPaneWidth, leftPaneHeight)
-		tabBlur = true
-		tabBottom = styles.WindowBlurStyle
-
-	case focusTabs:
-		leftPane = views.RenderLeftPaneBlur(m.contextList.View(), leftPaneWidth, leftPaneHeight)
-		tabBlur = false
-		tabBottom = styles.WindowStyle
+	leftFocused := m.focus == focusLeftPane
+	leftBorder, rightBorder := styles.BlurColor, styles.FocusColor
+	if leftFocused {
+		leftBorder, rightBorder = styles.FocusColor, styles.BlurColor
 	}
 
-	// Build tab content
-	tabs := strings.Builder{}
-	tabWidth := m.width - leftPaneWidth - 8
-
-	emptyMsg := "No contexts selected\n\nPress Tab to focus contexts\nSpace to select • Enter to load"
-	switch m.tabs[m.activeTab] {
-	case "Deployments":
-		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-			m.tabContent = styles.HelpBoxStyle().Render(emptyMsg)
-		} else {
-			m.tabContent = m.deploymentList.View()
-		}
-	case "Pods":
-		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-			m.tabContent = styles.HelpBoxStyle().Align(lipgloss.Center).Render(emptyMsg)
-		} else {
-			m.tabContent = m.podList.View()
-		}
-	case "svc":
-		if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
-			m.tabContent = styles.HelpBoxStyle().Align(lipgloss.Center).Render(emptyMsg)
-		} else {
-			m.tabContent = m.svcList.View()
-		}
-	default:
-		m.tabContent = styles.HelpBoxStyle().Render(emptyMsg)
+	// Left box: the Context List, titled in its border.
+	leftTitleStyle := lipgloss.NewStyle().Foreground(p.Overlay1).Bold(true)
+	if leftFocused {
+		leftTitleStyle = leftTitleStyle.Foreground(p.Mauve)
 	}
+	leftBox := views.TitledBox(leftTitleStyle.Render("Contexts"), m.contextList.View(), r.LeftBoxW, r.BoxH, leftBorder)
 
-	// Loading indicator (inline — it's brief and doesn't break layout). Only
-	// shown on the active tab's first load (no rows yet) — a background
-	// refresh of already-populated data relies on the subtle "⏳ N loading"
-	// status bar hint instead, so auto-refresh doesn't reflow the tab.
-	var activeTabHasRows bool
-	switch m.tabs[m.activeTab] {
-	case "Deployments":
-		activeTabHasRows = len(snapshot.Deployments) > 0
-	case "Pods":
-		activeTabHasRows = len(snapshot.Pods) > 0
-	case "svc":
-		activeTabHasRows = len(snapshot.Services) > 0
-	}
-	if !activeTabHasRows && hasLoading(snapshot.LoadingStates) {
-		m.tabContent = m.renderLoadingIndicator(snapshot.LoadingStates) + "\n\n" + m.tabContent
-	}
+	// Right box: the active tab's content, with the tab strip in the border.
+	var content string
+	if !m.appStateLoaded || len(snapshot.SelectedContexts) == 0 {
+		emptyMsg := "No contexts selected\n\nPress Tab to focus contexts\nSpace to select • Enter to load"
+		empty := styles.HelpBoxStyle().Align(lipgloss.Center).Render(emptyMsg)
+		content = lipgloss.Place(r.RightContentW, r.RightContentH, lipgloss.Center, lipgloss.Center, empty)
+	} else {
+		content = m.activeTable().View()
 
-	// The bottom pane (Detail or Logs — mutually exclusive) is cross-cutting:
-	// it splits whichever top tab's content area is active in two, rather
-	// than being a peer tab of its own.
-	if m.showDetail || m.showLogs {
-		p := styles.CatppuccinMocha()
-		// RenderTabHeaders divides tabWidth by len(tabs) with integer
-		// division, so the box's real rendered width can be up to
-		// len(tabs)-1 characters narrower than tableW depending on the exact
-		// window width. Pad target width safely under that so this block
-		// never gets word-wrapped by the outer container — a wrap here (not
-		// just a truncation) adds a physical line, which is what threw the
-		// left/right pane heights out of sync at some window widths.
-		const tabRoundingSafetyMargin = 2 // len(m.tabs)-1, the max rounding loss from tabWidth/len(tabs)
-		dividerW := m.tableW - tabRoundingSafetyMargin
-		if dividerW < 1 {
-			dividerW = 1
-		}
-		divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", dividerW))
-
-		var header, body string
-		if m.showDetail {
-			header = m.deploymentDetail.Header(dividerW)
-			body = m.deploymentDetail.View()
-		} else {
-			header = m.podLogs.Header(dividerW)
-			body = m.podLogs.View()
+		// Loading indicator (inline — it's brief and doesn't break layout).
+		// Only shown on the active tab's first load (no rows yet) — a
+		// background refresh of already-populated data relies on the subtle
+		// "⏳ N loading" status bar hint instead, so auto-refresh doesn't
+		// reflow the tab.
+		if m.activeTable().RowCount() == 0 && hasLoading(snapshot.LoadingStates) {
+			content = m.renderLoadingIndicator(snapshot.LoadingStates) + "\n\n" + content
 		}
 
-		joined := lipgloss.JoinVertical(lipgloss.Left,
-			m.tabContent,
-			divider,
-			header,
-			body,
-		)
-		// Right-pad every line up to a uniform minimum width so the outer
-		// container's Align(Center) shifts the whole block by one constant
-		// amount instead of centering each line individually — the latter is
-		// what made YAML/status lines of varying length look raggedly
-		// centered. Only ever pads (never truncates/wraps) — table rows carry
-		// per-cell padding that already makes them wider than dividerW, and
-		// forcing a hard Width() there would word-wrap the header row.
-		m.tabContent = padLinesToMinWidth(joined, dividerW)
-	}
-
-	tabHeaders := views.RenderTabHeaders(m.activeTab, m.tabs, tabWidth, tabBlur)
-	tabs.WriteString(tabHeaders)
-	tabs.WriteString("\n")
-	// lipgloss v2's Width() sets the box's total rendered width (border and
-	// padding included), unlike v1 where it set the content width only — so
-	// the target here is simply tabHeaders' own width, with no frame-size
-	// subtraction needed to line up the two borders.
-	boxWidth := lipgloss.Width(tabHeaders)
-	// Style.Render's Width() word-*wraps* overflowing lines rather than
-	// truncating them — it does not clip. Any table row that ends up even
-	// one cell wider than the box's content width (e.g. from flex-column
-	// rounding at narrow terminal widths) silently becomes two physical
-	// lines, blowing the pane's height budget no matter how carefully the
-	// row *count* was bounded elsewhere. padLinesToMinWidth already exists
-	// to truncate-rather-than-wrap for the detail/log split case below; apply
-	// it here too so the plain table case gets the same guarantee.
-	m.tabContent = padLinesToMinWidth(m.tabContent, boxWidth-tabBottom.GetHorizontalFrameSize())
-	tabs.WriteString(tabBottom.Width(boxWidth).Height(m.height - 8).Align(lipgloss.Center).Render(m.tabContent))
-
-	// lipgloss's Height()+Border()+Padding() frame math doesn't add up to a
-	// fixed constant across every width/content combination — real content
-	// (wrapped context names, table rows) can shift each side's natural
-	// rendered height by a line or two in either direction depending on the
-	// exact terminal size. Rather than trust a derived constant, measure both
-	// blocks and, if they differ, bump the shorter one's declared height by
-	// the exact gap and re-render it — guaranteeing the two borders land on
-	// the same row regardless of any wrapping quirk on either side.
-	rightLines := lineCount(tabs.String())
-	leftLines := lineCount(leftPane)
-	if gap := rightLines - leftLines; gap > 0 {
-		leftPaneHeight += gap
-		switch m.focus {
-		case focusLeftPane:
-			leftPane = views.RenderLeftPane(m.contextList.View(), leftPaneWidth, leftPaneHeight)
-		case focusTabs:
-			leftPane = views.RenderLeftPaneBlur(m.contextList.View(), leftPaneWidth, leftPaneHeight)
+		// The bottom pane (Detail or Logs — mutually exclusive) is
+		// cross-cutting: it splits whichever top tab's content area is
+		// active in two, rather than being a peer tab of its own.
+		if m.showDetail || m.showLogs {
+			divider := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", r.RightContentW))
+			var header, body string
+			if m.showDetail {
+				header = m.deploymentDetail.Header(r.RightContentW)
+				body = m.deploymentDetail.View()
+			} else {
+				header = m.podLogs.Header(r.RightContentW)
+				body = m.podLogs.View()
+			}
+			content = lipgloss.JoinVertical(lipgloss.Left, content, divider, header, body)
 		}
-	} else if gap < 0 {
-		tabs.Reset()
-		tabs.WriteString(tabHeaders)
-		tabs.WriteString("\n")
-		tabs.WriteString(tabBottom.Width(lipgloss.Width(tabHeaders)).Height(m.height - 8 - gap).Align(lipgloss.Center).Render(m.tabContent))
 	}
+	rightBox := views.TitledBox(m.renderTabTitle(!leftFocused), content, r.RightBoxW, r.BoxH, rightBorder)
 
 	fullView := lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.JoinHorizontal(lipgloss.Top, leftPane, tabs.String()),
+		lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox),
 		m.renderStatusBar(snapshot),
 	)
 
@@ -1489,9 +989,11 @@ func (m *MainPage) renderView() string {
 
 func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	p := styles.CatppuccinMocha()
-	leftStyle := lipgloss.NewStyle().Foreground(p.Rosewater).Padding(0, 1)
-	midStyle := lipgloss.NewStyle().Foreground(p.Sapphire).Bold(true)
-	rightStyle := lipgloss.NewStyle().Foreground(p.Green).Padding(0, 1)
+	// Every segment carries the bar's background itself — a nested style's
+	// ANSI reset would otherwise punch a hole in an outer background.
+	leftStyle := lipgloss.NewStyle().Foreground(p.Rosewater).Background(p.Mantle).Padding(0, 1)
+	midStyle := lipgloss.NewStyle().Foreground(p.Sapphire).Background(p.Mantle).Bold(true)
+	rightStyle := lipgloss.NewStyle().Foreground(p.Green).Background(p.Mantle).Padding(0, 1)
 
 	selectedCtx := len(snapshot.SelectedContexts)
 	errCount := len(snapshot.Errors)
@@ -1501,16 +1003,8 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 			loadingCount++
 		}
 	}
-	activeTabName := m.tabs[m.activeTab]
-	var activeCount int
-	switch activeTabName {
-	case "Deployments":
-		activeCount = len(snapshot.Deployments)
-	case "Pods":
-		activeCount = len(snapshot.Pods)
-	case "svc":
-		activeCount = len(snapshot.Services)
-	}
+	activeTabName := m.activeKind().Title()
+	activeCount := m.activeTable().RowCount()
 
 	focusStr := "Left Pane"
 	if m.focus == focusTabs {
@@ -1531,22 +1025,20 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	if errCount > 0 {
 		statusBits = append(statusBits, fmt.Sprintf("⚠ %d error(s)", errCount))
 	}
-	if activeTabName == "Pods" {
-		if checkedCount := len(m.podList.CheckedKeys()); checkedCount > 0 {
+	if m.activeKind() == msgs.KindPods {
+		if checkedCount := len(m.tables[msgs.KindPods].CheckedKeys()); checkedCount > 0 {
 			statusBits = append(statusBits, fmt.Sprintf("☑ %d checked · l: open merged · Ctrl+X: clear", checkedCount))
 		}
 	}
-	if t := m.activeResourceTable(); t != nil {
-		if offset, total, ok := t.ScrollStatus(); ok {
-			statusBits = append(statusBits, fmt.Sprintf("◂ col %d/%d ▸", offset, total))
+	if offset, total, ok := m.activeTable().ScrollStatus(); ok {
+		statusBits = append(statusBits, fmt.Sprintf("◂ col %d/%d ▸", offset, total))
+	}
+	if query, matches, typing, ok := m.activeTable().FilterStatus(); ok {
+		cursor := ""
+		if typing {
+			cursor = "_"
 		}
-		if query, matches, typing, ok := t.FilterStatus(); ok {
-			cursor := ""
-			if typing {
-				cursor = "_"
-			}
-			statusBits = append(statusBits, fmt.Sprintf("/%s%s (%d match(es))", query, cursor, matches))
-		}
+		statusBits = append(statusBits, fmt.Sprintf("/%s%s (%d match(es))", query, cursor, matches))
 	}
 	if m.showDetail {
 		if percent, ok := m.deploymentDetail.HScrollStatus(); ok {
@@ -1564,18 +1056,18 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	status := rightStyle.Render(strings.Join(statusBits, "  |  "))
 
 	// Hints are a fixed, separate element anchored to the far right
-	hints := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Tab:focus  [ ]:tabs  ?:help  q:quit")
+	hints := lipgloss.NewStyle().Foreground(p.Overlay1).Background(p.Mantle).Faint(true).Render("Tab:focus  [ ]:tabs  ?:help  q:quit ")
 
-	barWidth := m.width - 2
-	leftMid := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", mid)
-	rightSection := lipgloss.JoinHorizontal(lipgloss.Top, status, "   ", hints)
-	spacerWidth := barWidth - lipgloss.Width(leftMid) - lipgloss.Width(rightSection)
+	gap := styles.StatusBar.Render("  ")
+	leftMid := lipgloss.JoinHorizontal(lipgloss.Top, left, gap, mid)
+	rightSection := lipgloss.JoinHorizontal(lipgloss.Top, status, gap, hints)
+	spacerWidth := m.width - lipgloss.Width(leftMid) - lipgloss.Width(rightSection)
 	if spacerWidth < 1 {
 		spacerWidth = 1
 	}
-	line := leftMid + strings.Repeat(" ", spacerWidth) + rightSection
+	spacer := styles.StatusBar.Render(strings.Repeat(" ", spacerWidth))
 
-	return styles.StatusBar.Width(barWidth).Render(line)
+	return leftMid + spacer + rightSection
 }
 
 func (m *MainPage) renderHelpOverlay() string {
@@ -1730,30 +1222,6 @@ func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 	return loadingStyle.Render(fmt.Sprintf("⏳ Loading: %s...", strings.Join(loadingContexts, ", ")))
 }
 
-// padLinesToMinWidth right-pads every line of content with spaces so it is at
-// least width columns wide, without ever truncating or wrapping lines that
-// are already wider.
-func padLinesToMinWidth(content string, width int) string {
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		switch pad := width - lipgloss.Width(line); {
-		case pad > 0:
-			lines[i] = line + strings.Repeat(" ", pad)
-		case pad < 0:
-			// Safety net: a line snuck past width (e.g. table cell padding
-			// overhead) — truncate rather than let lipgloss word-wrap it,
-			// which is what produced the ragged/centered look before.
-			lines[i] = ansi.Truncate(line, width, "")
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-// lineCount returns the number of lines in a rendered lipgloss block.
-func lineCount(s string) int {
-	return strings.Count(s, "\n") + 1
-}
-
 func hasLoading(loading map[string]bool) bool {
 	for _, isLoading := range loading {
 		if isLoading {
@@ -1761,22 +1229,4 @@ func hasLoading(loading map[string]bool) bool {
 		}
 	}
 	return false
-}
-
-func getContextPaneDimensions(w, h int) (cW, cH int) {
-	cW = leftPaneWidthFor(w)
-	cH = h - 10
-	return cW, cH
-}
-
-// leftPaneWidthFor computes the left (context list) pane's width: a quarter
-// of the terminal width, capped at views.MaxLeftPaneWidth. Context names are
-// short, so on wide terminals a fixed fraction wastes space that the tab
-// area could otherwise use.
-func leftPaneWidthFor(w int) int {
-	lw := w / 4
-	if lw > views.MaxLeftPaneWidth {
-		lw = views.MaxLeftPaneWidth
-	}
-	return lw
 }

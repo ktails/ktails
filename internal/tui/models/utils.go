@@ -34,25 +34,3 @@ func halfViewportStep(viewportWidth int) int {
 	}
 	return step
 }
-
-func cloneRows(rows []msgs.RowData) []msgs.RowData {
-	if len(rows) == 0 {
-		return make([]msgs.RowData, 0)
-	}
-
-	cloned := make([]msgs.RowData, len(rows))
-	for i := range rows {
-		if len(rows[i]) == 0 {
-			cloned[i] = nil
-			continue
-		}
-
-		cells := make(msgs.RowData, len(rows[i]))
-		for k, v := range rows[i] {
-			cells[k] = v
-		}
-		cloned[i] = cells
-	}
-
-	return cloned
-}

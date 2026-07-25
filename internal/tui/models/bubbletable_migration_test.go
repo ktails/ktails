@@ -26,7 +26,7 @@ func samplePodRows(n int) []msgs.RowData {
 }
 
 func TestPodPageNarrowNoTruncationArtifacts(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(30, 20) // narrow terminal
 	p.SetFocused(true)
 	p.SetRows(samplePodRows(5))
@@ -41,7 +41,7 @@ func TestPodPageNarrowNoTruncationArtifacts(t *testing.T) {
 }
 
 func TestPodPageWideModeAutoFitNoTruncation(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(40, 20)
 	p.SetRows(samplePodRows(5))
 	p.ToggleWideMode()
@@ -56,7 +56,7 @@ func TestPodPageWideModeAutoFitNoTruncation(t *testing.T) {
 }
 
 func TestPodPageCursorPreservedAcrossRefresh(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(60, 20)
 	p.SetFocused(true)
 	p.SetRows(samplePodRows(10))
@@ -90,7 +90,7 @@ func TestPodPageCursorPreservedAcrossRefresh(t *testing.T) {
 // severely — and must keep the cursor tracking the right row as it scrolls
 // past a window edge.
 func TestPodPageLargeRowSetIsWindowed(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(60, 20)
 	p.SetFocused(true)
 	rows := samplePodRows(2000)
@@ -125,7 +125,7 @@ func TestPodPageLargeRowSetIsWindowed(t *testing.T) {
 // window recompute — the last window's worth of rows, with the cursor
 // pinned to the final one.
 func TestPodPageJumpToEndOnLargeRowSet(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(60, 20)
 	p.SetFocused(true)
 	rows := samplePodRows(2000)
@@ -157,7 +157,7 @@ func TestPodPageJumpToEndOnLargeRowSet(t *testing.T) {
 
 // typeText feeds each rune of s to p as individual printable keypresses,
 // the way bubbletea reports typed characters (Key.Text non-empty).
-func typeText(p *PodPage, s string) {
+func typeText(p *ResourceTable, s string) {
 	for _, r := range s {
 		p.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
@@ -171,7 +171,7 @@ func typeText(p *PodPage, s string) {
 // The row-level rowFilter here must find a match anywhere in the full row
 // set regardless of where the window currently sits.
 func TestPodPageFilterSearchesFullRowSetNotJustWindow(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(60, 20)
 	p.SetFocused(true)
 	rows := samplePodRows(2000)
@@ -216,7 +216,7 @@ func TestPodPageFilterSearchesFullRowSetNotJustWindow(t *testing.T) {
 }
 
 func TestPodPageScrollPersistsAcrossRefreshResetsOnResize(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(30, 20)
 	p.SetRows(samplePodRows(5))
 	p.ToggleWideMode()
@@ -244,7 +244,7 @@ func TestPodPageScrollPersistsAcrossRefreshResetsOnResize(t *testing.T) {
 }
 
 func TestPodRowKeyAndCheckToggle(t *testing.T) {
-	p := NewPodPageModel(nil)
+	p := NewResourceTable(msgs.KindPods)
 	p.SetSize(60, 20)
 	rows := samplePodRows(3)
 	p.SetRows(rows)
@@ -267,7 +267,7 @@ func TestPodRowKeyAndCheckToggle(t *testing.T) {
 }
 
 func TestDeploymentReplicaColoringViaStyledCell(t *testing.T) {
-	d := NewDeploymentPage(nil)
+	d := NewResourceTable(msgs.KindDeployments)
 	d.SetSize(40, 20)
 	d.SetRows([]msgs.RowData{
 		{

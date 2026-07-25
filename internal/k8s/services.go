@@ -26,27 +26,6 @@ type ServiceInfo struct {
 	ExternalIP string
 }
 
-// GetServiceInfo retrieves service information for a specific context and namespace
-func (c *Client) GetServiceInfo(kubeContextName, namespace string) ([]ServiceInfo, error) {
-	clientset, err := c.GetClientForContext(kubeContextName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
-	}
-
-	serviceList, err := clientset.CoreV1().Services(namespace).List(context.Background(), v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list services in namespace %s (context %s): %w",
-			namespace, kubeContextName, err)
-	}
-
-	serviceInfoList := make([]ServiceInfo, 0, len(serviceList.Items))
-	for _, svc := range serviceList.Items {
-		serviceInfoList = append(serviceInfoList, ServiceToServiceInfo(&svc))
-	}
-
-	return serviceInfoList, nil
-}
-
 // ServiceToServiceInfo converts a service object to ServiceInfo.
 func ServiceToServiceInfo(svc *corev1.Service) ServiceInfo {
 	return ServiceInfo{

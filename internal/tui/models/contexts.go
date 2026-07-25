@@ -5,7 +5,6 @@ import (
 	"image/color"
 	"io"
 	"log"
-	"strings"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
@@ -122,23 +121,6 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	}
 }
 
-// stripANSI removes ANSI escape sequences for width calculation.
-func stripANSI(s string) string {
-	var result strings.Builder
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case r == '\x1b':
-			inEscape = true
-		case inEscape && r == 'm':
-			inEscape = false
-		case !inEscape:
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
 // ContextsInfo is the left-pane model for selecting Kubernetes contexts.
 type ContextsInfo struct {
 	Client    *k8s.Client
@@ -154,7 +136,7 @@ type ContextsInfo struct {
 
 func (c *ContextsInfo) setDimensions() {
 	c.list.SetWidth(c.width)
-	c.list.SetHeight(c.height - 1) // -1 for custom title line
+	c.list.SetHeight(c.height)
 }
 
 func (c *ContextsInfo) GetDimensions() (w, h int) {
@@ -165,6 +147,9 @@ func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	newList := list.New([]list.Item{}, contextDelegate{}, 0, 0)
 	newList.SetShowStatusBar(false)
 	newList.SetShowHelp(false)
+	// The pagination dot row reads as a stray glyph under the pane title;
+	// the list still pages, it just doesn't draw the indicator.
+	newList.SetShowPagination(false)
 	return &ContextsInfo{
 		Client:             client,
 		PaneTitle:          "Kubernetes Contexts",
@@ -310,18 +295,13 @@ func (c *ContextsInfo) confirmSelection() tea.Cmd {
 	return func() tea.Msg { return state }
 }
 
+// View renders just the context list — the pane's "Contexts" title lives in
+// the surrounding box border (see views.TitledBox), not in the content.
 func (c *ContextsInfo) View() string {
 	if c.isLoading {
 		return ""
 	}
-	p := styles.CatppuccinMocha()
-	title := lipgloss.NewStyle().
-		Foreground(p.Flamingo).
-		Bold(true).
-		Padding(0, 1).
-		Width(c.width).
-		Render("Contexts")
-	return lipgloss.JoinVertical(lipgloss.Left, title, c.list.View())
+	return c.list.View()
 }
 
 func (c *ContextsInfo) initContextPane() {
