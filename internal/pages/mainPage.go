@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -40,13 +39,6 @@ type MainPage struct {
 	// tabs — one per resource kind, in msgs.Kinds() order
 	tabs      []msgs.ResourceKind
 	activeTab int
-
-	// namespacesByContext and namespaceErrByContext hold the Namespaces
-	// tab's fetched data, keyed by context — populated once per
-	// newly-selected context (see LoadNamespacesCmd) and dropped on
-	// deselect.
-	namespacesByContext   map[string][]string
-	namespaceErrByContext map[string]string
 
 	// App state — per-context UI status (selection, loading, errors). Rows
 	// live in the watch Supervisor's caches, not here.
@@ -128,23 +120,21 @@ func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
 	}
 
 	m := &MainPage{
-		Client:                c,
-		appState:              state.NewAppState(),
-		tabs:                  msgs.Kinds(),
-		namespacesByContext:   make(map[string][]string),
-		namespaceErrByContext: make(map[string]string),
-		contextList:           models.NewContextInfo(c),
-		tables:                tables,
-		deploymentDetail:      models.NewResourceDetailPage(),
-		podLogs:               models.NewLogPage(),
-		logStreams:            make(map[string]*logStreamState),
-		watchSup:              watch.NewSupervisor(c),
-		appStateLoaded:        false,
-		focus:                 focusLeftPane,
-		errorMessage:          "",
-		showHelp:              false,
-		autoRefresh:           true,
-		refreshInterval:       time.Duration(refreshIntervalSeconds) * time.Second,
+		Client:           c,
+		appState:         state.NewAppState(),
+		tabs:             msgs.Kinds(),
+		contextList:      models.NewContextInfo(c),
+		tables:           tables,
+		deploymentDetail: models.NewResourceDetailPage(),
+		podLogs:          models.NewLogPage(),
+		logStreams:       make(map[string]*logStreamState),
+		watchSup:         watch.NewSupervisor(c),
+		appStateLoaded:   false,
+		focus:            focusLeftPane,
+		errorMessage:     "",
+		showHelp:         false,
+		autoRefresh:      true,
+		refreshInterval:  time.Duration(refreshIntervalSeconds) * time.Second,
 	}
 
 	m.updateFocusStates()
@@ -535,16 +525,6 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tables[msgs.KindServices].SetRows(m.watchSup.Rows(msgs.KindServices))
 		return m, nil
 
-	case msgs.NamespacesMsg:
-		if msg.Err != nil {
-			m.namespaceErrByContext[msg.Context] = msg.Err.Error()
-			delete(m.namespacesByContext, msg.Context)
-			return m, nil
-		}
-		delete(m.namespaceErrByContext, msg.Context)
-		m.namespacesByContext[msg.Context] = msg.Namespaces
-		return m, nil
-
 	case msgs.RefreshTickMsg:
 		// Always reschedule, even when auto-refresh is off or paused, so it
 		// resumes on its own the moment the pane closes / it's toggled back on.
@@ -600,23 +580,18 @@ func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
 	}
 }
 
-// applyContextsState reconciles selection changes from the Context List:
-// deselected contexts stop being watched and drop their rows; newly selected
-// contexts start watches for all three resource kinds.
 // applyContextsState reconciles a selection change from the Context List.
 // msg.Added and msg.Deselected are already diffed against the previous
 // confirm (see ContextsInfo.getAllContextStates) — every context in Added is
 // genuinely new here, so there's no second diff to do: one loop starts
-// everything a newly-added context needs (AppState bookkeeping, watches,
-// namespace listing) directly.
+// everything a newly-added context needs (AppState bookkeeping, watches)
+// directly.
 func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 	m.errorMessage = ""
 
 	for _, contextName := range msg.Deselected {
 		m.appState.RemoveContext(contextName)
 		m.watchSup.StopContext(contextName)
-		delete(m.namespacesByContext, contextName)
-		delete(m.namespaceErrByContext, contextName)
 	}
 
 	var cmdSequence []tea.Cmd
@@ -626,7 +601,6 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 			m.appState.SetLoading(kind, added.ContextName, true)
 		}
 		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName, added.DefaultNamespace)...)
-		cmdSequence = append(cmdSequence, cmds.LoadNamespacesCmd(m.Client, added.ContextName))
 	}
 
 	for _, kind := range m.tabs {
@@ -984,7 +958,7 @@ func (m *MainPage) renderView() string {
 	if leftFocused {
 		leftTitleStyle = leftTitleStyle.Foreground(p.Mauve)
 	}
-	leftBox := views.TitledBox(leftTitleStyle.Render("Contexts"), m.renderLeftBox(r, snapshot, leftFocused), r.LeftBoxW, r.BoxH, leftBorder)
+	leftBox := views.TitledBox(leftTitleStyle.Render("Contexts"), m.renderLeftBox(r, leftFocused), r.LeftBoxW, r.BoxH, leftBorder)
 
 	// Right box: the active tab's content, with the tab strip in the border.
 	var content string
@@ -1311,11 +1285,14 @@ func splitLeftSections(total int) (contextsH, namespacesH, clustersH int) {
 	return contextsH, namespacesH, clustersH
 }
 
-// renderLeftBox renders the Context List box's content: Contexts,
-// Namespaces, and Clusters stacked top to bottom, each section clipped
-// (views.FitBlock) to its allotted height so one section's content can
-// never push the others out of place.
-func (m *MainPage) renderLeftBox(r views.Rects, snapshot state.Snapshot, focused bool) string {
+// renderLeftBox renders the Context List box's content: the interactive
+// Contexts list, then blank Namespaces and Clusters sections (each just a
+// header over empty space — placeholders, not yet backed by any data),
+// each clipped (views.FitBlock) to its allotted height so one section can
+// never push the others out of place. Only the first section gets the
+// interactive list itself; Contexts' own header is the outer box's border
+// title, so it isn't repeated here.
+func (m *MainPage) renderLeftBox(r views.Rects, focused bool) string {
 	contextsH, namespacesH, clustersH := splitLeftSections(r.LeftContentH)
 
 	p := styles.CatppuccinMocha()
@@ -1324,111 +1301,14 @@ func (m *MainPage) renderLeftBox(r views.Rects, snapshot state.Snapshot, focused
 		headerStyle = headerStyle.Foreground(p.Mauve)
 	}
 
-	sections := []struct {
-		title   string
-		content string
-		height  int
-	}{
-		{"Contexts", m.contextList.View(), contextsH},
-		{"Namespaces", m.renderNamespacesTab(snapshot), namespacesH},
-		{"Clusters", m.renderConnectedClustersTab(snapshot), clustersH},
-	}
-
-	blocks := make([]string, 0, len(sections)*2)
-	for _, s := range sections {
-		blocks = append(blocks, headerStyle.Render(s.title))
-		blocks = append(blocks, views.FitBlock(s.content, r.LeftContentW, s.height))
+	blocks := []string{
+		views.FitBlock(m.contextList.View(), r.LeftContentW, contextsH),
+		headerStyle.Render("Namespaces"),
+		views.FitBlock("", r.LeftContentW, namespacesH),
+		headerStyle.Render("Clusters"),
+		views.FitBlock("", r.LeftContentW, clustersH),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
-}
-
-// sortedContexts returns the selected contexts' names, alphabetically —
-// snapshot.SelectedContexts is a map, so both the Namespaces and Clusters
-// tabs need a stable order to render in.
-func sortedContexts(selected map[string]string) []string {
-	names := make([]string, 0, len(selected))
-	for name := range selected {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// renderNamespacesTab renders, per selected context, the namespaces
-// available in that cluster (see LoadNamespacesCmd) with the one currently
-// being watched marked. Read-only — there is no key binding yet to switch a
-// context's watched namespace from here.
-func (m *MainPage) renderNamespacesTab(snapshot state.Snapshot) string {
-	if len(snapshot.SelectedContexts) == 0 {
-		return styles.HelpBoxStyle().Render("No contexts selected")
-	}
-
-	p := styles.CatppuccinMocha()
-	header := lipgloss.NewStyle().Foreground(p.Lavender).Bold(true)
-	activeStyle := lipgloss.NewStyle().Foreground(p.Green).Bold(true)
-	inactiveStyle := lipgloss.NewStyle().Foreground(p.Subtext0)
-	dimStyle := lipgloss.NewStyle().Foreground(p.Overlay1)
-	errStyle := lipgloss.NewStyle().Foreground(p.Red)
-
-	var b strings.Builder
-	for _, ctx := range sortedContexts(snapshot.SelectedContexts) {
-		fmt.Fprintln(&b, header.Render(ctx))
-
-		if errMsg, ok := m.namespaceErrByContext[ctx]; ok {
-			fmt.Fprintln(&b, "  "+errStyle.Render("⚠ "+errMsg))
-			continue
-		}
-		namespaces, ok := m.namespacesByContext[ctx]
-		if !ok {
-			fmt.Fprintln(&b, "  "+dimStyle.Render("loading…"))
-			continue
-		}
-		active := snapshot.SelectedContexts[ctx]
-		for _, ns := range namespaces {
-			if ns == active {
-				fmt.Fprintln(&b, "  "+activeStyle.Render("● "+ns))
-			} else {
-				fmt.Fprintln(&b, "  "+inactiveStyle.Render("○ "+ns))
-			}
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// renderConnectedClustersTab renders a compact status summary per selected
-// context: its cluster name, watched namespace, and connection status —
-// the same status an individual Contexts row's icon carries, but gathered
-// into one dashboard-style view instead of read off each row.
-func (m *MainPage) renderConnectedClustersTab(snapshot state.Snapshot) string {
-	if len(snapshot.SelectedContexts) == 0 {
-		return styles.HelpBoxStyle().Render("No clusters connected\n\nSelect contexts and press Enter to connect")
-	}
-
-	p := styles.CatppuccinMocha()
-	header := lipgloss.NewStyle().Foreground(p.Lavender).Bold(true)
-	labelStyle := lipgloss.NewStyle().Foreground(p.Overlay1)
-
-	var b strings.Builder
-	for _, ctx := range sortedContexts(snapshot.SelectedContexts) {
-		namespace := snapshot.SelectedContexts[ctx]
-		cluster := m.contextList.ClusterFor(ctx)
-
-		status, statusStyle := "Pending", lipgloss.NewStyle().Foreground(p.Overlay1)
-		switch {
-		case snapshot.Errors[ctx] != "":
-			status, statusStyle = "Error", lipgloss.NewStyle().Foreground(p.Red)
-		case snapshot.LoadingStates[ctx]:
-			status, statusStyle = "Connecting…", lipgloss.NewStyle().Foreground(p.Blue)
-		case snapshot.LoadedContexts[ctx]:
-			status, statusStyle = "Connected", lipgloss.NewStyle().Foreground(p.Green)
-		}
-
-		fmt.Fprintln(&b, header.Render(ctx))
-		fmt.Fprintf(&b, "  %s %s\n", labelStyle.Render("cluster:"), cluster)
-		fmt.Fprintf(&b, "  %s %s\n", labelStyle.Render("namespace:"), namespace)
-		fmt.Fprintf(&b, "  %s\n", statusStyle.Render(status))
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 func hasLoading(loading map[string]bool) bool {

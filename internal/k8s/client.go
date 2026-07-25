@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
@@ -218,27 +217,6 @@ func (c *Client) ListContexts() ([]ContextsInfo, error) {
 		contexts = append(contexts, ctx)
 	}
 	return contexts, nil
-}
-
-// ListNamespaces returns the names of every namespace in the given context,
-// sorted alphabetically — used by the Context List's Namespaces tab.
-func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces in context %s: %w", kubeContext, err)
-	}
-
-	names := make([]string, 0, len(list.Items))
-	for _, ns := range list.Items {
-		names = append(names, ns.Name)
-	}
-	sort.Strings(names)
-	return names, nil
 }
 
 // WatchPods opens a watch on pods in the given namespace. A bare Watch with

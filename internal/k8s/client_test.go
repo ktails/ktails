@@ -134,25 +134,3 @@ func TestWatchPods_UnknownContext(t *testing.T) {
 		t.Fatal("expected error for unknown context, got nil")
 	}
 }
-
-func TestListNamespaces_SortedByName(t *testing.T) {
-	c, _ := newTestClient("ctx1",
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "zeta"}},
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "alpha"}},
-	)
-
-	got, err := c.ListNamespaces("ctx1")
-	if err != nil {
-		t.Fatalf("ListNamespaces returned error: %v", err)
-	}
-	want := []string{"alpha", "default", "zeta"}
-	if len(got) != len(want) {
-		t.Fatalf("expected %v, got %v", want, got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("expected %v, got %v", want, got)
-		}
-	}
-}

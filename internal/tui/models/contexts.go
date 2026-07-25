@@ -311,22 +311,6 @@ func (c *ContextsInfo) View() string {
 	return c.list.View()
 }
 
-// ClusterFor returns the cluster name backing a context, as loaded from
-// kubeconfig at startup — used by the Context List's Clusters tab, which
-// otherwise has no cheap way to know a context's cluster without a second
-// ListContexts round trip. "—" if the context isn't known.
-func (c *ContextsInfo) ClusterFor(contextName string) string {
-	for _, item := range c.list.Items() {
-		if ctx, ok := item.(contextList); ok && ctx.Name == contextName {
-			if ctx.Cluster == "" {
-				return "—"
-			}
-			return ctx.Cluster
-		}
-	}
-	return "—"
-}
-
 func (c *ContextsInfo) initContextPane() {
 	rawContextsList, err := c.Client.ListContexts()
 	if err != nil {
