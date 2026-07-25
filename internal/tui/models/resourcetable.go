@@ -46,6 +46,24 @@ func specFor(kind msgs.ResourceKind) tableSpec {
 			wideColumns:   svcWideColumns,
 			displayRow:    svcDisplayRow,
 		}
+	case msgs.KindConfigMaps:
+		return tableSpec{
+			narrowColumns: configMapNarrowColumns,
+			wideColumns:   configMapWideColumns,
+			displayRow:    configMapDisplayRow,
+		}
+	case msgs.KindSecrets:
+		return tableSpec{
+			narrowColumns: secretNarrowColumns,
+			wideColumns:   secretWideColumns,
+			displayRow:    secretDisplayRow,
+		}
+	case msgs.KindNodes:
+		return tableSpec{
+			narrowColumns: nodeNarrowColumns,
+			wideColumns:   nodeWideColumns,
+			displayRow:    nodeDisplayRow,
+		}
 	}
 	return tableSpec{}
 }
@@ -97,6 +115,41 @@ func svcDisplayRow(row msgs.RowData, _ bool) btable.RowData {
 		msgs.SvcKeySelector:    row[msgs.SvcKeySelector],
 		msgs.SvcKeyExternalIP:  row[msgs.SvcKeyExternalIP],
 		msgs.SvcKeyEndpointIPs: row[msgs.SvcKeyEndpointIPs],
+	}
+}
+
+func configMapDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+	return btable.RowData{
+		msgs.ConfigMapKeyName:      row[msgs.ConfigMapKeyName],
+		msgs.ConfigMapKeyNamespace: row[msgs.ConfigMapKeyNamespace],
+		msgs.ConfigMapKeyKeys:      row[msgs.ConfigMapKeyKeys],
+		msgs.ConfigMapKeyAge:       row[msgs.ConfigMapKeyAge],
+		msgs.ConfigMapKeyContext:   row[msgs.ConfigMapKeyContext],
+		msgs.ConfigMapKeyKeyNames:  row[msgs.ConfigMapKeyKeyNames],
+	}
+}
+
+func secretDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+	return btable.RowData{
+		msgs.SecretKeyName:      row[msgs.SecretKeyName],
+		msgs.SecretKeyNamespace: row[msgs.SecretKeyNamespace],
+		msgs.SecretKeyType:      row[msgs.SecretKeyType],
+		msgs.SecretKeyKeys:      row[msgs.SecretKeyKeys],
+		msgs.SecretKeyAge:       row[msgs.SecretKeyAge],
+		msgs.SecretKeyContext:   row[msgs.SecretKeyContext],
+	}
+}
+
+func nodeDisplayRow(row msgs.RowData, _ bool) btable.RowData {
+	return btable.RowData{
+		msgs.NodeKeyName:       row[msgs.NodeKeyName],
+		msgs.NodeKeyStatus:     row[msgs.NodeKeyStatus],
+		msgs.NodeKeyRoles:      row[msgs.NodeKeyRoles],
+		msgs.NodeKeyAge:        row[msgs.NodeKeyAge],
+		msgs.NodeKeyVersion:    row[msgs.NodeKeyVersion],
+		msgs.NodeKeyContext:    row[msgs.NodeKeyContext],
+		msgs.NodeKeyInternalIP: row[msgs.NodeKeyInternalIP],
+		msgs.NodeKeyOS:         row[msgs.NodeKeyOS],
 	}
 }
 

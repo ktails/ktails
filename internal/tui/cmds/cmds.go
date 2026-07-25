@@ -73,6 +73,41 @@ func LoadServiceDetailCmd(client *k8s.Client, kubeContext, namespace, serviceNam
 	}
 }
 
+// LoadConfigMapDetailCmd fetches detailed information for a single ConfigMap
+func LoadConfigMapDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetConfigMapDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadSecretDetailCmd fetches detailed information for a single Secret. The
+// returned detail is already redacted — see k8s.GetSecretDetail.
+func LoadSecretDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetSecretDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadNodeDetailCmd fetches detailed information for a single Node.
+// namespace is ignored — Nodes are cluster-scoped.
+func LoadNodeDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetNodeDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
 // OpenPodLogStreamCmd opens a following log stream for a single pod
 // container (one source in the merged Log pane), backfilled with the last
 // logTailLines lines. sourceKey identifies which source this is, and

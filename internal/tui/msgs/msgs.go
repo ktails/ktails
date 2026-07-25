@@ -9,7 +9,7 @@ import (
 	"github.com/ktails/ktails/internal/k8s"
 )
 
-// ResourceKind identifies one of the three watched resource types. It is the
+// ResourceKind identifies one of the watched resource types. It is the
 // single tab/watch/cache identity used everywhere a "Deployments" | "Pods" |
 // "svc" string switch used to live.
 type ResourceKind int
@@ -18,11 +18,16 @@ const (
 	KindDeployments ResourceKind = iota
 	KindPods
 	KindServices
+	KindConfigMaps
+	KindSecrets
+	// KindNodes is cluster-scoped, not namespaced — its rows carry no
+	// KeyNamespace, and its watch ignores the namespace argument.
+	KindNodes
 )
 
 // Kinds returns every ResourceKind in tab order.
 func Kinds() []ResourceKind {
-	return []ResourceKind{KindDeployments, KindPods, KindServices}
+	return []ResourceKind{KindDeployments, KindPods, KindServices, KindConfigMaps, KindSecrets, KindNodes}
 }
 
 // Title is the tab label shown in the Tab Area header.
@@ -34,6 +39,12 @@ func (k ResourceKind) Title() string {
 		return "Pods"
 	case KindServices:
 		return "svc"
+	case KindConfigMaps:
+		return "ConfigMaps"
+	case KindSecrets:
+		return "Secrets"
+	case KindNodes:
+		return "Nodes"
 	}
 	return ""
 }
@@ -47,6 +58,12 @@ func (k ResourceKind) Kind() string {
 		return "Pod"
 	case KindServices:
 		return "Service"
+	case KindConfigMaps:
+		return "ConfigMap"
+	case KindSecrets:
+		return "Secret"
+	case KindNodes:
+		return "Node"
 	}
 	return ""
 }
@@ -111,6 +128,41 @@ const (
 	SvcKeySelector    = "selector"    // wide mode only
 	SvcKeyExternalIP  = "externalIP"  // wide mode only
 	SvcKeyEndpointIPs = "endpointIPs" // wide mode only, "…" until lazily fetched
+)
+
+// Column keys for ConfigMaps rows.
+const (
+	ConfigMapKeyName      = KeyName
+	ConfigMapKeyNamespace = KeyNamespace
+	ConfigMapKeyKeys      = "keys" // count of data keys, e.g. "3"
+	ConfigMapKeyAge       = "age"
+	ConfigMapKeyContext   = KeyContext // hidden, used by the detail tab
+	ConfigMapKeyKeyNames  = "keyNames" // wide mode only, comma-joined data keys
+)
+
+// Column keys for Secrets rows. Values themselves are never surfaced in the
+// table or the Detail Pane's YAML — see watch's secretRow and
+// k8s.GetSecretDetail's redaction.
+const (
+	SecretKeyName      = KeyName
+	SecretKeyNamespace = KeyNamespace
+	SecretKeyType      = "type"
+	SecretKeyKeys      = "keys" // count of data keys, e.g. "2"
+	SecretKeyAge       = "age"
+	SecretKeyContext   = KeyContext // hidden, used by the detail tab
+)
+
+// Column keys for Nodes rows. Nodes are cluster-scoped: there is no
+// KeyNamespace here, and Node rows are not deduplicated per namespace.
+const (
+	NodeKeyName       = KeyName
+	NodeKeyStatus     = "status"
+	NodeKeyRoles      = "roles"
+	NodeKeyAge        = "age"
+	NodeKeyVersion    = "version"
+	NodeKeyContext    = KeyContext   // hidden, used by the detail tab
+	NodeKeyInternalIP = "internalIP" // wide mode only
+	NodeKeyOS         = "os"         // wide mode only
 )
 
 // ContextsSelectedMsg represents a selected context with its namespace

@@ -20,6 +20,10 @@ type Cluster interface {
 	WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	WatchDeployments(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	WatchConfigMaps(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	WatchSecrets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	// WatchNodes ignores namespace — Nodes are cluster-scoped.
+	WatchNodes(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 }
 
 // maxReconnectFailures is how many consecutive reconnect failures a
@@ -68,8 +72,12 @@ type stateKey struct {
 // Update reports what a handled watch message means for the UI: either a
 // fresh row set for one (kind, context), or a permanently failed watch.
 type Update struct {
-	Kind        msgs.ResourceKind
-	Context     string
+	Kind    msgs.ResourceKind
+	Context string
+	// RowsChanged fires both when a watch first opens (Rows(Kind) may be
+	// empty — that's a valid loaded state) and on every applied event
+	// afterward; see the WatchOpenedMsg case in Handle for why it can't wait
+	// for an event that might never come.
 	RowsChanged bool
 	// GaveUp is set when reconnect attempts are exhausted; Err carries the
 	// last failure.
@@ -221,7 +229,14 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 			return nil, nil, true
 		}
 		st.watcher = msg.Watcher
-		return nil, s.waitCmd(msg.Kind, msg.Context, msg.Generation, msg.Watcher, st.cache), true
+		// Report loaded as soon as the watch is live, not on the first
+		// applied event: a namespace with zero objects of this kind gets no
+		// synthetic replay at all (Kubernetes only replays what exists), so
+		// waiting for an event here would wait forever. Rows(kind) already
+		// returns an empty slice correctly when the cache is empty — an
+		// empty tab is a valid loaded state, not a still-loading one.
+		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
+		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Generation, msg.Watcher, st.cache), true
 
 	case msgs.WatchEventMsg:
 		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
@@ -268,6 +283,12 @@ func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, k
 		return s.cluster.WatchDeployments
 	case msgs.KindServices:
 		return s.cluster.WatchServices
+	case msgs.KindConfigMaps:
+		return s.cluster.WatchConfigMaps
+	case msgs.KindSecrets:
+		return s.cluster.WatchSecrets
+	case msgs.KindNodes:
+		return s.cluster.WatchNodes
 	}
 	return nil
 }

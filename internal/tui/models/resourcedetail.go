@@ -291,7 +291,7 @@ func (d *ResourceDetailPage) render(detail k8s.ResourceDetail) string {
 
 	fmt.Fprintln(&b, titleStyle.Render("YAML"))
 	fmt.Fprintln(&b, sep)
-	fmt.Fprint(&b, detail.YAML)
+	fmt.Fprint(&b, highlightYAML(detail.YAML))
 
 	return b.String()
 }

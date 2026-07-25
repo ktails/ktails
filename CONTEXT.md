@@ -1,10 +1,13 @@
 # ktails — Glossary
 
 ## Resource Kind
-The identity of one watched resource type — Deployments, Pods, or svc — as a value (`msgs.ResourceKind`), not a string. It names a tab in the Tab Area, keys that tab's Resource Table, and tags every watch message. Anywhere the code needs "which of the three," it dispatches on a Resource Kind.
+The identity of one watched resource type — Deployments, Pods, svc, ConfigMaps, Secrets, or Nodes — as a value (`msgs.ResourceKind`), not a string. It names a tab in the Tab Area, keys that tab's Resource Table, and tags every watch message. Anywhere the code needs "which kind," it dispatches on a Resource Kind. Nodes are the one cluster-scoped kind — no namespace, watched once per context regardless of which namespace is selected.
 
 ## Resource Table
-The single table module (`models.ResourceTable`) behind all three Tab Area tabs. Cursor/window management, the "/" filter, wide mode, column scroll, and view caching are its implementation; what differs per Resource Kind (columns, row rendering, the Pods checkbox) lives in its per-kind spec. There is one instance per tab, but one implementation.
+The single table module (`models.ResourceTable`) behind every Tab Area tab. Cursor/window management, the "/" filter, wide mode, column scroll, and view caching are its implementation; what differs per Resource Kind (columns, row rendering, the Pods checkbox) lives in its per-kind spec. There is one instance per tab, but one implementation.
+
+## Secret Redaction
+Secrets never carry their Data/StringData values past the Kubernetes API response: `watch.secretRow` only ever emits a key count, and `k8s.GetSecretDetail` overwrites every value with `<redacted>` before rendering YAML for the Detail Pane. A terminal's scrollback is not a safe place for cluster secrets, even base64-encoded ones — this is a load-bearing security decision, not an oversight, and any future Secret-related feature (e.g. viewing a specific key) must decide deliberately whether to punch a hole in it.
 
 ## Watch Supervisor
 The module (`watch.Supervisor`) owning the full watch lifecycle: opening Watch() streams per selected context, applying events to local caches, reconnect backoff, generation-based staleness guards, and the svc Endpoint-IPs overlay. Its seam to the cluster is the `watch.Cluster` interface (`*k8s.Client` in production, a fake event stream in tests). Rows live only in its caches — `MainPage` and `state.AppState` never store them.

@@ -22,13 +22,11 @@ type fakeCluster struct {
 }
 
 func newFakeCluster() *fakeCluster {
-	return &fakeCluster{
-		watchers: map[msgs.ResourceKind]*kwatch.FakeWatcher{
-			msgs.KindPods:        kwatch.NewFakeWithChanSize(16, false),
-			msgs.KindDeployments: kwatch.NewFakeWithChanSize(16, false),
-			msgs.KindServices:    kwatch.NewFakeWithChanSize(16, false),
-		},
+	watchers := make(map[msgs.ResourceKind]*kwatch.FakeWatcher, len(msgs.Kinds()))
+	for _, kind := range msgs.Kinds() {
+		watchers[kind] = kwatch.NewFakeWithChanSize(16, false)
 	}
+	return &fakeCluster{watchers: watchers}
 }
 
 func (f *fakeCluster) watch(kind msgs.ResourceKind) (kwatch.Interface, error) {
@@ -48,6 +46,18 @@ func (f *fakeCluster) WatchDeployments(context.Context, string, string) (kwatch.
 
 func (f *fakeCluster) WatchServices(context.Context, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindServices)
+}
+
+func (f *fakeCluster) WatchConfigMaps(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindConfigMaps)
+}
+
+func (f *fakeCluster) WatchSecrets(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindSecrets)
+}
+
+func (f *fakeCluster) WatchNodes(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindNodes)
 }
 
 // runCmd executes a tea.Cmd synchronously and returns its message.
@@ -72,14 +82,50 @@ func startPodsWatch(t *testing.T, s *Supervisor) tea.Cmd {
 			t.Fatalf("expected WatchOpenedMsg, got %T", msg)
 		}
 		upd, next, handled := s.Handle(opened)
-		if !handled || upd != nil || next == nil {
-			t.Fatalf("expected opened msg handled with a wait command, got upd=%v next=%v handled=%v", upd, next, handled)
+		if !handled || upd == nil || !upd.RowsChanged || next == nil {
+			t.Fatalf("expected opened msg to report loaded with a wait command, got upd=%v next=%v handled=%v", upd, next, handled)
 		}
 		if opened.Kind == msgs.KindPods {
 			waitCmd = next
 		}
 	}
 	return waitCmd
+}
+
+// TestSupervisor_OpenWithNoEventsStillMarksLoaded is the regression test for
+// the "stuck on Secrets list" bug: a namespace with zero existing objects of
+// a kind gets no synthetic replay events at all (Kubernetes only replays
+// what exists), so a watch opened against it may never deliver a single
+// WatchEventMsg. Handle must report the (kind, context) as loaded the moment
+// the watch opens, not wait for an event that may never arrive — otherwise
+// the loading spinner never clears and an empty tab looks permanently stuck.
+func TestSupervisor_OpenWithNoEventsStillMarksLoaded(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	var secretsOpened msgs.WatchOpenedMsg
+	for _, cmd := range s.StartContext("ctx1", "default") {
+		msg := runCmd(t, cmd)
+		if opened, ok := msg.(msgs.WatchOpenedMsg); ok && opened.Kind == msgs.KindSecrets {
+			secretsOpened = opened
+		}
+	}
+
+	// Nothing is ever added to cluster.watchers[msgs.KindSecrets] — this
+	// namespace has zero Secrets, exactly the scenario that hung before.
+	upd, next, handled := s.Handle(secretsOpened)
+	if !handled || upd == nil || !upd.RowsChanged {
+		t.Fatalf("expected the open itself to report loaded, got upd=%+v handled=%v", upd, handled)
+	}
+	if upd.Kind != msgs.KindSecrets || upd.Context != "ctx1" {
+		t.Fatalf("expected update for (Secrets, ctx1), got %+v", upd)
+	}
+	if next == nil {
+		t.Fatal("expected a wait command to keep listening for future events")
+	}
+	if rows := s.Rows(msgs.KindSecrets); len(rows) != 0 {
+		t.Fatalf("expected zero rows for an empty namespace, got %+v", rows)
+	}
 }
 
 func TestSupervisor_EventFlowProducesRows(t *testing.T) {

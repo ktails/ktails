@@ -130,6 +130,12 @@ func newCacheFor(kind msgs.ResourceKind) rowCache {
 		return newResourceCache(deploymentRow)
 	case msgs.KindServices:
 		return newResourceCache(serviceRow)
+	case msgs.KindConfigMaps:
+		return newResourceCache(configMapRow)
+	case msgs.KindSecrets:
+		return newResourceCache(secretRow)
+	case msgs.KindNodes:
+		return newResourceCache(nodeRow)
 	}
 	return nil
 }
@@ -179,5 +185,48 @@ func serviceRow(svc *corev1.Service, kubeContext string) msgs.RowData {
 		msgs.SvcKeySelector:    info.Selector,
 		msgs.SvcKeyExternalIP:  info.ExternalIP,
 		msgs.SvcKeyEndpointIPs: EndpointIPsPlaceholder,
+	}
+}
+
+func configMapRow(cm *corev1.ConfigMap, kubeContext string) msgs.RowData {
+	info := k8s.ConfigMapToConfigMapInfo(cm)
+	return msgs.RowData{
+		msgs.ConfigMapKeyName:      info.Name,
+		msgs.ConfigMapKeyNamespace: info.Namespace,
+		msgs.ConfigMapKeyKeys:      strconv.Itoa(len(info.Keys)),
+		msgs.ConfigMapKeyAge:       info.Age,
+		msgs.ConfigMapKeyContext:   kubeContext,
+		msgs.ConfigMapKeyKeyNames:  strings.Join(info.Keys, ","),
+	}
+}
+
+// secretRow never carries values — only key names and the count, matching
+// k8s.SecretToSecretInfo (see redactedValue).
+func secretRow(secret *corev1.Secret, kubeContext string) msgs.RowData {
+	info := k8s.SecretToSecretInfo(secret)
+	return msgs.RowData{
+		msgs.SecretKeyName:      info.Name,
+		msgs.SecretKeyNamespace: info.Namespace,
+		msgs.SecretKeyType:      info.Type,
+		msgs.SecretKeyKeys:      strconv.Itoa(len(info.Keys)),
+		msgs.SecretKeyAge:       info.Age,
+		msgs.SecretKeyContext:   kubeContext,
+	}
+}
+
+// nodeRow is keyed only by kubeContext — Nodes are cluster-scoped, so there
+// is no per-namespace row, and kubeContext also stands in for the (unused)
+// Namespace column.
+func nodeRow(node *corev1.Node, kubeContext string) msgs.RowData {
+	info := k8s.NodeToNodeInfo(node)
+	return msgs.RowData{
+		msgs.NodeKeyName:       info.Name,
+		msgs.NodeKeyStatus:     info.Status,
+		msgs.NodeKeyRoles:      info.Roles,
+		msgs.NodeKeyAge:        info.Age,
+		msgs.NodeKeyVersion:    info.Version,
+		msgs.NodeKeyContext:    kubeContext,
+		msgs.NodeKeyInternalIP: info.InternalIP,
+		msgs.NodeKeyOS:         info.OS,
 	}
 }

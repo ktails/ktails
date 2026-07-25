@@ -352,3 +352,68 @@ func svcWideColumns(rows []msgs.RowData) []btable.Column {
 		paddedColumn(msgs.SvcKeyEndpointIPs, "EndpointIPs", widestValue(rows, msgs.SvcKeyEndpointIPs, "EndpointIPs")),
 	}
 }
+
+func configMapNarrowColumns() []btable.Column {
+	return []btable.Column{
+		paddedFlexColumn(msgs.ConfigMapKeyName, "Name", 10),
+		paddedFlexColumn(msgs.ConfigMapKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.ConfigMapKeyKeys, "Keys", 2),
+		paddedFlexColumn(msgs.ConfigMapKeyAge, "Age", 3),
+		paddedFlexColumn(msgs.ConfigMapKeyContext, "Context", 5),
+	}
+}
+
+func configMapWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		paddedColumn(msgs.ConfigMapKeyName, "Name", widestValue(rows, msgs.ConfigMapKeyName, "Name")),
+		paddedColumn(msgs.ConfigMapKeyNamespace, "Namespace", widestValue(rows, msgs.ConfigMapKeyNamespace, "Namespace")),
+		paddedColumn(msgs.ConfigMapKeyKeys, "Keys", widestValue(rows, msgs.ConfigMapKeyKeys, "Keys")),
+		paddedColumn(msgs.ConfigMapKeyAge, "Age", widestValue(rows, msgs.ConfigMapKeyAge, "Age")),
+		paddedColumn(msgs.ConfigMapKeyContext, "Context", widestValue(rows, msgs.ConfigMapKeyContext, "Context")),
+		paddedColumn(msgs.ConfigMapKeyKeyNames, "Data Keys", widestValue(rows, msgs.ConfigMapKeyKeyNames, "Data Keys")),
+	}
+}
+
+func secretNarrowColumns() []btable.Column {
+	return []btable.Column{
+		paddedFlexColumn(msgs.SecretKeyName, "Name", 10),
+		paddedFlexColumn(msgs.SecretKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.SecretKeyType, "Type", 6),
+		paddedFlexColumn(msgs.SecretKeyKeys, "Keys", 2),
+		paddedFlexColumn(msgs.SecretKeyAge, "Age", 3),
+	}
+}
+
+func secretWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		paddedColumn(msgs.SecretKeyName, "Name", widestValue(rows, msgs.SecretKeyName, "Name")),
+		paddedColumn(msgs.SecretKeyNamespace, "Namespace", widestValue(rows, msgs.SecretKeyNamespace, "Namespace")),
+		paddedColumn(msgs.SecretKeyType, "Type", widestValue(rows, msgs.SecretKeyType, "Type")),
+		paddedColumn(msgs.SecretKeyKeys, "Keys", widestValue(rows, msgs.SecretKeyKeys, "Keys")),
+		paddedColumn(msgs.SecretKeyAge, "Age", widestValue(rows, msgs.SecretKeyAge, "Age")),
+		paddedColumn(msgs.SecretKeyContext, "Context", widestValue(rows, msgs.SecretKeyContext, "Context")),
+	}
+}
+
+func nodeNarrowColumns() []btable.Column {
+	return []btable.Column{
+		paddedFlexColumn(msgs.NodeKeyName, "Name", 12),
+		paddedFlexColumn(msgs.NodeKeyStatus, "Status", 4),
+		paddedFlexColumn(msgs.NodeKeyRoles, "Roles", 5),
+		paddedFlexColumn(msgs.NodeKeyAge, "Age", 3),
+		paddedFlexColumn(msgs.NodeKeyVersion, "Version", 4),
+	}
+}
+
+func nodeWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		paddedColumn(msgs.NodeKeyName, "Name", widestValue(rows, msgs.NodeKeyName, "Name")),
+		paddedColumn(msgs.NodeKeyStatus, "Status", widestValue(rows, msgs.NodeKeyStatus, "Status")),
+		paddedColumn(msgs.NodeKeyRoles, "Roles", widestValue(rows, msgs.NodeKeyRoles, "Roles")),
+		paddedColumn(msgs.NodeKeyAge, "Age", widestValue(rows, msgs.NodeKeyAge, "Age")),
+		paddedColumn(msgs.NodeKeyVersion, "Version", widestValue(rows, msgs.NodeKeyVersion, "Version")),
+		paddedColumn(msgs.NodeKeyContext, "Context", widestValue(rows, msgs.NodeKeyContext, "Context")),
+		paddedColumn(msgs.NodeKeyInternalIP, "InternalIP", widestValue(rows, msgs.NodeKeyInternalIP, "InternalIP")),
+		paddedColumn(msgs.NodeKeyOS, "OS/Arch", widestValue(rows, msgs.NodeKeyOS, "OS/Arch")),
+	}
+}

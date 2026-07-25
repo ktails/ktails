@@ -699,13 +699,20 @@ func (m *MainPage) openResourceDetail(kind msgs.ResourceKind) tea.Cmd {
 	m.updateFocusStates()
 
 	switch kind {
+	case msgs.KindDeployments:
+		return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
 	case msgs.KindPods:
 		return cmds.LoadPodDetailCmd(m.Client, ctxName, namespace, name)
 	case msgs.KindServices:
 		return cmds.LoadServiceDetailCmd(m.Client, ctxName, namespace, name)
-	default:
-		return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindConfigMaps:
+		return cmds.LoadConfigMapDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindSecrets:
+		return cmds.LoadSecretDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindNodes:
+		return cmds.LoadNodeDetailCmd(m.Client, ctxName, namespace, name)
 	}
+	return nil
 }
 
 // restartActiveTabWatch force-restarts the watch(es) for only the active
@@ -1089,7 +1096,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"[ / ]", "Navigate tabs"},
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},
-		{"g / Home   G / End", "Jump to first / last row (Deployments, Pods, svc tabs)"},
+		{"g / Home   G / End", "Jump to first / last row (any resource tab)"},
 		{"/", "Filter the active table by name across all rows, not just the visible ones; Enter to keep it, Esc to clear"},
 		{"Space", "Toggle context selection / check a Pods row for log tailing"},
 		{"Enter", "Confirm selection & load / open + focus detail pane (refocuses instantly if already loaded)"},
