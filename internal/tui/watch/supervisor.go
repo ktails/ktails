@@ -130,15 +130,17 @@ func endpointsKey(kubeContext, namespace string) string {
 	return kubeContext + "\x00" + namespace
 }
 
-// StartContext opens watches for every resource kind against one context,
-// across every given namespace: namespaced kinds get one watch per
-// namespace, KindNodes (cluster-scoped) gets a single watch regardless of
-// how many namespaces are selected. Restarts cleanly if already watched.
+// StartContext opens watches for every namespaced resource kind against one
+// context, one watch per given namespace. KindNodes (cluster-scoped) is
+// deliberately excluded here — it's gated behind a permission pre-check
+// (see StartKind and cmds.CheckNodesAccessCmd) rather than started
+// unconditionally, since it's commonly restricted and opening a watch that
+// will just fail is wasted work the check avoids. Restarts cleanly if
+// already watched.
 func (s *Supervisor) StartContext(kubeContext string, namespaces []string) []tea.Cmd {
 	var cmds []tea.Cmd
 	for _, kind := range msgs.Kinds() {
 		if kind == msgs.KindNodes {
-			cmds = append(cmds, s.start(kind, kubeContext, ""))
 			continue
 		}
 		for _, namespace := range namespaces {
@@ -146,6 +148,14 @@ func (s *Supervisor) StartContext(kubeContext string, namespaces []string) []tea
 		}
 	}
 	return cmds
+}
+
+// StartKind opens the watch for a single (kind, context, namespace) —
+// exported for KindNodes, whose watch MainPage only starts once
+// CheckNodesAccessCmd confirms it's allowed, rather than unconditionally as
+// part of StartContext.
+func (s *Supervisor) StartKind(kind msgs.ResourceKind, kubeContext, namespace string) tea.Cmd {
+	return s.start(kind, kubeContext, namespace)
 }
 
 // AddNamespace starts every namespaced kind's watch for one additional

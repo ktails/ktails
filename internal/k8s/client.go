@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -219,6 +220,34 @@ func (c *Client) ListContexts() ([]ContextsInfo, error) {
 		contexts = append(contexts, ctx)
 	}
 	return contexts, nil
+}
+
+// CanWatchNodes reports whether the current credentials can watch Nodes in
+// the given context, via a SelfSubjectAccessReview — the standard
+// "can I do X" k8s API that answers without actually attempting the watch.
+// Nodes is cluster-scoped and commonly restricted to admins, so callers use
+// this to skip opening a watch that would just fail, rather than reacting
+// to the failure after the fact (see watch.Supervisor's Forbidden handling
+// for kinds this check doesn't cover).
+func (c *Client) CanWatchNodes(kubeContext string) (bool, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return false, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	review := &authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Verb:     "watch",
+				Resource: "nodes",
+			},
+		},
+	}
+	result, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(context.Background(), review, metav1.CreateOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to check node access for context %s: %w", kubeContext, err)
+	}
+	return result.Status.Allowed, nil
 }
 
 // ListNamespaces returns the names of every namespace in the given context,

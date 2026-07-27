@@ -273,6 +273,16 @@ type ContextsStateMsg struct {
 	Deselected []string // context names to remove
 }
 
+// NodesAccessMsg reports whether one context can watch Nodes, from a
+// pre-flight SelfSubjectAccessReview check (see cmds.CheckNodesAccessCmd) —
+// dispatched once per newly-selected context, before its Nodes watch would
+// otherwise be opened.
+type NodesAccessMsg struct {
+	Context string
+	Allowed bool
+	Err     error
+}
+
 // NamespacesMsg carries every namespace available in one context, or an
 // error (e.g. an RBAC denial), for the Namespaces pane. Fetched once per
 // newly-selected context.

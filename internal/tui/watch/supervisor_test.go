@@ -333,6 +333,30 @@ func TestSupervisor_AddRemoveNamespace_TracksIndependentWatches(t *testing.T) {
 	}
 }
 
+// TestStartContext_ExcludesNodes_StartKindAddsIt guards the Nodes gating:
+// StartContext must never open a Nodes watch on its own (MainPage gates it
+// behind a CanWatchNodes pre-flight check first), but StartKind must still
+// be able to start it explicitly once that check clears.
+func TestStartContext_ExcludesNodes_StartKindAddsIt(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
+		msg := runCmd(t, cmd)
+		if opened, ok := msg.(msgs.WatchOpenedMsg); ok && opened.Kind == msgs.KindNodes {
+			t.Fatal("expected StartContext to never open a Nodes watch")
+		}
+	}
+	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1", namespace: ""}]; ok {
+		t.Fatal("expected no Nodes watch state after StartContext alone")
+	}
+
+	runCmd(t, s.StartKind(msgs.KindNodes, "ctx1", ""))
+	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1", namespace: ""}]; !ok {
+		t.Fatal("expected StartKind to open a Nodes watch state")
+	}
+}
+
 func TestBackoffDelay(t *testing.T) {
 	cases := []struct {
 		failures int

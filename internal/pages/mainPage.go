@@ -582,6 +582,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.ContextsStateMsg:
 		return m, m.applyContextsState(msg)
 
+	case msgs.NodesAccessMsg:
+		return m, m.applyNodesAccess(msg)
+
 	case msgs.NamespacesMsg:
 		if msg.Err != nil {
 			m.namespacesPane.SetContextError(msg.Context, msg.Err.Error())
@@ -690,6 +693,10 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 		}
 		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName, []string{added.DefaultNamespace})...)
 		cmdSequence = append(cmdSequence, cmds.LoadNamespacesCmd(m.Client, added.ContextName))
+		// Nodes is cluster-scoped and commonly restricted — check access
+		// before opening its watch (see applyNodesAccess) instead of
+		// starting it unconditionally like every other kind above.
+		cmdSequence = append(cmdSequence, cmds.CheckNodesAccessCmd(m.Client, added.ContextName))
 	}
 
 	for _, kind := range m.tabs {
@@ -716,6 +723,23 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 		return nil
 	}
 	return tea.Batch(cmdSequence...)
+}
+
+// applyNodesAccess resolves one context's Nodes pre-flight check
+// (cmds.CheckNodesAccessCmd): if access is confirmed denied, the Nodes watch
+// is never opened at all — the loading flag is just cleared, quietly,
+// rather than surfacing an RBAC error for a resource that's expected to be
+// inaccessible in many clusters. If the check itself failed (as opposed to
+// a confirmed denial) or access is allowed, this falls back to starting the
+// watch normally — the existing reactive RBAC-detection in watch.Supervisor
+// still catches a genuine denial the check missed, just after the fact.
+func (m *MainPage) applyNodesAccess(msg msgs.NodesAccessMsg) tea.Cmd {
+	if msg.Err == nil && !msg.Allowed {
+		m.appState.SetLoading(msgs.KindNodes, msg.Context, false)
+		m.syncContextStates()
+		return nil
+	}
+	return m.watchSup.StartKind(msgs.KindNodes, msg.Context, "")
 }
 
 // applyNamespacesState reconciles a checked-namespace change from the

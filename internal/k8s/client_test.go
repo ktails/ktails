@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -131,6 +133,49 @@ func TestWatchPods_UnknownContext(t *testing.T) {
 		rawConfig:        &api.Config{Contexts: map[string]*api.Context{}},
 	}
 	if _, err := c.WatchPods(context.Background(), "missing", "default"); err == nil {
+		t.Fatal("expected error for unknown context, got nil")
+	}
+}
+
+// TestCanWatchNodes_AllowedAndDenied guards both SelfSubjectAccessReview
+// outcomes. The fake clientset's default tracker can't handle this resource
+// at all (it's a virtual, non-stored type, like TokenReview), so a reactor
+// standing in for the apiserver's actual authorization decision is required
+// for either outcome, not just "allowed".
+func TestCanWatchNodes_AllowedAndDenied(t *testing.T) {
+	c, clientset := newTestClient("ctx1")
+
+	var wantAllowed bool
+	clientset.PrependReactor("create", "selfsubjectaccessreviews", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		review := action.(clienttesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview).DeepCopy()
+		review.Status.Allowed = wantAllowed
+		return true, review, nil
+	})
+
+	allowed, err := c.CanWatchNodes("ctx1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Fatal("expected denied when the reactor reports Allowed=false")
+	}
+
+	wantAllowed = true
+	allowed, err = c.CanWatchNodes("ctx1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected allowed once the reactor grants it")
+	}
+}
+
+func TestCanWatchNodes_UnknownContext(t *testing.T) {
+	c := &Client{
+		clientsByContext: map[string]kubernetes.Interface{},
+		rawConfig:        &api.Config{Contexts: map[string]*api.Context{}},
+	}
+	if _, err := c.CanWatchNodes("missing"); err == nil {
 		t.Fatal("expected error for unknown context, got nil")
 	}
 }

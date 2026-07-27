@@ -40,6 +40,17 @@ func LoadServiceEndpointsCmd(client *k8s.Client, kubeContext, namespace string) 
 	}
 }
 
+// CheckNodesAccessCmd checks whether the current credentials can watch Nodes
+// in a context (see k8s.Client.CanWatchNodes), before MainPage decides
+// whether to open that context's Nodes watch at all. Dispatched once per
+// newly-selected context, alongside LoadNamespacesCmd.
+func CheckNodesAccessCmd(client *k8s.Client, kubeContext string) tea.Cmd {
+	return func() tea.Msg {
+		allowed, err := client.CanWatchNodes(kubeContext)
+		return msgs.NodesAccessMsg{Context: kubeContext, Allowed: allowed, Err: err}
+	}
+}
+
 // LoadNamespacesCmd fetches every namespace available in a context, for the
 // Namespaces pane. Dispatched once per newly-selected context.
 func LoadNamespacesCmd(client *k8s.Client, kubeContext string) tea.Cmd {
