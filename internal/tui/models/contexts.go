@@ -249,6 +249,48 @@ func (c *ContextsInfo) toggleSelection() {
 	c.list.Select(idx)
 }
 
+// SetSelected sets every named context's checked (pending) state, mirroring
+// what pressing Space on each of those rows individually would do — used by
+// the Clusters pane to bulk-toggle every context under one cluster without
+// duplicating the Contexts pane's own selection bookkeeping.
+func (c *ContextsInfo) SetSelected(names []string, selected bool) {
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
+	}
+
+	items := c.list.Items()
+	updated := false
+	for idx, item := range items {
+		ctx, ok := item.(contextList)
+		if !ok || !nameSet[ctx.Name] {
+			continue
+		}
+		if ctx.Selected != selected {
+			ctx.Selected = selected
+			items[idx] = ctx
+			updated = true
+		}
+	}
+	if updated {
+		c.list.SetItems(items)
+	}
+}
+
+// contextsSnapshot returns every known context's current display state, for
+// panes (like Clusters) that need to group or read fields ContextsInfo
+// already tracks without a second data fetch.
+func (c *ContextsInfo) contextsSnapshot() []contextList {
+	items := c.list.Items()
+	out := make([]contextList, 0, len(items))
+	for _, item := range items {
+		if ctx, ok := item.(contextList); ok {
+			out = append(out, ctx)
+		}
+	}
+	return out
+}
+
 // anySelected reports whether any context is currently checked (toggled
 // with Space), regardless of whether it's newly checked or already
 // confirmed from a previous Enter.
@@ -359,7 +401,17 @@ func (c *ContextsInfo) confirmSelection() tea.Cmd {
 		// context.
 		c.toggleSelection()
 	}
+	return c.ConfirmChanges()
+}
 
+// ConfirmChanges diffs whatever is currently checked — however it got
+// checked, directly via Space or in bulk via the Clusters pane's
+// SetSelected — against the last confirm, and returns the resulting
+// ContextsStateMsg command, or nil if nothing changed. Unlike
+// confirmSelection (the Contexts pane's own Enter), this never falls back
+// to auto-checking a row: the Clusters pane has no "row under cursor" that
+// maps to a single context.
+func (c *ContextsInfo) ConfirmChanges() tea.Cmd {
 	state := c.getAllContextStates()
 	if len(state.Added) == 0 && len(state.Deselected) == 0 {
 		return nil

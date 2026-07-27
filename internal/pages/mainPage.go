@@ -31,6 +31,17 @@ const (
 	focusTabs
 )
 
+// leftSection identifies which of the left sidebar's stacked sections
+// currently has keyboard focus while focusLeftPane is active — cycled with
+// "[" / "]", the same keys that cycle resource-kind tabs while focusTabs is
+// active.
+type leftSection int
+
+const (
+	sectionContexts leftSection = iota
+	sectionClusters
+)
+
 type MainPage struct {
 	// dimensions
 	width  int
@@ -47,6 +58,14 @@ type MainPage struct {
 
 	// base models
 	contextList *models.ContextsInfo
+	// clusterList groups contextList's contexts by kubeconfig cluster for
+	// bulk select/deselect — a second left-pane section sharing the
+	// Contexts pane's own selection/confirm state, not a separate data
+	// source.
+	clusterList *models.ClustersInfo
+	// activeLeftSection is which stacked left-pane section ("[" / "]"
+	// cycle it) is focused while focus == focusLeftPane.
+	activeLeftSection leftSection
 	// tables holds the one resource table per tab; all three share the
 	// models.ResourceTable implementation and differ only by spec.
 	tables           map[msgs.ResourceKind]*models.ResourceTable
@@ -119,11 +138,14 @@ func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
 		tables[kind] = models.NewResourceTable(kind)
 	}
 
+	contextList := models.NewContextInfo(c)
+
 	m := &MainPage{
 		Client:           c,
 		appState:         state.NewAppState(),
 		tabs:             msgs.Kinds(),
-		contextList:      models.NewContextInfo(c),
+		contextList:      contextList,
+		clusterList:      models.NewClustersInfo(contextList),
 		tables:           tables,
 		deploymentDetail: models.NewResourceDetailPage(),
 		podLogs:          models.NewLogPage(),
@@ -320,10 +342,27 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Context list keys
+		// Left sidebar keys: "[" / "]" cycle which stacked section has
+		// focus (mirroring the same keys' resource-tab-cycling meaning while
+		// focusTabs is active instead), everything else forwards to
+		// whichever section is currently focused.
 		if m.focus == focusLeftPane {
-			cmd := m.contextList.Update(msg)
-			return m, cmd
+			switch keypress {
+			case "]":
+				m.activeLeftSection = (m.activeLeftSection + 1) % (sectionClusters + 1)
+				m.updateFocusStates()
+				return m, nil
+			case "[":
+				m.activeLeftSection = (m.activeLeftSection - 1 + sectionClusters + 1) % (sectionClusters + 1)
+				m.updateFocusStates()
+				return m, nil
+			}
+			switch m.activeLeftSection {
+			case sectionClusters:
+				return m, m.clusterList.Update(msg)
+			default:
+				return m, m.contextList.Update(msg)
+			}
 		}
 
 		// While the detail pane has keyboard focus, it captures everything
@@ -483,7 +522,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyContentSizes()
 
-		contextsH, _, _ := splitLeftSections(r.LeftContentH)
+		contextsH, _, clustersH := splitLeftSections(r.LeftContentH)
+		m.clusterList.SetSize(r.LeftContentW, clustersH)
 		return m, m.contextList.Update(tea.WindowSizeMsg{Width: r.LeftContentW, Height: contextsH})
 
 	case msgs.ResourceDetailMsg:
@@ -672,7 +712,8 @@ func (m *MainPage) toggleFocus() {
 }
 
 func (m *MainPage) updateFocusStates() {
-	m.contextList.SetFocused(m.focus == focusLeftPane)
+	m.contextList.SetFocused(m.focus == focusLeftPane && m.activeLeftSection == sectionContexts)
+	m.clusterList.SetFocused(m.focus == focusLeftPane && m.activeLeftSection == sectionClusters)
 	listActive := m.focus == focusTabs && !m.detailFocused && !m.logsFocused && m.appStateLoaded
 	for _, kind := range m.tabs {
 		m.tables[kind].SetFocused(listActive && kind == m.activeKind())
@@ -1200,7 +1241,7 @@ func (m *MainPage) renderHelpOverlay() string {
 	type binding struct{ key, desc string }
 	bindings := []binding{
 		{"Tab / Shift+Tab", "Switch pane focus"},
-		{"[ / ]", "Navigate tabs"},
+		{"[ / ]", "Navigate resource tabs, or cycle Contexts/Clusters sections when the sidebar has focus"},
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},
 		{"PgUp / PgDn   Ctrl+U / Ctrl+D", "Move up / down a page (any resource tab)"},
@@ -1373,28 +1414,37 @@ func splitLeftSections(total int) (contextsH, namespacesH, clustersH int) {
 }
 
 // renderLeftBox renders the Context List box's content: the interactive
-// Contexts list, then Namespaces and Clusters sections (each a header over
-// an explanatory placeholder line — not yet backed by any data), each
-// clipped (views.FitBlock) to its allotted height so one section can never
-// push the others out of place. Only the first section gets the
-// interactive list itself; Contexts' own header is the outer box's border
-// title, so it isn't repeated here.
+// Contexts list, then the interactive Clusters list (grouping Contexts'
+// rows by kubeconfig cluster for bulk select/deselect), then Namespaces
+// (still a header over a placeholder line — not yet backed by any data,
+// see Part 3 of the k8s-tui-inspired sidebar revamp), each clipped
+// (views.FitBlock) to its allotted height so one section can never push the
+// others out of place. Only Contexts and Clusters get their own header
+// rendered here — Contexts' header is the outer box's border title instead.
+
 func (m *MainPage) renderLeftBox(r views.Rects, focused bool) string {
 	contextsH, namespacesH, clustersH := splitLeftSections(r.LeftContentH)
 
 	p := styles.CatppuccinMocha()
-	headerStyle := lipgloss.NewStyle().Foreground(p.Overlay1).Bold(true)
-	if focused {
-		headerStyle = headerStyle.Foreground(styles.FocusColor)
+	dimHeaderStyle := lipgloss.NewStyle().Foreground(p.Overlay1).Bold(true)
+	// Clusters' header only picks up the focus colour when it's genuinely
+	// the section with keyboard focus (see activeLeftSection) — Namespaces
+	// stays dim regardless, since it's not yet an interactive section (§Part
+	// 3), and coloring it here would falsely imply it already is.
+	clustersHeaderStyle := dimHeaderStyle
+	if focused && m.activeLeftSection == sectionClusters {
+		clustersHeaderStyle = clustersHeaderStyle.Foreground(styles.FocusColor)
 	}
 	placeholderStyle := lipgloss.NewStyle().Foreground(p.Overlay0).Italic(true)
 
+	m.clusterList.Refresh()
+
 	blocks := []string{
 		views.FitBlock(m.contextList.View(), r.LeftContentW, contextsH),
-		headerStyle.Render("Namespaces"),
+		dimHeaderStyle.Render("Namespaces"),
 		views.FitBlock(placeholderStyle.Render("no namespaces loaded"), r.LeftContentW, namespacesH),
-		headerStyle.Render("Clusters"),
-		views.FitBlock(placeholderStyle.Render("no clusters loaded"), r.LeftContentW, clustersH),
+		clustersHeaderStyle.Render("Clusters"),
+		views.FitBlock(m.clusterList.View(), r.LeftContentW, clustersH),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
 }
