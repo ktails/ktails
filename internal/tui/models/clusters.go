@@ -100,8 +100,9 @@ func NewClustersInfo(contexts *ContextsInfo) *ClustersInfo {
 	newList.SetShowStatusBar(false)
 	newList.SetShowHelp(false)
 	newList.SetShowPagination(false)
-	// See contexts.go's NewContextInfo for why this must stay off.
+	// See contexts.go's NewContextInfo for why these must stay off/disabled.
 	newList.SetFilteringEnabled(false)
+	newList.DisableQuitKeybindings()
 	newList.Title = ""
 	return &ClustersInfo{contexts: contexts, list: newList}
 }

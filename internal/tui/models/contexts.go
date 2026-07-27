@@ -194,6 +194,12 @@ func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	// mode and Esc can't get back out (MainPage's global Esc handling
 	// intercepts the keypress before it ever reaches this list's Update).
 	newList.SetFilteringEnabled(false)
+	// bubbles/list's default keymap also binds "q" (and "esc") to its own
+	// built-in quit, returning tea.Quit straight from this list's Update —
+	// which MainPage would then dutifully run, killing the whole app. "q" is
+	// deliberately not a quit key here (only Ctrl+C is); disable it at the
+	// source rather than trying to intercept "q" before it reaches the list.
+	newList.DisableQuitKeybindings()
 	return &ContextsInfo{
 		Client:             client,
 		PaneTitle:          "Kubernetes Contexts",
