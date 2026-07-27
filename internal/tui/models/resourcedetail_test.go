@@ -113,6 +113,33 @@ func TestResourceDetailScrollResetsOnResize(t *testing.T) {
 	}
 }
 
+// TestResourceDetailYJumpsToYAMLSection guards the "y" key: it must scroll
+// the viewport to the YAML section's own line, not just anywhere past the
+// Status/Events content above it.
+func TestResourceDetailYJumpsToYAMLSection(t *testing.T) {
+	d := NewResourceDetailPage()
+	d.SetSize(80, 5) // short viewport so the YAML section starts off-screen
+	d.StartLoading("Deployment", "foo", "ctx")
+	d.SetDetail(k8s.ResourceDetail{
+		Kind: "Deployment", Name: "foo", Namespace: "ns", Age: "1d",
+		Summary: "Ready Replicas: 2",
+		Status:  []string{"Available=True", "Progressing=True"},
+		Events: []k8s.EventInfo{
+			{Age: "1m", Reason: "Scheduled", Type: "Normal", Message: "placed", Count: 1},
+		},
+		YAML: "kind: Deployment\nmetadata:\n  name: foo",
+	})
+
+	if d.yamlLine == 0 {
+		t.Fatal("expected yamlLine to be past the Summary/Status/Events content, got 0")
+	}
+
+	d.Update(tea.KeyPressMsg{Code: 'y'})
+	if got := d.viewport.YOffset(); got != d.yamlLine {
+		t.Fatalf("expected y to set viewport offset to yamlLine (%d), got %d", d.yamlLine, got)
+	}
+}
+
 func TestResourceDetailNoOverflowHidesIndicator(t *testing.T) {
 	d := NewResourceDetailPage()
 	d.SetSize(200, 10)

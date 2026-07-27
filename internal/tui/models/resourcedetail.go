@@ -37,6 +37,11 @@ type ResourceDetailPage struct {
 	rawLineWidth int // widest line in rawContent, in cells
 	hOffset      int // horizontal scroll offset, in cells
 	lastWidth    int // viewport width as of the last SetSize, to detect resize
+
+	// yamlLine is the line offset of the YAML section's title within
+	// rawContent, computed by render — the "y" key jumps the viewport
+	// straight there.
+	yamlLine int
 }
 
 func NewResourceDetailPage() *ResourceDetailPage {
@@ -170,7 +175,11 @@ func (d *ResourceDetailPage) Context() string {
 // column's identity swatch is still visible while it's open.
 func (d *ResourceDetailPage) Header(width int, dotColor color.Color) string {
 	p := styles.CatppuccinMocha()
-	title := lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
+	titleColor := styles.BlurColor
+	if d.focused {
+		titleColor = styles.FocusColor
+	}
+	title := lipgloss.NewStyle().Foreground(titleColor).Bold(true)
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true)
 	if dotColor == nil {
 		dotColor = p.Overlay1
@@ -182,7 +191,7 @@ func (d *ResourceDetailPage) Header(width int, dotColor color.Color) string {
 		label = "Detail"
 	}
 	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " + dot + " " +
-		hint.Render(fmt.Sprintf("%s (↑/↓ pgup/pgdn scroll, Home/End jump, Esc back, Ctrl+R return)", d.context))
+		hint.Render(fmt.Sprintf("%s (↑/↓ pgup/pgdn scroll, y yaml, Home/End jump, Esc back, Ctrl+R return)", d.context))
 	if width <= 0 {
 		return full
 	}
@@ -197,6 +206,11 @@ func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		case "end", "G":
 			d.viewport.GotoBottom()
+			return nil
+		case "y":
+			if d.loaded {
+				d.viewport.SetYOffset(d.yamlLine)
+			}
 			return nil
 		case "shift+left":
 			if !d.loaded {
@@ -305,6 +319,7 @@ func (d *ResourceDetailPage) render(detail k8s.ResourceDetail) string {
 	}
 	fmt.Fprintln(&b)
 
+	d.yamlLine = strings.Count(b.String(), "\n")
 	fmt.Fprintln(&b, titleStyle.Render("YAML"))
 	fmt.Fprintln(&b, sep)
 	fmt.Fprint(&b, highlightYAML(detail.YAML))

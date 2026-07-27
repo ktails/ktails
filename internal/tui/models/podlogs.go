@@ -484,7 +484,11 @@ func (l *LogPage) ScrollStatus() (percent int, ok bool) {
 // isolated one) and the pane's key hints.
 func (l *LogPage) Header(width int) string {
 	p := styles.CatppuccinMocha()
-	title := lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
+	titleColor := styles.BlurColor
+	if l.focused {
+		titleColor = styles.FocusColor
+	}
+	title := lipgloss.NewStyle().Foreground(titleColor).Bold(true)
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true)
 
 	label := "Logs"

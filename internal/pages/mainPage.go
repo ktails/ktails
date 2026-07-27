@@ -438,10 +438,13 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Enter on a selected row (re)loads the detail pane for that row and
-		// gives it keyboard focus for scrolling. Detail and Logs share the
-		// same bottom slot and are mutually exclusive.
-		if m.appStateLoaded && keypress == "enter" {
+		// d on a selected row (re)loads the detail pane for that row and
+		// gives it keyboard focus for scrolling — k9s's "describe" key.
+		// Detail and Logs share the same bottom slot and are mutually
+		// exclusive. Unlike the sidebar panes (Contexts/Clusters/
+		// Namespaces), where Enter confirms a checked selection, Enter has
+		// no meaning here.
+		if m.appStateLoaded && keypress == "d" {
 			m.closeLogs()
 			if cmd := m.openResourceDetail(m.activeKind()); cmd != nil {
 				return m, cmd
@@ -1291,9 +1294,9 @@ func (m *MainPage) footerHints() string {
 	case m.focus == focusLeftPane:
 		return "space select  ↵ confirm  tab focus  ?  help  ctrl+c quit"
 	case m.activeKind() == msgs.KindPods:
-		return "/ filter  [ ] tabs  space check  l logs  ↵ describe  ?  help"
+		return "/ filter  [ ] tabs  space check  l logs  d describe  ?  help"
 	default:
-		return "/ filter  [ ] tabs  ↵ describe  r refresh  ?  help  ctrl+c quit"
+		return "/ filter  [ ] tabs  d describe  r refresh  ?  help  ctrl+c quit"
 	}
 }
 
@@ -1322,7 +1325,8 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"g / Home   G / End", "Jump to first / last row (any resource tab)"},
 		{"/", "Filter the active table by name across all rows, not just the visible ones; Enter to keep it, Esc to clear"},
 		{"Space", "Toggle context selection / check a Pods row for log tailing"},
-		{"Enter", "Confirm selection & load / open + focus detail pane (refocuses instantly if already loaded)"},
+		{"Enter (Contexts pane)", "Confirm selection & load"},
+		{"d", "Open + focus the detail pane for the row under the cursor (refocuses instantly if already loaded)"},
 		{"l (Pods tab)", "Open/reconcile the merged log pane for checked rows (or the row under the cursor)"},
 		{"Ctrl+X (Pods tab)", "Clear all checked rows"},
 		{"r", "Refresh the active tab's resource list across all selected contexts"},
@@ -1330,6 +1334,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
 		{"R", "Toggle auto-refresh on/off"},
 		{"↑/↓ j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
+		{"y (detail pane focused)", "Jump straight to the YAML section"},
 		{"Home / End", "Jump to top / bottom of detail/log pane"},
 		{"Esc", "Unfocus detail/log pane, then close it / overlay / dismiss error"},
 		{"?", "Toggle this help"},
