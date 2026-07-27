@@ -118,6 +118,8 @@ func NewNamespacesInfo() *NamespacesInfo {
 	newList.SetShowStatusBar(false)
 	newList.SetShowHelp(false)
 	newList.SetShowPagination(false)
+	// See contexts.go's NewContextInfo for why this must stay off.
+	newList.SetFilteringEnabled(false)
 	newList.Title = ""
 	return &NamespacesInfo{
 		list:                newList,

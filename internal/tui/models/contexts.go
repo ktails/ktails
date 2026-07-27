@@ -189,6 +189,11 @@ func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	// The pagination dot row reads as a stray glyph under the pane title;
 	// the list still pages, it just doesn't draw the indicator.
 	newList.SetShowPagination(false)
+	// This pane has no "/" filter of its own — bubbles/list's built-in
+	// filtering must stay off, or "/" silently drops into its filter-input
+	// mode and Esc can't get back out (MainPage's global Esc handling
+	// intercepts the keypress before it ever reaches this list's Update).
+	newList.SetFilteringEnabled(false)
 	return &ContextsInfo{
 		Client:             client,
 		PaneTitle:          "Kubernetes Contexts",

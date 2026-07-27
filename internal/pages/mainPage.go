@@ -313,7 +313,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Global keys
 		switch keypress {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			m.stopLogStream()
 			return m, tea.Quit
 		case "tab", "shift+tab":
@@ -1285,15 +1285,15 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 func (m *MainPage) footerHints() string {
 	switch {
 	case m.showLogs:
-		return "↑↓ scroll  w wrap  c isolate  esc close  q quit"
+		return "↑↓ scroll  w wrap  c isolate  esc close  ctrl+c quit"
 	case m.showDetail:
-		return "↑↓ scroll  y yaml  ctrl+r focus  esc close  q quit"
+		return "↑↓ scroll  y yaml  ctrl+r focus  esc close  ctrl+c quit"
 	case m.focus == focusLeftPane:
-		return "space select  ↵ confirm  tab focus  ?  help  q quit"
+		return "space select  ↵ confirm  tab focus  ?  help  ctrl+c quit"
 	case m.activeKind() == msgs.KindPods:
 		return "/ filter  [ ] tabs  space check  l logs  ↵ describe  ?  help"
 	default:
-		return "/ filter  [ ] tabs  ↵ describe  r refresh  ?  help  q quit"
+		return "/ filter  [ ] tabs  ↵ describe  r refresh  ?  help  ctrl+c quit"
 	}
 }
 
@@ -1333,7 +1333,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"Home / End", "Jump to top / bottom of detail/log pane"},
 		{"Esc", "Unfocus detail/log pane, then close it / overlay / dismiss error"},
 		{"?", "Toggle this help"},
-		{"q / Ctrl+C", "Quit"},
+		{"Ctrl+C", "Quit"},
 	}
 
 	var lines []string
