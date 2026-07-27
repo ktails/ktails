@@ -38,8 +38,12 @@ func (cl contextList) Description() string { return cl.DefaultNamespace }
 func (cl contextList) FilterValue() string { return cl.Name }
 
 // contextDelegate is a custom list.ItemDelegate that renders each context with
-// icon-based state indicators and per-item colour coding.
-type contextDelegate struct{}
+// icon-based state indicators and per-item colour coding. focused mirrors
+// ContextsInfo.Focused (kept in sync via SetFocused re-setting the list's
+// delegate) — the cursor row only gets the bright FocusColor highlight when
+// this pane genuinely has keyboard focus; otherwise it gets a muted
+// indicator, so an unfocused pane never looks like it's still focused.
+type contextDelegate struct{ focused bool }
 
 func (d contextDelegate) Height() int                             { return 2 }
 func (d contextDelegate) Spacing() int                            { return 0 }
@@ -138,7 +142,8 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	titleContent := " " + dotStr + " " + nameStr + currentMark + statusStr
 	descContent := "    " + descStr // indent to align under name
 
-	if isCursor {
+	switch {
+	case isCursor && d.focused:
 		// Focus accent bg + Base fg — the one selection/focus colour used
 		// everywhere (sidebar cursor, table row, active tab, pane border).
 		titleLine := lipgloss.NewStyle().
@@ -153,7 +158,22 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 			Width(paneWidth).
 			Render("    " + descText)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
-	} else {
+	case isCursor:
+		// Cursor parked here, but the pane itself doesn't have keyboard
+		// focus right now — a muted background instead of the bright focus
+		// accent, so it never reads as "this pane is focused" when it isn't.
+		titleLine := lipgloss.NewStyle().
+			Background(p.Surface0).
+			Bold(true).
+			Width(paneWidth).
+			Render(titleContent)
+		descLine := lipgloss.NewStyle().
+			Background(p.Surface0).
+			Foreground(p.Overlay1).
+			Width(paneWidth).
+			Render(descContent)
+		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
+	default:
 		titleLine := lipgloss.NewStyle().Width(paneWidth).Render(titleContent)
 		descLine := lipgloss.NewStyle().Foreground(p.Overlay0).Width(paneWidth).Render(descContent)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
@@ -469,4 +489,5 @@ func (c *ContextsInfo) HelpView() string {
 
 func (c *ContextsInfo) SetFocused(f bool) {
 	c.Focused = f
+	c.list.SetDelegate(contextDelegate{focused: f})
 }

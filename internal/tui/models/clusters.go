@@ -29,8 +29,9 @@ func (g clusterGroup) FilterValue() string { return g.Name }
 // contextDelegate (dot + name, indented description), just with one dot
 // state (all-selected / not) instead of the Contexts row's richer
 // identity/status iconography — a cluster group has no loading/error state
-// of its own, only aggregate selection.
-type clusterDelegate struct{}
+// of its own, only aggregate selection. focused mirrors ClustersInfo.Focused
+// (see contextDelegate's doc comment for why this matters).
+type clusterDelegate struct{ focused bool }
 
 func (d clusterDelegate) Height() int                         { return 2 }
 func (d clusterDelegate) Spacing() int                        { return 0 }
@@ -70,11 +71,18 @@ func (d clusterDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	titleContent := " " + dotStr + " " + nameStr
 	descContent := "    " + descStr
 
-	if isCursor {
+	switch {
+	case isCursor && d.focused:
 		titleLine := lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Width(paneWidth).Render(titleContent)
 		descLine := lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Width(paneWidth).Render(descContent)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
-	} else {
+	case isCursor:
+		// Cursor parked here, but the pane doesn't have keyboard focus right
+		// now — muted background instead of the bright focus accent.
+		titleLine := lipgloss.NewStyle().Background(p.Surface0).Width(paneWidth).Render(titleContent)
+		descLine := lipgloss.NewStyle().Background(p.Surface0).Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
+		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
+	default:
 		titleLine := lipgloss.NewStyle().Width(paneWidth).Render(titleContent)
 		descLine := lipgloss.NewStyle().Foreground(p.Overlay0).Width(paneWidth).Render(descContent)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
@@ -165,6 +173,7 @@ func (cl *ClustersInfo) SetSize(w, h int) {
 
 func (cl *ClustersInfo) SetFocused(f bool) {
 	cl.Focused = f
+	cl.list.SetDelegate(clusterDelegate{focused: f})
 }
 
 func (cl *ClustersInfo) Update(msg tea.Msg) tea.Cmd {
