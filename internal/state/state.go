@@ -28,6 +28,11 @@ type AppState struct {
 	// Contexts that have completed at least one successful load cycle
 	LoadedContexts map[string]bool
 
+	// loadedKinds tracks, per context, which of requiredForLoaded's kinds
+	// have each delivered a first successful load — LoadedContexts only
+	// flips true once every required kind has (see MarkLoaded).
+	loadedKinds map[string]map[msgs.ResourceKind]bool
+
 	// contextColors assigns each context its identity colour (styles.IdentityColor)
 	// the first time it's added, in rotation order. Entries are never removed on
 	// RemoveContext so a context re-added within the same session keeps its colour.
@@ -57,8 +62,19 @@ func NewAppState() *AppState {
 		loading:          loading,
 		Errors:           make(map[string]string),
 		LoadedContexts:   make(map[string]bool),
+		loadedKinds:      make(map[string]map[msgs.ResourceKind]bool),
 		contextColors:    make(map[string]color.Color),
 	}
+}
+
+// requiredForLoaded is the set of kinds that must each deliver a first
+// successful load before a context counts as "loaded" — Deployments (the
+// tab a fresh selection lands on) and Pods (the tab every workflow touches
+// next), so tab navigation and the Contexts pane's checkmark both wait for
+// the two most-used tabs to be genuinely ready, not just the first one.
+var requiredForLoaded = map[msgs.ResourceKind]bool{
+	msgs.KindDeployments: true,
+	msgs.KindPods:        true,
 }
 
 // AddContext adds or updates a context selection, seeding its checked
@@ -124,16 +140,23 @@ func (a *AppState) SetLoading(kind msgs.ResourceKind, context string, loading bo
 }
 
 // MarkLoaded records a successful row delivery for one resource kind in a
-// context: that kind stops counting as loading, and — for Deployments only,
-// preserving the pre-Supervisor behavior — the context is marked loaded and
-// its error cleared. (Deployments is the tab a fresh selection lands on, so
-// it's the kind whose first delivery means "this context works".)
+// context: that kind stops counting as loading, and once every kind in
+// requiredForLoaded has each delivered at least one successful load, the
+// context is marked loaded and its error cleared.
 func (a *AppState) MarkLoaded(kind msgs.ResourceKind, context string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	a.loading[kind][context] = false
-	if kind == msgs.KindDeployments {
+	if !requiredForLoaded[kind] {
+		return
+	}
+
+	if a.loadedKinds[context] == nil {
+		a.loadedKinds[context] = make(map[msgs.ResourceKind]bool)
+	}
+	a.loadedKinds[context][kind] = true
+	if len(a.loadedKinds[context]) == len(requiredForLoaded) {
 		a.LoadedContexts[context] = true
 		delete(a.Errors, context)
 	}
@@ -161,6 +184,7 @@ func (a *AppState) RemoveContext(context string) {
 	}
 	delete(a.Errors, context)
 	delete(a.LoadedContexts, context)
+	delete(a.loadedKinds, context)
 }
 
 // ClearErrors removes all error messages

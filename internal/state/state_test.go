@@ -1,6 +1,54 @@
 package state
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ktails/ktails/internal/tui/msgs"
+)
+
+// TestMarkLoaded_RequiresBothDeploymentsAndPods guards the tab-navigation
+// sync: a context must not count as "loaded" (LoadedContexts) until both
+// Deployments and Pods have each delivered a first successful load — not
+// just Deployments alone.
+func TestMarkLoaded_RequiresBothDeploymentsAndPods(t *testing.T) {
+	a := NewAppState()
+	a.AddContext("ctx1", "default")
+
+	a.MarkLoaded(msgs.KindDeployments, "ctx1")
+	if a.Snapshot().LoadedContexts["ctx1"] {
+		t.Fatal("expected ctx1 not loaded yet — only Deployments has delivered")
+	}
+
+	// Other kinds delivering in between must not satisfy the requirement.
+	a.MarkLoaded(msgs.KindConfigMaps, "ctx1")
+	if a.Snapshot().LoadedContexts["ctx1"] {
+		t.Fatal("expected ctx1 still not loaded — ConfigMaps isn't one of the required kinds")
+	}
+
+	a.MarkLoaded(msgs.KindPods, "ctx1")
+	if !a.Snapshot().LoadedContexts["ctx1"] {
+		t.Fatal("expected ctx1 loaded once both Deployments and Pods have delivered")
+	}
+}
+
+// TestMarkLoaded_ClearsErrorOnceBothRequiredKindsDeliver guards that a
+// context's error is cleared exactly when LoadedContexts flips true, not
+// prematurely on the first required kind.
+func TestMarkLoaded_ClearsErrorOnceBothRequiredKindsDeliver(t *testing.T) {
+	a := NewAppState()
+	a.AddContext("ctx1", "default")
+	a.SetError("ctx1", "stale error")
+
+	a.MarkLoaded(msgs.KindDeployments, "ctx1")
+	if a.Snapshot().Errors["ctx1"] == "" {
+		t.Fatal("expected the error to survive until Pods also delivers")
+	}
+
+	a.MarkLoaded(msgs.KindPods, "ctx1")
+	if a.Snapshot().Errors["ctx1"] != "" {
+		t.Fatal("expected the error cleared once both required kinds delivered")
+	}
+}
 
 // TestAddRemoveNamespace_NeverDropsTheLastOne guards the safety backstop:
 // unchecking every namespace for a context would leave it selected but
