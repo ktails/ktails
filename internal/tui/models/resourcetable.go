@@ -288,6 +288,12 @@ func (t *ResourceTable) Update(msg tea.Msg) tea.Cmd {
 			case "up", "k":
 				t.moveCursor(-1)
 				return nil
+			case "pgdown", "ctrl+d":
+				t.pageCursor(1)
+				return nil
+			case "pgup", "ctrl+u":
+				t.pageCursor(-1)
+				return nil
 			case "home", "g":
 				t.jumpTo(0)
 				return nil
@@ -370,6 +376,18 @@ func (t *ResourceTable) moveCursor(delta int) {
 	t.windowStart = computeWindowStart(t.windowStart, t.cursorIdx, total, t.windowSize)
 	t.pushDisplayRows()
 	t.invalidateView()
+}
+
+// pageCursor moves the cursor by one visible page (windowSize rows) in the
+// given direction (+1 down, -1 up), clamping at either end rather than
+// wrapping — a page jump landing back at the opposite end of the list would
+// be disorienting in a way moveCursor's single-step wrap isn't.
+func (t *ResourceTable) pageCursor(dir int) {
+	size := t.windowSize
+	if size < 1 {
+		size = 1
+	}
+	t.jumpTo(t.cursorIdx + dir*size)
 }
 
 // jumpTo moves the cursor directly to the given position in the active

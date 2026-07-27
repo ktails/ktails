@@ -1193,6 +1193,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"[ / ]", "Navigate tabs"},
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},
+		{"PgUp / PgDn   Ctrl+U / Ctrl+D", "Move up / down a page (any resource tab)"},
 		{"g / Home   G / End", "Jump to first / last row (any resource tab)"},
 		{"/", "Filter the active table by name across all rows, not just the visible ones; Enter to keep it, Esc to clear"},
 		{"Space", "Toggle context selection / check a Pods row for log tailing"},
