@@ -369,7 +369,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if next >= len(m.tabs) {
 				return m, nil
 			}
-			if !m.appStateLoaded || len(m.appState.Snapshot().SelectedContexts) == 0 {
+			snapshot := m.appState.Snapshot()
+			if !m.appStateLoaded || !allContextsLoaded(snapshot.SelectedContexts, snapshot.LoadedContexts, snapshot.Errors) {
 				return m, nil
 			}
 			m.activeTab = next
@@ -378,6 +379,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left", "[":
 			prev := m.activeTab - 1
 			if prev < 0 {
+				return m, nil
+			}
+			snapshot := m.appState.Snapshot()
+			if !m.appStateLoaded || !allContextsLoaded(snapshot.SelectedContexts, snapshot.LoadedContexts, snapshot.Errors) {
 				return m, nil
 			}
 			m.activeTab = prev
@@ -1390,4 +1395,22 @@ func hasLoading(loading map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// allContextsLoaded reports whether every selected context has settled: it
+// either completed a successful Deployments load, or gave up permanently
+// (e.g. an RBAC denial recorded in errors — that context will never load, so
+// it must not hold tab navigation hostage forever). Tab navigation is gated
+// on this so switching away from Deployments never lands on a still-empty
+// tab, while a context this user can't view doesn't stick every tab shut.
+func allContextsLoaded(selected map[string]string, loaded map[string]bool, errors map[string]string) bool {
+	if len(selected) == 0 {
+		return false
+	}
+	for ctx := range selected {
+		if !loaded[ctx] && errors[ctx] == "" {
+			return false
+		}
+	}
+	return true
 }

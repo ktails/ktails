@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/ktails/ktails/internal/tui/msgs"
@@ -253,6 +254,14 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 			return nil, nil, true
 		}
 		st.watcher = nil
+		// RBAC denials don't heal with a retry — the ServiceAccount either has
+		// the list/watch verb on this resource or it doesn't — so give up
+		// immediately instead of burning through backoff attempts first.
+		if apierrors.IsForbidden(msg.Err) {
+			err := fmt.Errorf("RBAC: not permitted to view %s in context '%s'",
+				strings.ToLower(msg.Kind.Title()), msg.Context)
+			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
+		}
 		st.failures++
 		if st.failures > maxReconnectFailures {
 			err := fmt.Errorf("failed to watch %s for context '%s' after %d attempts: %v",
