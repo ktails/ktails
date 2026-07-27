@@ -95,7 +95,7 @@ func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 func startPodsWatch(t *testing.T, s *Supervisor) tea.Cmd {
 	t.Helper()
 	var waitCmd tea.Cmd
-	for _, cmd := range s.StartContext("ctx1", "default") {
+	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
 		msg := runCmd(t, cmd)
 		opened, ok := msg.(msgs.WatchOpenedMsg)
 		if !ok {
@@ -124,7 +124,7 @@ func TestSupervisor_OpenWithNoEventsStillMarksLoaded(t *testing.T) {
 	s := NewSupervisor(cluster)
 
 	var secretsOpened msgs.WatchOpenedMsg
-	for _, cmd := range s.StartContext("ctx1", "default") {
+	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
 		msg := runCmd(t, cmd)
 		if opened, ok := msg.(msgs.WatchOpenedMsg); ok && opened.Kind == msgs.KindSecrets {
 			secretsOpened = opened
@@ -187,7 +187,7 @@ func TestSupervisor_StaleGenerationDropped(t *testing.T) {
 	// its watcher stopped, not adopted.
 	staleWatcher := kwatch.NewFakeWithChanSize(1, false)
 	upd, next, handled := s.Handle(msgs.WatchOpenedMsg{
-		Kind: msgs.KindPods, Context: "ctx1", Generation: 0, Watcher: staleWatcher,
+		Kind: msgs.KindPods, Context: "ctx1", Namespace: "default", Generation: 0, Watcher: staleWatcher,
 	})
 	if !handled || upd != nil || next != nil {
 		t.Fatalf("expected stale opened msg swallowed, got upd=%v next=%v", upd, next)
@@ -227,7 +227,7 @@ func TestSupervisor_ClosedReconnectsThenGivesUp(t *testing.T) {
 	startPodsWatch(t, s)
 
 	closed := msgs.WatchClosedMsg{
-		Kind: msgs.KindPods, Context: "ctx1", Generation: 1, Err: errors.New("stream broke"),
+		Kind: msgs.KindPods, Context: "ctx1", Namespace: "default", Generation: 1, Err: errors.New("stream broke"),
 	}
 
 	// The first maxReconnectFailures closes each get a reconnect command.
@@ -256,7 +256,7 @@ func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 	s := NewSupervisor(cluster)
 
 	var svcWait tea.Cmd
-	for _, cmd := range s.StartContext("ctx1", "default") {
+	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
 		opened := runCmd(t, cmd).(msgs.WatchOpenedMsg)
 		_, next, _ := s.Handle(opened)
 		if opened.Kind == msgs.KindServices {
@@ -286,6 +286,50 @@ func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 	// A namespace change makes the fetch needed again.
 	if !s.NeedsEndpoints("ctx1", "other-ns") {
 		t.Fatal("expected endpoints needed again after namespace change")
+	}
+}
+
+// TestSupervisor_AddRemoveNamespace_TracksIndependentWatches guards the
+// multi-namespace bookkeeping: adding a second namespace to an
+// already-selected context must start its own independent watch per
+// namespaced kind without disturbing the first namespace's watch, must skip
+// the cluster-scoped KindNodes entirely (already covered by StartContext),
+// and removing that namespace again must stop only its own watches.
+func TestSupervisor_AddRemoveNamespace_TracksIndependentWatches(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
+		runCmd(t, cmd)
+	}
+
+	key := func(kind msgs.ResourceKind, ns string) stateKey {
+		return stateKey{kind: kind, context: "ctx1", namespace: ns}
+	}
+
+	if _, ok := s.states[key(msgs.KindPods, "default")]; !ok {
+		t.Fatal("expected a Pods watch state for the default namespace")
+	}
+
+	for _, cmd := range s.AddNamespace("ctx1", "other-ns") {
+		runCmd(t, cmd)
+	}
+	if _, ok := s.states[key(msgs.KindPods, "other-ns")]; !ok {
+		t.Fatal("expected AddNamespace to start a Pods watch for the new namespace")
+	}
+	if _, ok := s.states[key(msgs.KindPods, "default")]; !ok {
+		t.Fatal("expected the original default-namespace watch to remain untouched")
+	}
+	if _, ok := s.states[key(msgs.KindNodes, "other-ns")]; ok {
+		t.Fatal("expected AddNamespace to skip cluster-scoped KindNodes")
+	}
+
+	s.RemoveNamespace("ctx1", "other-ns")
+	if _, ok := s.states[key(msgs.KindPods, "other-ns")]; ok {
+		t.Fatal("expected RemoveNamespace to stop the Pods watch for that namespace")
+	}
+	if _, ok := s.states[key(msgs.KindPods, "default")]; !ok {
+		t.Fatal("expected the default-namespace watch to survive removing a different namespace")
 	}
 }
 

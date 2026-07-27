@@ -13,8 +13,11 @@ import (
 )
 
 type AppState struct {
-	// Selected contexts and their namespaces
-	SelectedContexts map[string]string // context -> namespace
+	// Selected contexts and their checked namespaces — always at least one
+	// entry per context (seeded from kubeconfig's default on AddContext),
+	// but a context can have several checked at once via the Namespaces
+	// pane, each watched independently.
+	SelectedContexts map[string][]string // context -> namespaces
 
 	// Loading states per resource kind
 	loading map[msgs.ResourceKind]map[string]bool // kind -> context -> isLoading
@@ -37,7 +40,7 @@ type AppState struct {
 
 // Snapshot captures a read-only view of application state data.
 type Snapshot struct {
-	SelectedContexts map[string]string
+	SelectedContexts map[string][]string
 	LoadingStates    map[string]bool // Combined across resource kinds
 	LoadedContexts   map[string]bool // Contexts with at least one successful load
 	Errors           map[string]string
@@ -50,7 +53,7 @@ func NewAppState() *AppState {
 		loading[kind] = make(map[string]bool)
 	}
 	return &AppState{
-		SelectedContexts: make(map[string]string),
+		SelectedContexts: make(map[string][]string),
 		loading:          loading,
 		Errors:           make(map[string]string),
 		LoadedContexts:   make(map[string]bool),
@@ -58,17 +61,58 @@ func NewAppState() *AppState {
 	}
 }
 
-// AddContext adds or updates a context selection, assigning it an identity
-// colour (in rotation order) the first time it's seen.
+// AddContext adds or updates a context selection, seeding its checked
+// namespace set with just the kubeconfig default, and assigning it an
+// identity colour (in rotation order) the first time it's seen.
 func (a *AppState) AddContext(context, namespace string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.SelectedContexts[context] = namespace
+	a.SelectedContexts[context] = []string{namespace}
 	if _, ok := a.contextColors[context]; !ok {
 		a.contextColors[context] = styles.IdentityColor(a.nextColorIdx)
 		a.nextColorIdx++
 	}
+}
+
+// AddNamespace checks one additional namespace for an already-selected
+// context — a no-op if it's already checked or the context isn't selected.
+func (a *AppState) AddNamespace(context, namespace string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	namespaces, ok := a.SelectedContexts[context]
+	if !ok {
+		return
+	}
+	for _, ns := range namespaces {
+		if ns == namespace {
+			return
+		}
+	}
+	a.SelectedContexts[context] = append(namespaces, namespace)
+}
+
+// RemoveNamespace unchecks one namespace for a context. It never removes the
+// last remaining namespace — a context with zero checked namespaces would
+// watch nothing while still showing as selected, which the Namespaces pane
+// should refuse to produce in the first place; this is the defensive
+// backstop.
+func (a *AppState) RemoveNamespace(context, namespace string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	namespaces, ok := a.SelectedContexts[context]
+	if !ok || len(namespaces) <= 1 {
+		return
+	}
+	kept := make([]string, 0, len(namespaces)-1)
+	for _, ns := range namespaces {
+		if ns != namespace {
+			kept = append(kept, ns)
+		}
+	}
+	a.SelectedContexts[context] = kept
 }
 
 // SetLoading marks one resource kind as loading (or not) for a context.
@@ -133,7 +177,7 @@ func (a *AppState) Snapshot() Snapshot {
 	defer a.mu.RUnlock()
 
 	return Snapshot{
-		SelectedContexts: copyStringMap(a.SelectedContexts),
+		SelectedContexts: copyStringSliceMap(a.SelectedContexts),
 		LoadingStates:    a.combinedLoadingStates(),
 		LoadedContexts:   copyBoolMap(a.LoadedContexts),
 		Errors:           copyStringMap(a.Errors),
@@ -165,6 +209,19 @@ func copyStringMap(src map[string]string) map[string]string {
 	dst := make(map[string]string, len(src))
 	for k, v := range src {
 		dst[k] = v
+	}
+	return dst
+}
+
+func copyStringSliceMap(src map[string][]string) map[string][]string {
+	if len(src) == 0 {
+		return map[string][]string{}
+	}
+	dst := make(map[string][]string, len(src))
+	for k, v := range src {
+		cp := make([]string, len(v))
+		copy(cp, v)
+		dst[k] = cp
 	}
 	return dst
 }

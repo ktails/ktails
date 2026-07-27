@@ -273,6 +273,24 @@ type ContextsStateMsg struct {
 	Deselected []string // context names to remove
 }
 
+// NamespacesMsg carries every namespace available in one context, or an
+// error (e.g. an RBAC denial), for the Namespaces pane. Fetched once per
+// newly-selected context.
+type NamespacesMsg struct {
+	Context    string
+	Namespaces []string
+	Err        error
+}
+
+// NamespacesStateMsg reports how one context's checked namespaces changed
+// since the last Namespaces-pane confirm — Added and Removed are already
+// diffed, mirroring ContextsStateMsg's Added/Deselected shape.
+type NamespacesStateMsg struct {
+	Context string
+	Added   []string
+	Removed []string
+}
+
 // ResourceDetailMsg carries a single resource's (Deployment, Pod, ...) detail
 // data or an error from an async fetch, for the Detail tab.
 type ResourceDetailMsg struct {
@@ -322,6 +340,7 @@ type RefreshTickMsg struct{}
 type WatchOpenedMsg struct {
 	Kind       ResourceKind
 	Context    string
+	Namespace  string
 	Generation int
 	Watcher    watch.Interface
 }
@@ -331,6 +350,7 @@ type WatchOpenedMsg struct {
 type WatchEventMsg struct {
 	Kind       ResourceKind
 	Context    string
+	Namespace  string
 	Generation int
 	Rows       []RowData
 }
@@ -340,6 +360,7 @@ type WatchEventMsg struct {
 type WatchClosedMsg struct {
 	Kind       ResourceKind
 	Context    string
+	Namespace  string
 	Generation int
 	Err        error
 }

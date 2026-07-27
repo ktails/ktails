@@ -56,23 +56,27 @@ func backoffDelay(failures int) time.Duration {
 	return delay
 }
 
-// watchState is the live plumbing state for one (kind, context) Watch()
-// stream: the current generation (bumped on every restart, guarding against
-// stale in-flight messages), the open watcher itself (nil between a restart
-// and its WatchOpenedMsg landing), the local cache it's keeping in sync, the
-// namespace it watches, and a consecutive-failure counter driving reconnect
-// backoff (reset to 0 the moment any event is applied).
+// watchState is the live plumbing state for one (kind, context, namespace)
+// Watch() stream: the current generation (bumped on every restart, guarding
+// against stale in-flight messages), the open watcher itself (nil between a
+// restart and its WatchOpenedMsg landing), the local cache it's keeping in
+// sync, and a consecutive-failure counter driving reconnect backoff (reset
+// to 0 the moment any event is applied).
 type watchState struct {
 	generation int
 	watcher    watch.Interface
 	cache      rowCache
-	namespace  string
 	failures   int
 }
 
+// stateKey identifies one watch stream. namespace is always "" for
+// KindNodes (cluster-scoped — see the Cluster interface's WatchNodes doc),
+// regardless of how many namespaces are selected for the context; every
+// other kind gets one stateKey per selected namespace.
 type stateKey struct {
-	kind    msgs.ResourceKind
-	context string
+	kind      msgs.ResourceKind
+	context   string
+	namespace string
 }
 
 // Update reports what a handled watch message means for the UI: either a
@@ -103,12 +107,13 @@ type Supervisor struct {
 	states  map[stateKey]*watchState
 
 	// Lazily-fetched svc Endpoint IPs, overlaid onto service rows by Rows:
-	// endpoints holds the fetched IPs per context (service name -> IPs);
-	// endpointsFetchedNS records which namespace they were fetched for, so
-	// NeedsEndpoints can tell a fetch is still pending/valid for the
-	// context's *current* namespace without refetching on every toggle.
+	// endpoints holds the fetched IPs per context+namespace (service name ->
+	// IPs), keyed by endpointsKey; endpointsFetchedNS records which
+	// context+namespace pairs have already been fetched (or have a fetch in
+	// flight), so NeedsEndpoints can tell a fetch is still pending/valid
+	// without refetching on every toggle.
 	endpoints          map[string]map[string][]string
-	endpointsFetchedNS map[string]string
+	endpointsFetchedNS map[string]bool
 }
 
 func NewSupervisor(cluster Cluster) *Supervisor {
@@ -116,28 +121,81 @@ func NewSupervisor(cluster Cluster) *Supervisor {
 		cluster:            cluster,
 		states:             make(map[stateKey]*watchState),
 		endpoints:          make(map[string]map[string][]string),
-		endpointsFetchedNS: make(map[string]string),
+		endpointsFetchedNS: make(map[string]bool),
 	}
 }
 
+// endpointsKey identifies one context+namespace pair's fetched Endpoint IPs.
+func endpointsKey(kubeContext, namespace string) string {
+	return kubeContext + "\x00" + namespace
+}
+
 // StartContext opens watches for every resource kind against one context,
-// returning the commands that open them. Restarts cleanly if the context is
-// already being watched.
-func (s *Supervisor) StartContext(kubeContext, namespace string) []tea.Cmd {
-	cmds := make([]tea.Cmd, 0, len(msgs.Kinds()))
+// across every given namespace: namespaced kinds get one watch per
+// namespace, KindNodes (cluster-scoped) gets a single watch regardless of
+// how many namespaces are selected. Restarts cleanly if already watched.
+func (s *Supervisor) StartContext(kubeContext string, namespaces []string) []tea.Cmd {
+	var cmds []tea.Cmd
 	for _, kind := range msgs.Kinds() {
+		if kind == msgs.KindNodes {
+			cmds = append(cmds, s.start(kind, kubeContext, ""))
+			continue
+		}
+		for _, namespace := range namespaces {
+			cmds = append(cmds, s.start(kind, kubeContext, namespace))
+		}
+	}
+	return cmds
+}
+
+// AddNamespace starts every namespaced kind's watch for one additional
+// namespace on an already-selected context, without touching any other
+// namespace or kind already being watched for it — the Namespaces pane's
+// Enter-confirm calls this per newly-checked namespace. KindNodes is
+// cluster-scoped and already started by StartContext, so it's skipped.
+func (s *Supervisor) AddNamespace(kubeContext, namespace string) []tea.Cmd {
+	var cmds []tea.Cmd
+	for _, kind := range msgs.Kinds() {
+		if kind == msgs.KindNodes {
+			continue
+		}
 		cmds = append(cmds, s.start(kind, kubeContext, namespace))
 	}
 	return cmds
 }
 
-// start begins (or supersedes) the watch for one (kind, context): any open
-// watcher is stopped, the generation is bumped so stale in-flight messages
-// are dropped, and a fresh open command is returned. The cache is created on
-// first start and reused across restarts — a fresh watch's Added replay is
-// idempotent against the upsert-based cache apply.
+// RemoveNamespace stops every namespaced kind's watch for one namespace on a
+// context — the Namespaces pane's Enter-confirm calls this per
+// newly-unchecked namespace — without deselecting the context itself or
+// touching its other namespaces.
+func (s *Supervisor) RemoveNamespace(kubeContext, namespace string) {
+	for _, kind := range msgs.Kinds() {
+		if kind == msgs.KindNodes {
+			continue
+		}
+		key := stateKey{kind: kind, context: kubeContext, namespace: namespace}
+		st, ok := s.states[key]
+		if !ok {
+			continue
+		}
+		st.generation++
+		if st.watcher != nil {
+			st.watcher.Stop()
+		}
+		delete(s.states, key)
+	}
+	nsKey := endpointsKey(kubeContext, namespace)
+	delete(s.endpoints, nsKey)
+	delete(s.endpointsFetchedNS, nsKey)
+}
+
+// start begins (or supersedes) the watch for one (kind, context, namespace):
+// any open watcher is stopped, the generation is bumped so stale in-flight
+// messages are dropped, and a fresh open command is returned. The cache is
+// created on first start and reused across restarts — a fresh watch's Added
+// replay is idempotent against the upsert-based cache apply.
 func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext, namespace string) tea.Cmd {
-	key := stateKey{kind: kind, context: kubeContext}
+	key := stateKey{kind: kind, context: kubeContext, namespace: namespace}
 	st, ok := s.states[key]
 	if !ok {
 		st = &watchState{cache: newCacheFor(kind)}
@@ -149,37 +207,36 @@ func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext, namespace string
 	}
 	st.generation++
 	st.failures = 0
-	st.namespace = namespace
 	return s.openCmd(kind, kubeContext, namespace, st.generation, 0)
 }
 
-// Restart force-restarts one kind's watch across the given contexts — the
-// "r" key restarts only the active tab's kind, to avoid tripling API load on
-// tabs the user isn't even looking at. Contexts not currently watched are
-// skipped.
+// Restart force-restarts one kind's watches across the given contexts, every
+// namespace currently selected for each — the "r" key restarts only the
+// active tab's kind, to avoid tripling API load on tabs the user isn't even
+// looking at. Contexts not currently watched are skipped.
 func (s *Supervisor) Restart(kind msgs.ResourceKind, contexts []string) []tea.Cmd {
+	contextSet := make(map[string]bool, len(contexts))
+	for _, c := range contexts {
+		contextSet[c] = true
+	}
 	var cmds []tea.Cmd
-	for _, kubeContext := range contexts {
-		st, ok := s.states[stateKey{kind: kind, context: kubeContext}]
-		if !ok {
-			continue
+	for key := range s.states {
+		if key.kind == kind && contextSet[key.context] {
+			cmds = append(cmds, s.start(kind, key.context, key.namespace))
 		}
-		cmds = append(cmds, s.start(kind, kubeContext, st.namespace))
 	}
 	return cmds
 }
 
-// StopContext stops and forgets every kind's watch for one context — called
-// on context deselect. watch.Interface.Stop() is guaranteed to close
-// ResultChan(), so any goroutine blocked in a wait command's receive
-// unblocks cleanly rather than leaking; bumping the generation first means
-// that goroutine's eventual message is dropped as stale even if it was
-// already past the blocking receive.
+// StopContext stops and forgets every kind's watch (across every namespace)
+// for one context — called on context deselect. watch.Interface.Stop() is
+// guaranteed to close ResultChan(), so any goroutine blocked in a wait
+// command's receive unblocks cleanly rather than leaking; bumping the
+// generation first means that goroutine's eventual message is dropped as
+// stale even if it was already past the blocking receive.
 func (s *Supervisor) StopContext(kubeContext string) {
-	for _, kind := range msgs.Kinds() {
-		key := stateKey{kind: kind, context: kubeContext}
-		st, ok := s.states[key]
-		if !ok {
+	for key, st := range s.states {
+		if key.context != kubeContext {
 			continue
 		}
 		st.generation++
@@ -188,8 +245,18 @@ func (s *Supervisor) StopContext(kubeContext string) {
 		}
 		delete(s.states, key)
 	}
-	delete(s.endpoints, kubeContext)
-	delete(s.endpointsFetchedNS, kubeContext)
+
+	prefix := kubeContext + "\x00"
+	for key := range s.endpoints {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.endpoints, key)
+		}
+	}
+	for key := range s.endpointsFetchedNS {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.endpointsFetchedNS, key)
+		}
+	}
 }
 
 // Watching reports whether any context is currently being watched — i.e.
@@ -198,24 +265,30 @@ func (s *Supervisor) Watching() bool {
 	return len(s.states) > 0
 }
 
-// Rows rebuilds one kind's rows across every watched context, sorted by
-// context name for a stable cross-context order. Every row map is freshly
-// allocated by the cache, so callers own the result outright — no defensive
-// cloning needed anywhere downstream.
+// Rows rebuilds one kind's rows across every watched context+namespace,
+// sorted by (context, namespace) for a stable cross-context order. Every row
+// map is freshly allocated by the cache, so callers own the result outright
+// — no defensive cloning needed anywhere downstream.
 func (s *Supervisor) Rows(kind msgs.ResourceKind) []msgs.RowData {
-	contexts := make([]string, 0, len(s.states))
+	type ctxNS struct{ context, namespace string }
+	var keys []ctxNS
 	for key := range s.states {
 		if key.kind == kind {
-			contexts = append(contexts, key.context)
+			keys = append(keys, ctxNS{key.context, key.namespace})
 		}
 	}
-	sort.Strings(contexts)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].context != keys[j].context {
+			return keys[i].context < keys[j].context
+		}
+		return keys[i].namespace < keys[j].namespace
+	})
 
 	var all []msgs.RowData
-	for _, kubeContext := range contexts {
-		rows := s.states[stateKey{kind: kind, context: kubeContext}].cache.rows(kubeContext)
+	for _, k := range keys {
+		rows := s.states[stateKey{kind: kind, context: k.context, namespace: k.namespace}].cache.rows(k.context)
 		if kind == msgs.KindServices {
-			s.overlayEndpoints(kubeContext, rows)
+			s.overlayEndpoints(k.context, k.namespace, rows)
 		}
 		all = append(all, rows...)
 	}
@@ -229,7 +302,7 @@ func (s *Supervisor) Rows(kind msgs.ResourceKind) []msgs.RowData {
 func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case msgs.WatchOpenedMsg:
-		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
+		st, ok := s.current(msg.Kind, msg.Context, msg.Namespace, msg.Generation)
 		if !ok {
 			msg.Watcher.Stop()
 			return nil, nil, true
@@ -242,19 +315,19 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 		// returns an empty slice correctly when the cache is empty — an
 		// empty tab is a valid loaded state, not a still-loading one.
 		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
-		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Generation, msg.Watcher, st.cache), true
+		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Namespace, msg.Generation, msg.Watcher, st.cache), true
 
 	case msgs.WatchEventMsg:
-		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
+		st, ok := s.current(msg.Kind, msg.Context, msg.Namespace, msg.Generation)
 		if !ok {
 			return nil, nil, true
 		}
 		st.failures = 0
 		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
-		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Generation, st.watcher, st.cache), true
+		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Namespace, msg.Generation, st.watcher, st.cache), true
 
 	case msgs.WatchClosedMsg:
-		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
+		st, ok := s.current(msg.Kind, msg.Context, msg.Namespace, msg.Generation)
 		if !ok {
 			return nil, nil, true
 		}
@@ -263,25 +336,26 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 		// the list/watch verb on this resource or it doesn't — so give up
 		// immediately instead of burning through backoff attempts first.
 		if apierrors.IsForbidden(msg.Err) {
-			err := fmt.Errorf("RBAC: not permitted to view %s in context '%s'",
-				strings.ToLower(msg.Kind.Title()), msg.Context)
+			err := fmt.Errorf("RBAC: not permitted to view %s in namespace '%s' for context '%s'",
+				strings.ToLower(msg.Kind.Title()), msg.Namespace, msg.Context)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
 		}
 		st.failures++
 		if st.failures > maxReconnectFailures {
-			err := fmt.Errorf("failed to watch %s for context '%s' after %d attempts: %v",
-				strings.ToLower(msg.Kind.Title()), msg.Context, st.failures, msg.Err)
+			err := fmt.Errorf("failed to watch %s in namespace '%s' for context '%s' after %d attempts: %v",
+				strings.ToLower(msg.Kind.Title()), msg.Namespace, msg.Context, st.failures, msg.Err)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
 		}
-		return nil, s.openCmd(msg.Kind, msg.Context, st.namespace, msg.Generation, backoffDelay(st.failures)), true
+		return nil, s.openCmd(msg.Kind, msg.Context, msg.Namespace, msg.Generation, backoffDelay(st.failures)), true
 	}
 	return nil, nil, false
 }
 
-// current returns the live state for (kind, context) only if generation is
-// still the current one — the single staleness check every handler shares.
-func (s *Supervisor) current(kind msgs.ResourceKind, kubeContext string, generation int) (*watchState, bool) {
-	st, ok := s.states[stateKey{kind: kind, context: kubeContext}]
+// current returns the live state for (kind, context, namespace) only if
+// generation is still the current one — the single staleness check every
+// handler shares.
+func (s *Supervisor) current(kind msgs.ResourceKind, kubeContext, namespace string, generation int) (*watchState, bool) {
+	st, ok := s.states[stateKey{kind: kind, context: kubeContext, namespace: namespace}]
 	if !ok || st.generation != generation {
 		return nil, false
 	}
@@ -328,9 +402,9 @@ func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 		}
 		w, err := open(context.Background(), kubeContext, namespace)
 		if err != nil {
-			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
+			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Err: err}
 		}
-		return msgs.WatchOpenedMsg{Kind: kind, Context: kubeContext, Generation: generation, Watcher: w}
+		return msgs.WatchOpenedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Watcher: w}
 	}
 }
 
@@ -340,63 +414,64 @@ func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 // UI updates instead of one message per object) before returning a freshly
 // rebuilt row set. Handle re-issues this command after each WatchEventMsg to
 // keep the read loop going.
-func (s *Supervisor) waitCmd(kind msgs.ResourceKind, kubeContext string, generation int, watcher watch.Interface, cache rowCache) tea.Cmd {
+func (s *Supervisor) waitCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, watcher watch.Interface, cache rowCache) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-watcher.ResultChan()
 		if !ok {
-			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation}
+			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation}
 		}
 		if err := cache.apply(ev); err != nil {
-			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
+			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Err: err}
 		}
 
 		for {
 			select {
 			case ev, ok := <-watcher.ResultChan():
 				if !ok {
-					return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation, Rows: cache.rows(kubeContext)}
+					return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Rows: cache.rows(kubeContext)}
 				}
 				if err := cache.apply(ev); err != nil {
-					return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
+					return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Err: err}
 				}
 			default:
-				return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation, Rows: cache.rows(kubeContext)}
+				return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Rows: cache.rows(kubeContext)}
 			}
 		}
 	}
 }
 
 // NeedsEndpoints reports whether svc Endpoint IPs still need fetching for
-// this context's given namespace — false once fetched (or requested) for
-// that exact namespace, true again if the namespace has since changed.
+// this context+namespace — false once fetched (or requested), true again if
+// that namespace is removed and re-added (RemoveNamespace clears it).
 func (s *Supervisor) NeedsEndpoints(kubeContext, namespace string) bool {
-	return s.endpointsFetchedNS[kubeContext] != namespace
+	return !s.endpointsFetchedNS[endpointsKey(kubeContext, namespace)]
 }
 
 // MarkEndpointsRequested records that a fetch for this context+namespace is
 // in flight (or done), so a second wide-mode toggle before the first fetch
 // resolves doesn't dispatch a duplicate request.
 func (s *Supervisor) MarkEndpointsRequested(kubeContext, namespace string) {
-	s.endpointsFetchedNS[kubeContext] = namespace
+	s.endpointsFetchedNS[endpointsKey(kubeContext, namespace)] = true
 }
 
-// ClearEndpointsRequested un-marks a context's fetch, letting the next
-// wide-mode toggle retry — used when a fetch comes back with an error.
-func (s *Supervisor) ClearEndpointsRequested(kubeContext string) {
-	delete(s.endpointsFetchedNS, kubeContext)
+// ClearEndpointsRequested un-marks a context+namespace's fetch, letting the
+// next wide-mode toggle retry — used when a fetch comes back with an error.
+func (s *Supervisor) ClearEndpointsRequested(kubeContext, namespace string) {
+	delete(s.endpointsFetchedNS, endpointsKey(kubeContext, namespace))
 }
 
 // SetEndpoints stores a resolved Endpoint IPs fetch for a context+namespace;
-// Rows overlays it onto that context's service rows from then on.
+// Rows overlays it onto that namespace's service rows from then on.
 func (s *Supervisor) SetEndpoints(kubeContext, namespace string, endpoints map[string][]string) {
-	s.endpoints[kubeContext] = endpoints
-	s.endpointsFetchedNS[kubeContext] = namespace
+	key := endpointsKey(kubeContext, namespace)
+	s.endpoints[key] = endpoints
+	s.endpointsFetchedNS[key] = true
 }
 
 // overlayEndpoints replaces the Endpoint IPs placeholder on freshly built
-// service rows with the context's fetched IPs, if any.
-func (s *Supervisor) overlayEndpoints(kubeContext string, rows []msgs.RowData) {
-	endpoints, ok := s.endpoints[kubeContext]
+// service rows with the context+namespace's fetched IPs, if any.
+func (s *Supervisor) overlayEndpoints(kubeContext, namespace string, rows []msgs.RowData) {
+	endpoints, ok := s.endpoints[endpointsKey(kubeContext, namespace)]
 	if !ok {
 		return
 	}

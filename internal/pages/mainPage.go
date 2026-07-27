@@ -40,6 +40,7 @@ type leftSection int
 const (
 	sectionContexts leftSection = iota
 	sectionClusters
+	sectionNamespaces
 )
 
 type MainPage struct {
@@ -63,6 +64,11 @@ type MainPage struct {
 	// Contexts pane's own selection/confirm state, not a separate data
 	// source.
 	clusterList *models.ClustersInfo
+	// namespacesPane lets each selected context's checked namespace set grow
+	// beyond the kubeconfig default it starts with (see
+	// state.AppState.AddContext), driving watchSup.AddNamespace/
+	// RemoveNamespace per confirm.
+	namespacesPane *models.NamespacesInfo
 	// activeLeftSection is which stacked left-pane section ("[" / "]"
 	// cycle it) is focused while focus == focusLeftPane.
 	activeLeftSection leftSection
@@ -146,6 +152,7 @@ func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
 		tabs:             msgs.Kinds(),
 		contextList:      contextList,
 		clusterList:      models.NewClustersInfo(contextList),
+		namespacesPane:   models.NewNamespacesInfo(),
 		tables:           tables,
 		deploymentDetail: models.NewResourceDetailPage(),
 		podLogs:          models.NewLogPage(),
@@ -349,17 +356,19 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.focus == focusLeftPane {
 			switch keypress {
 			case "]":
-				m.activeLeftSection = (m.activeLeftSection + 1) % (sectionClusters + 1)
+				m.activeLeftSection = (m.activeLeftSection + 1) % (sectionNamespaces + 1)
 				m.updateFocusStates()
 				return m, nil
 			case "[":
-				m.activeLeftSection = (m.activeLeftSection - 1 + sectionClusters + 1) % (sectionClusters + 1)
+				m.activeLeftSection = (m.activeLeftSection - 1 + sectionNamespaces + 1) % (sectionNamespaces + 1)
 				m.updateFocusStates()
 				return m, nil
 			}
 			switch m.activeLeftSection {
 			case sectionClusters:
 				return m, m.clusterList.Update(msg)
+			case sectionNamespaces:
+				return m, m.namespacesPane.Update(msg)
 			default:
 				return m, m.contextList.Update(msg)
 			}
@@ -522,8 +531,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyContentSizes()
 
-		contextsH, _, clustersH := splitLeftSections(r.LeftContentH)
+		contextsH, namespacesH, clustersH := splitLeftSections(r.LeftContentH)
 		m.clusterList.SetSize(r.LeftContentW, clustersH)
+		m.namespacesPane.SetSize(r.LeftContentW, namespacesH)
 		return m, m.contextList.Update(tea.WindowSizeMsg{Width: r.LeftContentW, Height: contextsH})
 
 	case msgs.ResourceDetailMsg:
@@ -569,11 +579,23 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.ContextsStateMsg:
 		return m, m.applyContextsState(msg)
 
+	case msgs.NamespacesMsg:
+		if msg.Err != nil {
+			m.namespacesPane.SetContextError(msg.Context, msg.Err.Error())
+			return m, nil
+		}
+		m.namespacesPane.SetContextNamespaces(msg.Context, msg.Namespaces)
+		m.namespacesPane.SyncConfirmed(msg.Context, m.appState.Snapshot().SelectedContexts[msg.Context])
+		return m, nil
+
+	case msgs.NamespacesStateMsg:
+		return m, m.applyNamespacesState(msg)
+
 	case msgs.ServiceEndpointsMsg:
 		if msg.Err != nil {
 			// Allow a later Ctrl+W toggle to retry instead of getting stuck
 			// showing the "…" placeholder forever.
-			m.watchSup.ClearEndpointsRequested(msg.Context)
+			m.watchSup.ClearEndpointsRequested(msg.Context, msg.Namespace)
 			return m, nil
 		}
 		m.watchSup.SetEndpoints(msg.Context, msg.Namespace, msg.Endpoints)
@@ -607,8 +629,14 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.focus == focusLeftPane {
-		cmd := m.contextList.Update(msg)
-		return m, cmd
+		switch m.activeLeftSection {
+		case sectionClusters:
+			return m, m.clusterList.Update(msg)
+		case sectionNamespaces:
+			return m, m.namespacesPane.Update(msg)
+		default:
+			return m, m.contextList.Update(msg)
+		}
 	}
 
 	return m, nil
@@ -639,14 +667,16 @@ func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
 // msg.Added and msg.Deselected are already diffed against the previous
 // confirm (see ContextsInfo.getAllContextStates) — every context in Added is
 // genuinely new here, so there's no second diff to do: one loop starts
-// everything a newly-added context needs (AppState bookkeeping, watches)
-// directly.
+// everything a newly-added context needs (AppState bookkeeping, watches
+// against its default namespace, and a namespace-list fetch for the
+// Namespaces pane) directly.
 func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 	m.errorMessage = ""
 
 	for _, contextName := range msg.Deselected {
 		m.appState.RemoveContext(contextName)
 		m.watchSup.StopContext(contextName)
+		m.namespacesPane.RemoveContext(contextName)
 	}
 
 	var cmdSequence []tea.Cmd
@@ -655,7 +685,8 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 		for _, kind := range m.tabs {
 			m.appState.SetLoading(kind, added.ContextName, true)
 		}
-		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName, added.DefaultNamespace)...)
+		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName, []string{added.DefaultNamespace})...)
+		cmdSequence = append(cmdSequence, cmds.LoadNamespacesCmd(m.Client, added.ContextName))
 	}
 
 	for _, kind := range m.tabs {
@@ -677,6 +708,44 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 	m.syncContextStates()
 	m.appStateLoaded = true
 	m.updateFocusStates()
+
+	if len(cmdSequence) == 0 {
+		return nil
+	}
+	return tea.Batch(cmdSequence...)
+}
+
+// applyNamespacesState reconciles a checked-namespace change from the
+// Namespaces pane for one context. AddNamespace has final say on Removed —
+// it refuses to drop a context's last checked namespace — so watchSup is
+// only told to stop a namespace's watches when AppState's set actually
+// shrank, and the pane is resynced afterward (SyncConfirmed) so a refused
+// removal doesn't leave a checkbox unchecked for a namespace still being
+// watched.
+func (m *MainPage) applyNamespacesState(msg msgs.NamespacesStateMsg) tea.Cmd {
+	for _, ns := range msg.Removed {
+		before := len(m.appState.Snapshot().SelectedContexts[msg.Context])
+		m.appState.RemoveNamespace(msg.Context, ns)
+		after := len(m.appState.Snapshot().SelectedContexts[msg.Context])
+		if after < before {
+			m.watchSup.RemoveNamespace(msg.Context, ns)
+		}
+	}
+
+	var cmdSequence []tea.Cmd
+	for _, ns := range msg.Added {
+		m.appState.AddNamespace(msg.Context, ns)
+		for _, kind := range m.tabs {
+			m.appState.SetLoading(kind, msg.Context, true)
+		}
+		cmdSequence = append(cmdSequence, m.watchSup.AddNamespace(msg.Context, ns)...)
+	}
+
+	for _, kind := range m.tabs {
+		m.tables[kind].SetRows(m.watchSup.Rows(kind))
+	}
+	m.namespacesPane.SyncConfirmed(msg.Context, m.appState.Snapshot().SelectedContexts[msg.Context])
+	m.syncContextStates()
 
 	if len(cmdSequence) == 0 {
 		return nil
@@ -714,6 +783,7 @@ func (m *MainPage) toggleFocus() {
 func (m *MainPage) updateFocusStates() {
 	m.contextList.SetFocused(m.focus == focusLeftPane && m.activeLeftSection == sectionContexts)
 	m.clusterList.SetFocused(m.focus == focusLeftPane && m.activeLeftSection == sectionClusters)
+	m.namespacesPane.SetFocused(m.focus == focusLeftPane && m.activeLeftSection == sectionNamespaces)
 	listActive := m.focus == focusTabs && !m.detailFocused && !m.logsFocused && m.appStateLoaded
 	for _, kind := range m.tabs {
 		m.tables[kind].SetFocused(listActive && kind == m.activeKind())
@@ -871,11 +941,11 @@ func (m *MainPage) reRenderAgeFromWatchCaches() {
 }
 
 // fetchServiceEndpointsIfNeeded dispatches LoadServiceEndpointsCmd for every
-// selected context whose current namespace hasn't had its Endpoint IPs
-// fetched yet (see watch.Supervisor.NeedsEndpoints). Called only when svc
-// wide mode turns on — the Ctrl+W toggle itself already revealed the other
-// new columns synchronously; this just fills in the one column that needs
-// a network round trip, without blocking or repeating that round trip.
+// selected context+namespace that hasn't had its Endpoint IPs fetched yet
+// (see watch.Supervisor.NeedsEndpoints). Called only when svc wide mode
+// turns on — the Ctrl+W toggle itself already revealed the other new
+// columns synchronously; this just fills in the one column that needs a
+// network round trip, without blocking or repeating that round trip.
 func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 	snapshot := m.appState.Snapshot()
 	if len(snapshot.SelectedContexts) == 0 {
@@ -883,12 +953,14 @@ func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 	}
 
 	var cmdSequence []tea.Cmd
-	for context, namespace := range snapshot.SelectedContexts {
-		if !m.watchSup.NeedsEndpoints(context, namespace) {
-			continue
+	for context, namespaces := range snapshot.SelectedContexts {
+		for _, namespace := range namespaces {
+			if !m.watchSup.NeedsEndpoints(context, namespace) {
+				continue
+			}
+			m.watchSup.MarkEndpointsRequested(context, namespace)
+			cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, namespace))
 		}
-		m.watchSup.MarkEndpointsRequested(context, namespace)
-		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, namespace))
 	}
 
 	if len(cmdSequence) == 0 {
@@ -1241,7 +1313,9 @@ func (m *MainPage) renderHelpOverlay() string {
 	type binding struct{ key, desc string }
 	bindings := []binding{
 		{"Tab / Shift+Tab", "Switch pane focus"},
-		{"[ / ]", "Navigate resource tabs, or cycle Contexts/Clusters sections when the sidebar has focus"},
+		{"[ / ]", "Navigate resource tabs, or cycle Contexts/Namespaces/Clusters sections when the sidebar has focus"},
+		{"Space / Enter (Namespaces pane)", "Check a namespace to watch it in addition to the default; Enter applies the change"},
+		{"Space / Enter (Clusters pane)", "Bulk select/deselect every context under one cluster; Enter applies the change"},
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},
 		{"PgUp / PgDn   Ctrl+U / Ctrl+D", "Move up / down a page (any resource tab)"},
@@ -1414,35 +1488,36 @@ func splitLeftSections(total int) (contextsH, namespacesH, clustersH int) {
 }
 
 // renderLeftBox renders the Context List box's content: the interactive
-// Contexts list, then the interactive Clusters list (grouping Contexts'
-// rows by kubeconfig cluster for bulk select/deselect), then Namespaces
-// (still a header over a placeholder line — not yet backed by any data,
-// see Part 3 of the k8s-tui-inspired sidebar revamp), each clipped
+// Contexts list, then the interactive Namespaces and Clusters lists (per-
+// context multi-select namespaces, and grouping Contexts' rows by
+// kubeconfig cluster for bulk select/deselect), each clipped
 // (views.FitBlock) to its allotted height so one section can never push the
-// others out of place. Only Contexts and Clusters get their own header
+// others out of place. Only Namespaces and Clusters get their own header
 // rendered here — Contexts' header is the outer box's border title instead.
-
 func (m *MainPage) renderLeftBox(r views.Rects, focused bool) string {
 	contextsH, namespacesH, clustersH := splitLeftSections(r.LeftContentH)
 
 	p := styles.CatppuccinMocha()
 	dimHeaderStyle := lipgloss.NewStyle().Foreground(p.Overlay1).Bold(true)
-	// Clusters' header only picks up the focus colour when it's genuinely
-	// the section with keyboard focus (see activeLeftSection) — Namespaces
-	// stays dim regardless, since it's not yet an interactive section (§Part
-	// 3), and coloring it here would falsely imply it already is.
+	// Each section's header only picks up the focus colour when it's
+	// genuinely the section with keyboard focus (see activeLeftSection) —
+	// otherwise every section would look focused whenever the sidebar has
+	// focus at all.
+	namespacesHeaderStyle := dimHeaderStyle
+	if focused && m.activeLeftSection == sectionNamespaces {
+		namespacesHeaderStyle = namespacesHeaderStyle.Foreground(styles.FocusColor)
+	}
 	clustersHeaderStyle := dimHeaderStyle
 	if focused && m.activeLeftSection == sectionClusters {
 		clustersHeaderStyle = clustersHeaderStyle.Foreground(styles.FocusColor)
 	}
-	placeholderStyle := lipgloss.NewStyle().Foreground(p.Overlay0).Italic(true)
 
 	m.clusterList.Refresh()
 
 	blocks := []string{
 		views.FitBlock(m.contextList.View(), r.LeftContentW, contextsH),
-		dimHeaderStyle.Render("Namespaces"),
-		views.FitBlock(placeholderStyle.Render("no namespaces loaded"), r.LeftContentW, namespacesH),
+		namespacesHeaderStyle.Render("Namespaces"),
+		views.FitBlock(m.namespacesPane.View(), r.LeftContentW, namespacesH),
 		clustersHeaderStyle.Render("Clusters"),
 		views.FitBlock(m.clusterList.View(), r.LeftContentW, clustersH),
 	}
@@ -1464,7 +1539,7 @@ func hasLoading(loading map[string]bool) bool {
 // it must not hold tab navigation hostage forever). Tab navigation is gated
 // on this so switching away from Deployments never lands on a still-empty
 // tab, while a context this user can't view doesn't stick every tab shut.
-func allContextsLoaded(selected map[string]string, loaded map[string]bool, errors map[string]string) bool {
+func allContextsLoaded(selected map[string][]string, loaded map[string]bool, errors map[string]string) bool {
 	if len(selected) == 0 {
 		return false
 	}
