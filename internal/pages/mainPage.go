@@ -311,6 +311,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Same protection for the Namespaces pane's own "/" filter (see
+		// models.NamespacesInfo) — otherwise "R" (auto-refresh toggle) or
+		// "?" (help) below would swallow those characters out of the query.
+		if m.focus == focusLeftPane && m.activeLeftSection == sectionNamespaces {
+			if _, _, typing, ok := m.namespacesPane.FilterStatus(); ok && typing {
+				return m, m.namespacesPane.Update(msg)
+			}
+		}
+
 		// Global keys
 		switch keypress {
 		case "ctrl+c":
@@ -1273,6 +1282,15 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 		}
 		statusBits = append(statusBits, fmt.Sprintf("/%s%s (%d match(es))", query, cursor, matches))
 	}
+	if m.focus == focusLeftPane && m.activeLeftSection == sectionNamespaces {
+		if query, matches, typing, ok := m.namespacesPane.FilterStatus(); ok {
+			cursor := ""
+			if typing {
+				cursor = "_"
+			}
+			statusBits = append(statusBits, fmt.Sprintf("/%s%s (%d match(es))", query, cursor, matches))
+		}
+	}
 	if m.showDetail {
 		if percent, ok := m.deploymentDetail.HScrollStatus(); ok {
 			statusBits = append(statusBits, fmt.Sprintf("◂ %d%% ▸", percent))
@@ -1342,6 +1360,8 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"Tab / Shift+Tab", "Switch pane focus"},
 		{"[ / ]", "Navigate resource tabs, or cycle Contexts/Namespaces/Clusters sections when the sidebar has focus"},
 		{"Space / Enter (Namespaces pane)", "Check a namespace to watch it in addition to the default; Enter applies the change"},
+		{"a (Namespaces pane)", "Toggle all namespaces under the cursor's context checked, or back to what was checked before"},
+		{"/ (Namespaces pane)", "Filter namespace rows by name; Enter to keep it, Esc to clear"},
 		{"Space / Enter (Clusters pane)", "Bulk select/deselect every context under one cluster; Enter applies the change"},
 		{"← / →", "Navigate tabs (alias)"},
 		{"↑ / ↓   j / k", "Move up / down"},

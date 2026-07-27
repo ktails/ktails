@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
@@ -37,8 +38,10 @@ func (r namespaceRow) FilterValue() string { return r.Context + "/" + r.Name }
 // namespaceDelegate renders header rows as a bold, non-interactive context
 // name (with a loading/error suffix), and namespace rows as an indented
 // checkbox — one line each, unlike Contexts/Clusters' two-line rows, since
-// there's no per-row description to show.
-type namespaceDelegate struct{}
+// there's no per-row description to show. focused mirrors
+// NamespacesInfo.Focused (see contextDelegate's doc comment for why this
+// matters).
+type namespaceDelegate struct{ focused bool }
 
 func (d namespaceDelegate) Height() int                         { return 1 }
 func (d namespaceDelegate) Spacing() int                        { return 0 }
@@ -80,9 +83,14 @@ func (d namespaceDelegate) Render(w io.Writer, m list.Model, index int, item lis
 	dotStr := lipgloss.NewStyle().Foreground(dotColor).Render(dot)
 	content := "    " + dotStr + " " + name
 
-	if isCursor {
+	switch {
+	case isCursor && d.focused:
 		fmt.Fprint(w, lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Width(paneWidth).Render(content))
-	} else {
+	case isCursor:
+		// Cursor parked here, but the pane doesn't have keyboard focus right
+		// now — muted background instead of the bright focus accent.
+		fmt.Fprint(w, lipgloss.NewStyle().Background(p.Surface0).Width(paneWidth).Render(content))
+	default:
 		fmt.Fprint(w, lipgloss.NewStyle().Width(paneWidth).Render(content))
 	}
 }
@@ -91,10 +99,13 @@ func (d namespaceDelegate) Render(w io.Writer, m list.Model, index int, item lis
 // namespaces each selected context watches. Contexts always start with
 // exactly the kubeconfig default namespace checked (see
 // state.AppState.AddContext) — this pane is what lets that set grow beyond
-// one. Space toggles a namespace under the cursor; Enter confirms, diffing
-// against the last confirm per context (mirroring ContextsInfo's own
-// Space/Enter two-phase flow) and reporting the result as one
-// msgs.NamespacesStateMsg per changed context.
+// one. Space toggles a namespace under the cursor; "a" bulk-toggles every
+// namespace under the context at the cursor between "all checked" and
+// whatever was checked before (see toggleAllNamespaces); "/" filters
+// namespace rows by name substring. Enter confirms, diffing against the
+// last confirm per context (mirroring ContextsInfo's own Space/Enter
+// two-phase flow) and reporting the result as one msgs.NamespacesStateMsg
+// per changed context.
 type NamespacesInfo struct {
 	list    list.Model
 	width   int
@@ -107,10 +118,31 @@ type NamespacesInfo struct {
 	// yet is still loading.
 	namespacesByContext map[string][]string
 	errByContext        map[string]string
+	// checked is the pending, not-yet-confirmed checked set per context —
+	// the single source of truth for what's currently ticked, independent
+	// of which rows the "/" filter currently has visible. Space/"a" mutate
+	// this directly; confirmChanges diffs it against previouslyConfirmed;
+	// rebuild reads it (never the other way around) when deciding each
+	// visible row's Selected state.
+	checked map[string]map[string]bool
 	// previouslyConfirmed is what's actually being watched as of the last
 	// confirm (or the last SyncConfirmed reconciliation) — the diff base,
 	// same role as ContextsInfo.previouslySelected.
 	previouslyConfirmed map[string]map[string]bool
+	// preSelectAll holds, per context, the checked set as it was right
+	// before an "a" bulk-select-all — restored by pressing "a" again while
+	// everything is checked, so it acts as a toggle rather than a one-way
+	// action. Cleared once restored, or once a confirm/sync makes it stale.
+	preSelectAll map[string]map[string]bool
+
+	// filterQuery/filtering implement a "/" substring filter over namespace
+	// rows (header rows are never hidden, for orientation) — a lightweight,
+	// custom filter like ResourceTable's rowFilter rather than bubbles/
+	// list's own built-in filtering, which is disabled here (see
+	// NewNamespacesInfo) because it can't be escaped cleanly through
+	// MainPage's global Esc handling.
+	filterQuery string
+	filtering   bool
 }
 
 func NewNamespacesInfo() *NamespacesInfo {
@@ -126,7 +158,9 @@ func NewNamespacesInfo() *NamespacesInfo {
 		list:                newList,
 		namespacesByContext: make(map[string][]string),
 		errByContext:        make(map[string]string),
+		checked:             make(map[string]map[string]bool),
 		previouslyConfirmed: make(map[string]map[string]bool),
+		preSelectAll:        make(map[string]map[string]bool),
 	}
 }
 
@@ -136,6 +170,9 @@ func NewNamespacesInfo() *NamespacesInfo {
 func (n *NamespacesInfo) SetContextNamespaces(context string, namespaces []string) {
 	delete(n.errByContext, context)
 	n.namespacesByContext[context] = namespaces
+	if n.checked[context] == nil {
+		n.checked[context] = make(map[string]bool)
+	}
 	n.rebuild()
 }
 
@@ -152,62 +189,47 @@ func (n *NamespacesInfo) SetContextError(context string, err string) {
 func (n *NamespacesInfo) RemoveContext(context string) {
 	delete(n.namespacesByContext, context)
 	delete(n.errByContext, context)
+	delete(n.checked, context)
 	delete(n.previouslyConfirmed, context)
+	delete(n.preSelectAll, context)
 	n.rebuild()
 }
 
-// SyncConfirmed resets one context's confirmed (and visibly checked) set to
+// SyncConfirmed resets one context's confirmed *and* pending-checked set to
 // exactly match `selected` — called right after a fetch completes (to seed
 // the initial checked namespace), and after MainPage reconciles a confirm
 // with AppState, since AppState may have refused part of it (e.g. it never
 // lets the last checked namespace be removed) — without this, the pane
 // could keep showing an unchecked box for a namespace still actually being
-// watched.
+// watched. Also drops any in-flight "a" toggle checkpoint for the context,
+// since it no longer corresponds to a real prior state once reality has
+// been resynced from outside.
 func (n *NamespacesInfo) SyncConfirmed(context string, selected []string) {
 	set := make(map[string]bool, len(selected))
 	for _, ns := range selected {
 		set[ns] = true
 	}
 	n.previouslyConfirmed[context] = set
+	n.checked[context] = copyBoolSet(set)
+	delete(n.preSelectAll, context)
+	n.rebuild()
+}
 
-	items := n.list.Items()
-	updated := false
-	for idx, item := range items {
-		row, ok := item.(namespaceRow)
-		if !ok || row.IsHeader || row.Context != context {
-			continue
-		}
-		want := set[row.Name]
-		if row.Selected != want {
-			row.Selected = want
-			items[idx] = row
-			updated = true
-		}
+func copyBoolSet(src map[string]bool) map[string]bool {
+	dst := make(map[string]bool, len(src))
+	for k, v := range src {
+		dst[k] = v
 	}
-	if updated {
-		n.list.SetItems(items)
-	}
+	return dst
 }
 
 // rebuild reconstructs the flattened item list from namespacesByContext/
-// errByContext, sorted by context name. Any row already checked but not yet
-// confirmed (a pending Space toggle) is preserved across the rebuild by
-// reading the live list first — otherwise an unrelated context's async load
-// landing mid-session would silently discard this context's in-progress
-// checkbox changes.
+// errByContext/checked, sorted by context name, applying the "/" filter (if
+// any) to which namespace rows are included. Selected always comes from the
+// persistent `checked` map, never from the outgoing item list — so
+// filtering a row out of view can never lose its checked state, unlike
+// deriving pending state from the live list itself would.
 func (n *NamespacesInfo) rebuild() {
-	pending := make(map[string]map[string]bool)
-	for _, item := range n.list.Items() {
-		row, ok := item.(namespaceRow)
-		if !ok || row.IsHeader {
-			continue
-		}
-		if pending[row.Context] == nil {
-			pending[row.Context] = make(map[string]bool)
-		}
-		pending[row.Context][row.Name] = row.Selected
-	}
-
 	seen := make(map[string]bool)
 	var contexts []string
 	for c := range n.namespacesByContext {
@@ -224,6 +246,8 @@ func (n *NamespacesInfo) rebuild() {
 	}
 	sort.Strings(contexts)
 
+	query := strings.ToLower(n.filterQuery)
+
 	var items []list.Item
 	for _, c := range contexts {
 		if errMsg, ok := n.errByContext[c]; ok {
@@ -236,13 +260,11 @@ func (n *NamespacesInfo) rebuild() {
 			continue
 		}
 		items = append(items, namespaceRow{Context: c, IsHeader: true})
-		confirmed := n.previouslyConfirmed[c]
 		for _, ns := range namespaces {
-			selected := confirmed[ns]
-			if p, ok := pending[c][ns]; ok {
-				selected = p
+			if query != "" && !strings.Contains(strings.ToLower(ns), query) {
+				continue
 			}
-			items = append(items, namespaceRow{Context: c, Name: ns, Selected: selected})
+			items = append(items, namespaceRow{Context: c, Name: ns, Selected: n.checked[c][ns]})
 		}
 	}
 
@@ -266,11 +288,52 @@ func (n *NamespacesInfo) SetSize(w, h int) {
 
 func (n *NamespacesInfo) SetFocused(f bool) {
 	n.Focused = f
+	n.list.SetDelegate(namespaceDelegate{focused: f})
+}
+
+// FilterStatus reports the current filter text and visible-row count, for
+// the status bar's "/query (N matches)" indicator — mirrors
+// ResourceTable.FilterStatus. ok is false when no filter is active (neither
+// being typed nor already committed).
+func (n *NamespacesInfo) FilterStatus() (query string, matches int, typing bool, ok bool) {
+	if !n.filtering && n.filterQuery == "" {
+		return "", 0, false, false
+	}
+	count := 0
+	for _, item := range n.list.Items() {
+		if row, isRow := item.(namespaceRow); isRow && !row.IsHeader {
+			count++
+		}
+	}
+	return n.filterQuery, count, n.filtering, true
 }
 
 func (n *NamespacesInfo) Update(msg tea.Msg) tea.Cmd {
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
+		return nil
+	}
+
+	if n.filtering {
+		switch key.String() {
+		case "enter":
+			n.filtering = false
+		case "esc":
+			n.filtering = false
+			n.filterQuery = ""
+			n.rebuild()
+		case "backspace":
+			if n.filterQuery != "" {
+				r := []rune(n.filterQuery)
+				n.filterQuery = string(r[:len(r)-1])
+				n.rebuild()
+			}
+		default:
+			if key.Text != "" {
+				n.filterQuery += key.Text
+				n.rebuild()
+			}
+		}
 		return nil
 	}
 
@@ -281,6 +344,12 @@ func (n *NamespacesInfo) Update(msg tea.Msg) tea.Cmd {
 		return cmd
 	case "space":
 		n.toggleRow()
+		return nil
+	case "a":
+		n.toggleAllNamespaces()
+		return nil
+	case "/":
+		n.filtering = true
 		return nil
 	case "enter":
 		return n.confirmChanges()
@@ -298,30 +367,68 @@ func (n *NamespacesInfo) toggleRow() {
 	if !ok || row.IsHeader {
 		return
 	}
-	row.Selected = !row.Selected
-	items[idx] = row
-	n.list.SetItems(items)
-	n.list.Select(idx)
+	if n.checked[row.Context] == nil {
+		n.checked[row.Context] = make(map[string]bool)
+	}
+	n.checked[row.Context][row.Name] = !n.checked[row.Context][row.Name]
+	n.rebuild()
+}
+
+// toggleAllNamespaces bulk-toggles every namespace under the context at the
+// cursor (the header row, or any namespace row beneath it): if not every
+// namespace is currently checked, it saves the current checked set and
+// checks all of them; if every namespace is already checked and a saved set
+// exists, it restores that prior set instead — visibly unchecking whatever
+// "a" had added — so repeated presses act as a toggle between "everything"
+// and "whatever you'd filtered down to" rather than a one-way action.
+func (n *NamespacesInfo) toggleAllNamespaces() {
+	idx := n.list.Index()
+	items := n.list.Items()
+	if idx < 0 || idx >= len(items) {
+		return
+	}
+	row, ok := items[idx].(namespaceRow)
+	if !ok {
+		return
+	}
+	context := row.Context
+	namespaces := n.namespacesByContext[context]
+	if len(namespaces) == 0 {
+		return
+	}
+
+	allChecked := true
+	for _, ns := range namespaces {
+		if !n.checked[context][ns] {
+			allChecked = false
+			break
+		}
+	}
+
+	if allChecked {
+		saved, ok := n.preSelectAll[context]
+		if !ok {
+			return
+		}
+		n.checked[context] = copyBoolSet(saved)
+		delete(n.preSelectAll, context)
+	} else {
+		n.preSelectAll[context] = copyBoolSet(n.checked[context])
+		full := make(map[string]bool, len(namespaces))
+		for _, ns := range namespaces {
+			full[ns] = true
+		}
+		n.checked[context] = full
+	}
+	n.rebuild()
 }
 
 // confirmChanges diffs every context's currently-checked namespaces against
 // previouslyConfirmed and returns one command per context with a change,
 // each carrying a msgs.NamespacesStateMsg — nil if nothing changed anywhere.
 func (n *NamespacesInfo) confirmChanges() tea.Cmd {
-	current := make(map[string]map[string]bool)
-	for _, item := range n.list.Items() {
-		row, ok := item.(namespaceRow)
-		if !ok || row.IsHeader || !row.Selected {
-			continue
-		}
-		if current[row.Context] == nil {
-			current[row.Context] = make(map[string]bool)
-		}
-		current[row.Context][row.Name] = true
-	}
-
 	contexts := make(map[string]bool)
-	for c := range current {
+	for c := range n.checked {
 		contexts[c] = true
 	}
 	for c := range n.previouslyConfirmed {
@@ -331,13 +438,13 @@ func (n *NamespacesInfo) confirmChanges() tea.Cmd {
 	var cmds []tea.Cmd
 	for context := range contexts {
 		var added, removed []string
-		for ns := range current[context] {
-			if !n.previouslyConfirmed[context][ns] {
+		for ns, isChecked := range n.checked[context] {
+			if isChecked && !n.previouslyConfirmed[context][ns] {
 				added = append(added, ns)
 			}
 		}
 		for ns := range n.previouslyConfirmed[context] {
-			if !current[context][ns] {
+			if !n.checked[context][ns] {
 				removed = append(removed, ns)
 			}
 		}
@@ -350,7 +457,11 @@ func (n *NamespacesInfo) confirmChanges() tea.Cmd {
 		cmds = append(cmds, func() tea.Msg { return state })
 	}
 
-	n.previouslyConfirmed = current
+	n.previouslyConfirmed = make(map[string]map[string]bool, len(n.checked))
+	for c, set := range n.checked {
+		n.previouslyConfirmed[c] = copyBoolSet(set)
+	}
+
 	if len(cmds) == 0 {
 		return nil
 	}
