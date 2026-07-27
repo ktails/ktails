@@ -480,6 +480,117 @@ func secretWideColumns(rows []msgs.RowData) []btable.Column {
 	}
 }
 
+func jobNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.JobKeyContext),
+		paddedFlexColumn(msgs.JobKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.JobKeyName, "Name", 10),
+		paddedFlexColumn(msgs.JobKeyCompletions, "Completions", 3),
+		paddedFlexColumn(msgs.JobKeyStatus, "Status", 4),
+	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.JobKeyAge, "Age", 3))
+}
+
+func jobWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		contextColumn(msgs.JobKeyContext),
+		paddedColumn(msgs.JobKeyNamespace, "Namespace", widestValue(rows, msgs.JobKeyNamespace, "Namespace")),
+		paddedColumn(msgs.JobKeyName, "Name", widestValue(rows, msgs.JobKeyName, "Name")),
+		paddedColumn(msgs.JobKeyCompletions, "Completions", widestValue(rows, msgs.JobKeyCompletions, "Completions")),
+		paddedColumn(msgs.JobKeyStatus, "Status", widestValue(rows, msgs.JobKeyStatus, "Status")),
+		paddedColumn(msgs.JobKeyDuration, "Duration", widestValue(rows, msgs.JobKeyDuration, "Duration")),
+		paddedColumn(msgs.JobKeyAge, "Age", widestValue(rows, msgs.JobKeyAge, "Age")),
+	}
+}
+
+func cronJobNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.CronJobKeyContext),
+		paddedFlexColumn(msgs.CronJobKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.CronJobKeyName, "Name", 10),
+		paddedFlexColumn(msgs.CronJobKeySchedule, "Schedule", 5),
+		paddedFlexColumn(msgs.CronJobKeySuspend, "Suspend", 3),
+	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.CronJobKeyAge, "Age", 3))
+}
+
+func cronJobWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		contextColumn(msgs.CronJobKeyContext),
+		paddedColumn(msgs.CronJobKeyNamespace, "Namespace", widestValue(rows, msgs.CronJobKeyNamespace, "Namespace")),
+		paddedColumn(msgs.CronJobKeyName, "Name", widestValue(rows, msgs.CronJobKeyName, "Name")),
+		paddedColumn(msgs.CronJobKeySchedule, "Schedule", widestValue(rows, msgs.CronJobKeySchedule, "Schedule")),
+		paddedColumn(msgs.CronJobKeySuspend, "Suspend", widestValue(rows, msgs.CronJobKeySuspend, "Suspend")),
+		paddedColumn(msgs.CronJobKeyLastScheduled, "Last Scheduled", widestValue(rows, msgs.CronJobKeyLastScheduled, "Last Scheduled")),
+		paddedColumn(msgs.CronJobKeyAge, "Age", widestValue(rows, msgs.CronJobKeyAge, "Age")),
+	}
+}
+
+func statefulSetNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.StatefulSetKeyContext),
+		paddedFlexColumn(msgs.StatefulSetKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.StatefulSetKeyName, "Name", 8),
+	}
+	cols = appendAge(cols, compact, paddedFlexColumn(msgs.StatefulSetKeyAge, "Age", 3))
+	return append(cols, paddedFlexColumn(msgs.StatefulSetKeyReady, "Ready", 4))
+}
+
+func statefulSetWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		contextColumn(msgs.StatefulSetKeyContext),
+		paddedColumn(msgs.StatefulSetKeyNamespace, "Namespace", widestValue(rows, msgs.StatefulSetKeyNamespace, "Namespace")),
+		paddedColumn(msgs.StatefulSetKeyName, "Name", widestValue(rows, msgs.StatefulSetKeyName, "Name")),
+		paddedColumn(msgs.StatefulSetKeyAge, "Age", widestValue(rows, msgs.StatefulSetKeyAge, "Age")),
+		paddedColumn(msgs.StatefulSetKeyReady, "Ready", widestValue(rows, msgs.StatefulSetKeyReady, "Ready")),
+		paddedColumn(msgs.StatefulSetKeySelector, "Selector", widestValue(rows, msgs.StatefulSetKeySelector, "Selector")),
+	}
+}
+
+func daemonSetNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.DaemonSetKeyContext),
+		paddedFlexColumn(msgs.DaemonSetKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.DaemonSetKeyName, "Name", 8),
+	}
+	cols = appendAge(cols, compact, paddedFlexColumn(msgs.DaemonSetKeyAge, "Age", 3))
+	return append(cols, paddedFlexColumn(msgs.DaemonSetKeyReady, "Ready", 4))
+}
+
+func daemonSetWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		contextColumn(msgs.DaemonSetKeyContext),
+		paddedColumn(msgs.DaemonSetKeyNamespace, "Namespace", widestValue(rows, msgs.DaemonSetKeyNamespace, "Namespace")),
+		paddedColumn(msgs.DaemonSetKeyName, "Name", widestValue(rows, msgs.DaemonSetKeyName, "Name")),
+		paddedColumn(msgs.DaemonSetKeyAge, "Age", widestValue(rows, msgs.DaemonSetKeyAge, "Age")),
+		paddedColumn(msgs.DaemonSetKeyReady, "Ready", widestValue(rows, msgs.DaemonSetKeyReady, "Ready")),
+		paddedColumn(msgs.DaemonSetKeySelector, "Selector", widestValue(rows, msgs.DaemonSetKeySelector, "Selector")),
+	}
+}
+
+func ingressNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.IngressKeyContext),
+		paddedFlexColumn(msgs.IngressKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.IngressKeyName, "Name", 10),
+		paddedFlexColumn(msgs.IngressKeyHosts, "Hosts", 10),
+		paddedFlexColumn(msgs.IngressKeyClass, "Class", 4),
+	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.IngressKeyAge, "Age", 3))
+}
+
+func ingressWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		contextColumn(msgs.IngressKeyContext),
+		paddedColumn(msgs.IngressKeyNamespace, "Namespace", widestValue(rows, msgs.IngressKeyNamespace, "Namespace")),
+		paddedColumn(msgs.IngressKeyName, "Name", widestValue(rows, msgs.IngressKeyName, "Name")),
+		paddedColumn(msgs.IngressKeyHosts, "Hosts", widestValue(rows, msgs.IngressKeyHosts, "Hosts")),
+		paddedColumn(msgs.IngressKeyClass, "Class", widestValue(rows, msgs.IngressKeyClass, "Class")),
+		paddedColumn(msgs.IngressKeyAge, "Age", widestValue(rows, msgs.IngressKeyAge, "Age")),
+		paddedColumn(msgs.IngressKeyBackends, "Backends", widestValue(rows, msgs.IngressKeyBackends, "Backends")),
+	}
+}
+
 // nodeNarrowColumns/nodeWideColumns omit Namespace: Nodes are cluster-scoped
 // (see msgs.NodeKeyName's doc comment), so Context is followed directly by
 // Name rather than a Namespace column that would always read empty.

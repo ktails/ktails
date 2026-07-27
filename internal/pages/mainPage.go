@@ -775,6 +775,16 @@ func (m *MainPage) openResourceDetail(kind msgs.ResourceKind) tea.Cmd {
 		return cmds.LoadConfigMapDetailCmd(m.Client, ctxName, namespace, name)
 	case msgs.KindSecrets:
 		return cmds.LoadSecretDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindJobs:
+		return cmds.LoadJobDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindCronJobs:
+		return cmds.LoadCronJobDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindStatefulSets:
+		return cmds.LoadStatefulSetDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindDaemonSets:
+		return cmds.LoadDaemonSetDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindIngresses:
+		return cmds.LoadIngressDetailCmd(m.Client, ctxName, namespace, name)
 	case msgs.KindNodes:
 		return cmds.LoadNodeDetailCmd(m.Client, ctxName, namespace, name)
 	}

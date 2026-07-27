@@ -13,7 +13,9 @@ import (
 	"sync"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
@@ -134,6 +136,16 @@ func newCacheFor(kind msgs.ResourceKind) rowCache {
 		return newResourceCache(configMapRow)
 	case msgs.KindSecrets:
 		return newResourceCache(secretRow)
+	case msgs.KindJobs:
+		return newResourceCache(jobRow)
+	case msgs.KindCronJobs:
+		return newResourceCache(cronJobRow)
+	case msgs.KindStatefulSets:
+		return newResourceCache(statefulSetRow)
+	case msgs.KindDaemonSets:
+		return newResourceCache(daemonSetRow)
+	case msgs.KindIngresses:
+		return newResourceCache(ingressRow)
 	case msgs.KindNodes:
 		return newResourceCache(nodeRow)
 	}
@@ -211,6 +223,69 @@ func secretRow(secret *corev1.Secret, kubeContext string) msgs.RowData {
 		msgs.SecretKeyKeys:      strconv.Itoa(len(info.Keys)),
 		msgs.SecretKeyAge:       info.Age,
 		msgs.SecretKeyContext:   kubeContext,
+	}
+}
+
+func jobRow(job *batchv1.Job, kubeContext string) msgs.RowData {
+	info := k8s.JobToJobInfo(job)
+	return msgs.RowData{
+		msgs.JobKeyName:        info.Name,
+		msgs.JobKeyNamespace:   info.Namespace,
+		msgs.JobKeyCompletions: info.Completions,
+		msgs.JobKeyDuration:    info.Duration,
+		msgs.JobKeyAge:         info.Age,
+		msgs.JobKeyContext:     kubeContext,
+		msgs.JobKeyStatus:      info.Status,
+	}
+}
+
+func cronJobRow(cj *batchv1.CronJob, kubeContext string) msgs.RowData {
+	info := k8s.CronJobToCronJobInfo(cj)
+	return msgs.RowData{
+		msgs.CronJobKeyName:          info.Name,
+		msgs.CronJobKeyNamespace:     info.Namespace,
+		msgs.CronJobKeySchedule:      info.Schedule,
+		msgs.CronJobKeySuspend:       strconv.FormatBool(info.Suspend),
+		msgs.CronJobKeyAge:           info.Age,
+		msgs.CronJobKeyContext:       kubeContext,
+		msgs.CronJobKeyLastScheduled: info.LastScheduled,
+	}
+}
+
+func statefulSetRow(sts *appsv1.StatefulSet, kubeContext string) msgs.RowData {
+	info := k8s.StatefulSetToStatefulSetInfo(sts)
+	return msgs.RowData{
+		msgs.StatefulSetKeyName:      info.Name,
+		msgs.StatefulSetKeyNamespace: info.Namespace,
+		msgs.StatefulSetKeyReady:     strconv.Itoa(int(info.ReadyReplicas)) + "/" + strconv.Itoa(int(info.DesiredReplicas)),
+		msgs.StatefulSetKeyAge:       info.Age,
+		msgs.StatefulSetKeyContext:   kubeContext,
+		msgs.StatefulSetKeySelector:  info.Selector,
+	}
+}
+
+func daemonSetRow(ds *appsv1.DaemonSet, kubeContext string) msgs.RowData {
+	info := k8s.DaemonSetToDaemonSetInfo(ds)
+	return msgs.RowData{
+		msgs.DaemonSetKeyName:      info.Name,
+		msgs.DaemonSetKeyNamespace: info.Namespace,
+		msgs.DaemonSetKeyReady:     strconv.Itoa(int(info.ReadyNodes)) + "/" + strconv.Itoa(int(info.DesiredNodes)),
+		msgs.DaemonSetKeyAge:       info.Age,
+		msgs.DaemonSetKeyContext:   kubeContext,
+		msgs.DaemonSetKeySelector:  info.Selector,
+	}
+}
+
+func ingressRow(ing *networkingv1.Ingress, kubeContext string) msgs.RowData {
+	info := k8s.IngressToIngressInfo(ing)
+	return msgs.RowData{
+		msgs.IngressKeyName:      info.Name,
+		msgs.IngressKeyNamespace: info.Namespace,
+		msgs.IngressKeyHosts:     strings.Join(info.Hosts, ","),
+		msgs.IngressKeyClass:     info.Class,
+		msgs.IngressKeyAge:       info.Age,
+		msgs.IngressKeyContext:   kubeContext,
+		msgs.IngressKeyBackends:  strings.Join(info.Backends, ","),
 	}
 }
 

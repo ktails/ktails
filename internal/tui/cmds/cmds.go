@@ -96,6 +96,61 @@ func LoadSecretDetailCmd(client *k8s.Client, kubeContext, namespace, name string
 	}
 }
 
+// LoadJobDetailCmd fetches detailed information for a single Job
+func LoadJobDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetJobDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadCronJobDetailCmd fetches detailed information for a single CronJob
+func LoadCronJobDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetCronJobDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadStatefulSetDetailCmd fetches detailed information for a single StatefulSet
+func LoadStatefulSetDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetStatefulSetDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadDaemonSetDetailCmd fetches detailed information for a single DaemonSet
+func LoadDaemonSetDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetDaemonSetDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadIngressDetailCmd fetches detailed information for a single Ingress
+func LoadIngressDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetIngressDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
 // LoadNodeDetailCmd fetches detailed information for a single Node.
 // namespace is ignored — Nodes are cluster-scoped.
 func LoadNodeDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {

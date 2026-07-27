@@ -20,6 +20,11 @@ const (
 	KindServices
 	KindConfigMaps
 	KindSecrets
+	KindJobs
+	KindCronJobs
+	KindStatefulSets
+	KindDaemonSets
+	KindIngresses
 	// KindNodes is cluster-scoped, not namespaced — its rows carry no
 	// KeyNamespace, and its watch ignores the namespace argument.
 	KindNodes
@@ -27,7 +32,11 @@ const (
 
 // Kinds returns every ResourceKind in tab order.
 func Kinds() []ResourceKind {
-	return []ResourceKind{KindDeployments, KindPods, KindServices, KindConfigMaps, KindSecrets, KindNodes}
+	return []ResourceKind{
+		KindDeployments, KindPods, KindServices, KindConfigMaps, KindSecrets,
+		KindJobs, KindCronJobs, KindStatefulSets, KindDaemonSets, KindIngresses,
+		KindNodes,
+	}
 }
 
 // Title is the tab label shown in the Tab Area header.
@@ -43,6 +52,16 @@ func (k ResourceKind) Title() string {
 		return "ConfigMaps"
 	case KindSecrets:
 		return "Secrets"
+	case KindJobs:
+		return "Jobs"
+	case KindCronJobs:
+		return "CronJobs"
+	case KindStatefulSets:
+		return "StatefulSets"
+	case KindDaemonSets:
+		return "DaemonSets"
+	case KindIngresses:
+		return "Ingresses"
 	case KindNodes:
 		return "Nodes"
 	}
@@ -62,6 +81,16 @@ func (k ResourceKind) Kind() string {
 		return "ConfigMap"
 	case KindSecrets:
 		return "Secret"
+	case KindJobs:
+		return "Job"
+	case KindCronJobs:
+		return "CronJob"
+	case KindStatefulSets:
+		return "StatefulSet"
+	case KindDaemonSets:
+		return "DaemonSet"
+	case KindIngresses:
+		return "Ingress"
 	case KindNodes:
 		return "Node"
 	}
@@ -150,6 +179,59 @@ const (
 	SecretKeyKeys      = "keys" // count of data keys, e.g. "2"
 	SecretKeyAge       = "age"
 	SecretKeyContext   = KeyContext // Context column; also used by the detail tab
+)
+
+// Column keys for Jobs rows.
+const (
+	JobKeyName        = KeyName
+	JobKeyNamespace   = KeyNamespace
+	JobKeyCompletions = "completions"
+	JobKeyDuration    = "duration"
+	JobKeyAge         = "age"
+	JobKeyContext     = KeyContext // Context column; also used by the detail tab
+	JobKeyStatus      = "status"   // wide mode only
+)
+
+// Column keys for CronJobs rows.
+const (
+	CronJobKeyName          = KeyName
+	CronJobKeyNamespace     = KeyNamespace
+	CronJobKeySchedule      = "schedule"
+	CronJobKeySuspend       = "suspend"
+	CronJobKeyAge           = "age"
+	CronJobKeyContext       = KeyContext      // Context column; also used by the detail tab
+	CronJobKeyLastScheduled = "lastScheduled" // wide mode only
+)
+
+// Column keys for StatefulSets rows.
+const (
+	StatefulSetKeyName      = KeyName
+	StatefulSetKeyNamespace = KeyNamespace
+	StatefulSetKeyReady     = "ready" // "ready/desired" replicas
+	StatefulSetKeyAge       = "age"
+	StatefulSetKeyContext   = KeyContext // Context column; also used by the detail tab
+	StatefulSetKeySelector  = "selector" // wide mode only
+)
+
+// Column keys for DaemonSets rows.
+const (
+	DaemonSetKeyName      = KeyName
+	DaemonSetKeyNamespace = KeyNamespace
+	DaemonSetKeyReady     = "ready" // "ready/desired" node count
+	DaemonSetKeyAge       = "age"
+	DaemonSetKeyContext   = KeyContext // Context column; also used by the detail tab
+	DaemonSetKeySelector  = "selector" // wide mode only
+)
+
+// Column keys for Ingresses rows.
+const (
+	IngressKeyName      = KeyName
+	IngressKeyNamespace = KeyNamespace
+	IngressKeyHosts     = "hosts"
+	IngressKeyClass     = "class"
+	IngressKeyAge       = "age"
+	IngressKeyContext   = KeyContext // Context column; also used by the detail tab
+	IngressKeyBackends  = "backends" // wide mode only, service:port list
 )
 
 // Column keys for Nodes rows. Nodes are cluster-scoped: there is no

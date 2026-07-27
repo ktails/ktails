@@ -23,6 +23,11 @@ type Cluster interface {
 	WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	WatchConfigMaps(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	WatchSecrets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	WatchJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	WatchCronJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	WatchStatefulSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	WatchDaemonSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	WatchIngresses(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	// WatchNodes ignores namespace — Nodes are cluster-scoped.
 	WatchNodes(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 }
@@ -296,6 +301,16 @@ func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, k
 		return s.cluster.WatchConfigMaps
 	case msgs.KindSecrets:
 		return s.cluster.WatchSecrets
+	case msgs.KindJobs:
+		return s.cluster.WatchJobs
+	case msgs.KindCronJobs:
+		return s.cluster.WatchCronJobs
+	case msgs.KindStatefulSets:
+		return s.cluster.WatchStatefulSets
+	case msgs.KindDaemonSets:
+		return s.cluster.WatchDaemonSets
+	case msgs.KindIngresses:
+		return s.cluster.WatchIngresses
 	case msgs.KindNodes:
 		return s.cluster.WatchNodes
 	}

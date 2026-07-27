@@ -60,6 +60,26 @@ func (f *fakeCluster) WatchNodes(context.Context, string, string) (kwatch.Interf
 	return f.watch(msgs.KindNodes)
 }
 
+func (f *fakeCluster) WatchJobs(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindJobs)
+}
+
+func (f *fakeCluster) WatchCronJobs(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindCronJobs)
+}
+
+func (f *fakeCluster) WatchStatefulSets(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindStatefulSets)
+}
+
+func (f *fakeCluster) WatchDaemonSets(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindDaemonSets)
+}
+
+func (f *fakeCluster) WatchIngresses(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindIngresses)
+}
+
 // runCmd executes a tea.Cmd synchronously and returns its message.
 func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()

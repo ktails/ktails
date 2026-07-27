@@ -73,6 +73,41 @@ func specFor(kind msgs.ResourceKind) tableSpec {
 			displayRow:    secretDisplayRow,
 			freezeColumns: 1,
 		}
+	case msgs.KindJobs:
+		return tableSpec{
+			narrowColumns: jobNarrowColumns,
+			wideColumns:   jobWideColumns,
+			displayRow:    jobDisplayRow,
+			freezeColumns: 1,
+		}
+	case msgs.KindCronJobs:
+		return tableSpec{
+			narrowColumns: cronJobNarrowColumns,
+			wideColumns:   cronJobWideColumns,
+			displayRow:    cronJobDisplayRow,
+			freezeColumns: 1,
+		}
+	case msgs.KindStatefulSets:
+		return tableSpec{
+			narrowColumns: statefulSetNarrowColumns,
+			wideColumns:   statefulSetWideColumns,
+			displayRow:    statefulSetDisplayRow,
+			freezeColumns: 1,
+		}
+	case msgs.KindDaemonSets:
+		return tableSpec{
+			narrowColumns: daemonSetNarrowColumns,
+			wideColumns:   daemonSetWideColumns,
+			displayRow:    daemonSetDisplayRow,
+			freezeColumns: 1,
+		}
+	case msgs.KindIngresses:
+		return tableSpec{
+			narrowColumns: ingressNarrowColumns,
+			wideColumns:   ingressWideColumns,
+			displayRow:    ingressDisplayRow,
+			freezeColumns: 1,
+		}
 	case msgs.KindNodes:
 		return tableSpec{
 			narrowColumns: nodeNarrowColumns,
@@ -161,6 +196,64 @@ func secretDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) b
 		msgs.SecretKeyType:      row[msgs.SecretKeyType],
 		msgs.SecretKeyKeys:      row[msgs.SecretKeyKeys],
 		msgs.SecretKeyAge:       row[msgs.SecretKeyAge],
+	}
+}
+
+func jobDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+	return btable.RowData{
+		msgs.JobKeyContext:     contextCell(rowContext(row), colors),
+		msgs.JobKeyNamespace:   row[msgs.JobKeyNamespace],
+		msgs.JobKeyName:        row[msgs.JobKeyName],
+		msgs.JobKeyCompletions: row[msgs.JobKeyCompletions],
+		msgs.JobKeyDuration:    row[msgs.JobKeyDuration],
+		msgs.JobKeyAge:         row[msgs.JobKeyAge],
+		msgs.JobKeyStatus:      row[msgs.JobKeyStatus],
+	}
+}
+
+func cronJobDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+	return btable.RowData{
+		msgs.CronJobKeyContext:       contextCell(rowContext(row), colors),
+		msgs.CronJobKeyNamespace:     row[msgs.CronJobKeyNamespace],
+		msgs.CronJobKeyName:          row[msgs.CronJobKeyName],
+		msgs.CronJobKeySchedule:      row[msgs.CronJobKeySchedule],
+		msgs.CronJobKeySuspend:       row[msgs.CronJobKeySuspend],
+		msgs.CronJobKeyAge:           row[msgs.CronJobKeyAge],
+		msgs.CronJobKeyLastScheduled: row[msgs.CronJobKeyLastScheduled],
+	}
+}
+
+func statefulSetDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+	return btable.RowData{
+		msgs.StatefulSetKeyContext:   contextCell(rowContext(row), colors),
+		msgs.StatefulSetKeyNamespace: row[msgs.StatefulSetKeyNamespace],
+		msgs.StatefulSetKeyName:      row[msgs.StatefulSetKeyName],
+		msgs.StatefulSetKeyReady:     row[msgs.StatefulSetKeyReady],
+		msgs.StatefulSetKeyAge:       row[msgs.StatefulSetKeyAge],
+		msgs.StatefulSetKeySelector:  row[msgs.StatefulSetKeySelector],
+	}
+}
+
+func daemonSetDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+	return btable.RowData{
+		msgs.DaemonSetKeyContext:   contextCell(rowContext(row), colors),
+		msgs.DaemonSetKeyNamespace: row[msgs.DaemonSetKeyNamespace],
+		msgs.DaemonSetKeyName:      row[msgs.DaemonSetKeyName],
+		msgs.DaemonSetKeyReady:     row[msgs.DaemonSetKeyReady],
+		msgs.DaemonSetKeyAge:       row[msgs.DaemonSetKeyAge],
+		msgs.DaemonSetKeySelector:  row[msgs.DaemonSetKeySelector],
+	}
+}
+
+func ingressDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+	return btable.RowData{
+		msgs.IngressKeyContext:   contextCell(rowContext(row), colors),
+		msgs.IngressKeyNamespace: row[msgs.IngressKeyNamespace],
+		msgs.IngressKeyName:      row[msgs.IngressKeyName],
+		msgs.IngressKeyHosts:     row[msgs.IngressKeyHosts],
+		msgs.IngressKeyClass:     row[msgs.IngressKeyClass],
+		msgs.IngressKeyAge:       row[msgs.IngressKeyAge],
+		msgs.IngressKeyBackends:  row[msgs.IngressKeyBackends],
 	}
 }
 
