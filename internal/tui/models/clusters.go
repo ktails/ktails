@@ -64,6 +64,23 @@ func (d clusterDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	descFixed := 4
 	descText := ansi.TruncateWc(g.Description(), max(paneWidth-descFixed, 0), "…")
 
+	if isCursor && d.focused {
+		// One uniform highlight color, matching the resource tables'
+		// selected-row style (styles.CatppuccinBubbleTableStyle().Highlight:
+		// Background(FocusColor), Foreground(Base), Bold) — leaving the dot
+		// unstyled here (rather than pre-tinting it Green/Overlay1) lets the
+		// outer style's Foreground/Bold apply to it too, instead of a
+		// separately-colored glyph fighting the highlight background. Only
+		// the title line carries the highlight background; the description
+		// line stays plain (no bg block) underneath it.
+		titleContent := " " + dot + " " + name
+		descContent := "    " + descText
+		titleLine := lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Bold(true).Width(paneWidth).Render(titleContent)
+		descLine := lipgloss.NewStyle().Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
+		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
+		return
+	}
+
 	dotStr := lipgloss.NewStyle().Foreground(dotColor).Render(dot)
 	nameStr := lipgloss.NewStyle().Foreground(p.Text).Bold(g.AllSelected).Render(name)
 	descStr := lipgloss.NewStyle().Foreground(p.Overlay1).Render(descText)
@@ -71,18 +88,14 @@ func (d clusterDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	titleContent := " " + dotStr + " " + nameStr
 	descContent := "    " + descStr
 
-	switch {
-	case isCursor && d.focused:
-		titleLine := lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Width(paneWidth).Render(titleContent)
-		descLine := lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Width(paneWidth).Render(descContent)
-		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
-	case isCursor:
+	if isCursor {
 		// Cursor parked here, but the pane doesn't have keyboard focus right
-		// now — muted background instead of the bright focus accent.
+		// now — muted background instead of the bright focus accent. Only
+		// the title line carries it, same as the focused case above.
 		titleLine := lipgloss.NewStyle().Background(p.Surface0).Width(paneWidth).Render(titleContent)
-		descLine := lipgloss.NewStyle().Background(p.Surface0).Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
+		descLine := lipgloss.NewStyle().Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
-	default:
+	} else {
 		titleLine := lipgloss.NewStyle().Width(paneWidth).Render(titleContent)
 		descLine := lipgloss.NewStyle().Foreground(p.Overlay0).Width(paneWidth).Render(descContent)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
@@ -112,6 +125,11 @@ func NewClustersInfo(contexts *ContextsInfo) *ClustersInfo {
 	newList.SetFilteringEnabled(false)
 	newList.DisableQuitKeybindings()
 	newList.Title = ""
+	// Clearing Title alone isn't enough — bubbles/list still renders its
+	// title bar's background padding as an empty colored box even with no
+	// text (the section header is drawn manually by MainPage instead; see
+	// renderLeftBox).
+	newList.SetShowTitle(false)
 	return &ClustersInfo{contexts: contexts, list: newList}
 }
 

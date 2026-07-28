@@ -28,6 +28,16 @@ type AppState struct {
 	// SelectedContexts for that context's row filter when true.
 	allNamespaces map[string]bool
 
+	// defaultNamespace records each context's original kubeconfig namespace
+	// (the value AddContext seeded it with — "" meaning all-namespaces, see
+	// AddContext's doc comment), kept for the lifetime of the context so
+	// MainPage can fall back to it if the user ever confirms with zero
+	// checked namespaces and not in all-namespaces mode — an empty resource
+	// list for a context is rarely what "deselect everything" was meant to
+	// produce; falling back to where that context started is a saner
+	// default than silently confirming an empty view.
+	defaultNamespace map[string]string
+
 	// Loading states per resource kind
 	loading map[msgs.ResourceKind]map[string]bool // kind -> context -> isLoading
 
@@ -82,6 +92,7 @@ func NewAppState() *AppState {
 	return &AppState{
 		SelectedContexts: make(map[string][]string),
 		allNamespaces:    make(map[string]bool),
+		defaultNamespace: make(map[string]string),
 		loading:          loading,
 		Errors:           make(map[string]string),
 		LoadedContexts:   make(map[string]bool),
@@ -103,12 +114,27 @@ var requiredForLoaded = map[msgs.ResourceKind]bool{
 
 // AddContext adds or updates a context selection, seeding its checked
 // namespace set with just the kubeconfig default, and assigning it an
-// identity colour (in rotation order) the first time it's seen.
+// identity colour (in rotation order) the first time it's seen. namespace
+// empty means the kubeconfig context has no namespace directive set at
+// all (distinct from an explicit "default") — kubectl treats that the same
+// as an explicit "default" namespace for most commands, but for a resource
+// browser "no namespace pinned" reads more naturally as "show me
+// everything", so this seeds all-namespaces mode instead of a checked set
+// containing the empty string, which could never match a row's real
+// namespace once filtering is namespace-string-based (see MainPage's
+// filterRowsByNamespace).
 func (a *AppState) AddContext(context, namespace string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.SelectedContexts[context] = []string{namespace}
+	a.defaultNamespace[context] = namespace
+	if namespace == "" {
+		a.SelectedContexts[context] = nil
+		a.allNamespaces[context] = true
+	} else {
+		a.SelectedContexts[context] = []string{namespace}
+		delete(a.allNamespaces, context)
+	}
 	if _, ok := a.contextColors[context]; !ok {
 		a.contextColors[context] = styles.IdentityColor(a.nextColorIdx)
 		a.nextColorIdx++
@@ -133,26 +159,40 @@ func (a *AppState) AddNamespace(context, namespace string) {
 	a.SelectedContexts[context] = append(namespaces, namespace)
 }
 
-// RemoveNamespace unchecks one namespace for a context. It never removes the
-// last remaining namespace — a context with zero checked namespaces would
-// watch nothing while still showing as selected, which the Namespaces pane
-// should refuse to produce in the first place; this is the defensive
-// backstop.
+// RemoveNamespace unchecks one namespace for a context, including the last
+// remaining one. Zero checked namespaces (and not in all-namespaces mode) is
+// a legitimate state now — "show nothing for this context" — since checked
+// namespaces are purely a display-side filter (see filterRowsByNamespace),
+// not something a watch's lifecycle depends on the way it used to when each
+// checked namespace opened its own watch. Refusing to drop the last one used
+// to be required to avoid a context silently watching nothing; that
+// justification no longer applies, and refusing produced a confusing bug of
+// its own — SyncConfirmed would re-check the box the user just deselected
+// the moment they confirmed.
 func (a *AppState) RemoveNamespace(context, namespace string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	namespaces, ok := a.SelectedContexts[context]
-	if !ok || len(namespaces) <= 1 {
+	if !ok {
 		return
 	}
-	kept := make([]string, 0, len(namespaces)-1)
+	kept := make([]string, 0, len(namespaces))
 	for _, ns := range namespaces {
 		if ns != namespace {
 			kept = append(kept, ns)
 		}
 	}
 	a.SelectedContexts[context] = kept
+}
+
+// DefaultNamespace returns the namespace a context was originally added
+// with (see AddContext) — "" means it was added in all-namespaces mode.
+func (a *AppState) DefaultNamespace(context string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	return a.defaultNamespace[context]
 }
 
 // SetAllNamespaces sets whether a context's row filter shows every
@@ -218,6 +258,7 @@ func (a *AppState) RemoveContext(context string) {
 
 	delete(a.SelectedContexts, context)
 	delete(a.allNamespaces, context)
+	delete(a.defaultNamespace, context)
 	for _, byContext := range a.loading {
 		delete(byContext, context)
 	}

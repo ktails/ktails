@@ -109,9 +109,13 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		currentMark = " " + lipgloss.NewStyle().Foreground(p.Yellow).Render("★")
 	}
 
+	// An empty DefaultNamespace means the kubeconfig context has no
+	// namespace directive at all — AppState.AddContext treats that as
+	// all-namespaces mode (see its doc comment), not an implicit "default",
+	// so the label reflects what will actually be browsed.
 	ns := ctx.DefaultNamespace
 	if ns == "" {
-		ns = "default"
+		ns = "all namespaces"
 	}
 	cluster := ctx.Cluster
 	if cluster == "" {
@@ -146,32 +150,27 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	case isCursor && d.focused:
 		// Focus accent bg + Base fg — the one selection/focus colour used
 		// everywhere (sidebar cursor, table row, active tab, pane border).
+		// Only the title line carries the highlight background; the
+		// description line stays plain (no bg block) underneath it.
 		titleLine := lipgloss.NewStyle().
 			Background(styles.FocusColor).
 			Foreground(p.Base).
 			Bold(true).
 			Width(paneWidth).
 			Render(" " + dot + " " + name + currentMark + statusSuffix)
-		descLine := lipgloss.NewStyle().
-			Background(styles.FocusColor).
-			Foreground(p.Base).
-			Width(paneWidth).
-			Render("    " + descText)
+		descLine := lipgloss.NewStyle().Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
 	case isCursor:
 		// Cursor parked here, but the pane itself doesn't have keyboard
 		// focus right now — a muted background instead of the bright focus
 		// accent, so it never reads as "this pane is focused" when it isn't.
+		// Only the title line carries it, same as the focused case above.
 		titleLine := lipgloss.NewStyle().
 			Background(p.Surface0).
 			Bold(true).
 			Width(paneWidth).
 			Render(titleContent)
-		descLine := lipgloss.NewStyle().
-			Background(p.Surface0).
-			Foreground(p.Overlay1).
-			Width(paneWidth).
-			Render(descContent)
+		descLine := lipgloss.NewStyle().Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
 		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
 	default:
 		titleLine := lipgloss.NewStyle().Width(paneWidth).Render(titleContent)
@@ -220,6 +219,12 @@ func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	// deliberately not a quit key here (only Ctrl+C is); disable it at the
 	// source rather than trying to intercept "q" before it reaches the list.
 	newList.DisableQuitKeybindings()
+	// Clearing Title (see below) alone isn't enough — bubbles/list still
+	// renders its title bar's background padding as an empty colored box
+	// even with no text (the section header is drawn manually instead: the
+	// outer box border title for this pane, MainPage's renderLeftBox for
+	// Namespaces/Clusters).
+	newList.SetShowTitle(false)
 	return &ContextsInfo{
 		Client:             client,
 		PaneTitle:          "Kubernetes Contexts",

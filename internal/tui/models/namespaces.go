@@ -87,17 +87,26 @@ func (d namespaceDelegate) Render(w io.Writer, m list.Model, index int, item lis
 		dotColor = p.Green
 	}
 	name := ansi.TruncateWc(row.Name, max(paneWidth-6, 0), "…")
+
+	if isCursor && d.focused {
+		// One uniform highlight color, matching the resource tables'
+		// selected-row style (styles.CatppuccinBubbleTableStyle().Highlight:
+		// Background(FocusColor), Foreground(Base), Bold) — the dot keeps its
+		// own tint everywhere else, but blending it into the highlight here
+		// keeps the focused row reading as a single solid block instead of a
+		// background color fighting a separately-tinted glyph.
+		content := "    " + dot + " " + name
+		fmt.Fprint(w, lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Bold(true).Width(paneWidth).Render(content))
+		return
+	}
+
 	dotStr := lipgloss.NewStyle().Foreground(dotColor).Render(dot)
 	content := "    " + dotStr + " " + name
-
-	switch {
-	case isCursor && d.focused:
-		fmt.Fprint(w, lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Width(paneWidth).Render(content))
-	case isCursor:
+	if isCursor {
 		// Cursor parked here, but the pane doesn't have keyboard focus right
 		// now — muted background instead of the bright focus accent.
 		fmt.Fprint(w, lipgloss.NewStyle().Background(p.Surface0).Width(paneWidth).Render(content))
-	default:
+	} else {
 		fmt.Fprint(w, lipgloss.NewStyle().Width(paneWidth).Render(content))
 	}
 }
@@ -171,6 +180,11 @@ func NewNamespacesInfo() *NamespacesInfo {
 	newList.SetFilteringEnabled(false)
 	newList.DisableQuitKeybindings()
 	newList.Title = ""
+	// Clearing Title alone isn't enough — bubbles/list still renders its
+	// title bar's background padding as an empty colored box even with no
+	// text (the section header is drawn manually by MainPage instead; see
+	// renderLeftBox).
+	newList.SetShowTitle(false)
 	return &NamespacesInfo{
 		list:                   newList,
 		namespacesByContext:    make(map[string][]string),
@@ -387,10 +401,10 @@ func (n *NamespacesInfo) Update(msg tea.Msg) tea.Cmd {
 
 // toggleRow toggles a single namespace's checked state. If its context is
 // currently in all-namespaces mode, this exits that mode first, seeding the
-// checked set from every known namespace *except* the one under the
-// cursor — since all-mode shows every row unchecked (see rebuild), toggling
-// one "on" while leaving the rest implicitly "on" too is what unchecking
-// just this one, starting from everything, means.
+// checked set from scratch with *only* the namespace under the cursor
+// checked — every row renders unchecked in all-mode (see rebuild), so
+// pressing Space on one should check just that one, matching what's on
+// screen, rather than implicitly checking every other namespace too.
 func (n *NamespacesInfo) toggleRow() {
 	idx := n.list.Index()
 	items := n.list.Items()
@@ -403,13 +417,7 @@ func (n *NamespacesInfo) toggleRow() {
 	}
 
 	if n.allNamespaces[row.Context] {
-		full := make(map[string]bool, len(n.namespacesByContext[row.Context]))
-		for _, ns := range n.namespacesByContext[row.Context] {
-			if ns != row.Name {
-				full[ns] = true
-			}
-		}
-		n.checked[row.Context] = full
+		n.checked[row.Context] = map[string]bool{row.Name: true}
 		delete(n.allNamespaces, row.Context)
 		delete(n.preSelectAll, row.Context)
 		n.rebuild()

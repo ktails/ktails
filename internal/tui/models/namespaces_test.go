@@ -87,11 +87,12 @@ func TestNamespaces_RebuildPreservesPendingToggles(t *testing.T) {
 	}
 }
 
-// TestNamespaces_SyncConfirmedReconcilesRefusedRemoval guards the
-// MainPage-driven reconciliation path: when AppState refuses to drop the
-// last checked namespace, SyncConfirmed must re-check that row rather than
-// leaving it showing unchecked while still actually watched.
-func TestNamespaces_SyncConfirmedReconcilesRefusedRemoval(t *testing.T) {
+// TestNamespaces_SyncConfirmedReconcilesFromAppState guards the
+// MainPage-driven reconciliation path in general: whatever AppState reports
+// as actually selected after a confirm is what the pane must show, even if
+// it differs from what was pending locally — SyncConfirmed is the one place
+// that resync happens.
+func TestNamespaces_SyncConfirmedReconcilesFromAppState(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default"})
 	n.SyncConfirmed("ctx1", []string{"default"}, false)
@@ -100,14 +101,14 @@ func TestNamespaces_SyncConfirmedReconcilesRefusedRemoval(t *testing.T) {
 	n.checked["ctx1"]["default"] = false
 	n.rebuild()
 
-	// AppState refused the removal (it's the last namespace) — MainPage
-	// calls SyncConfirmed with what's still actually selected.
+	// MainPage calls SyncConfirmed with whatever AppState now reports as
+	// actually selected for this context.
 	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	for _, item := range n.list.Items() {
 		row := item.(namespaceRow)
 		if row.Name == "default" && !row.Selected {
-			t.Fatal("expected SyncConfirmed to re-check default after a refused removal")
+			t.Fatal("expected SyncConfirmed to re-check default, matching what AppState reported")
 		}
 	}
 }
@@ -190,11 +191,11 @@ func TestNamespaces_ToggleAllConfirmReportsAllNamespaces(t *testing.T) {
 	}
 }
 
-// TestNamespaces_SpaceExitsAllModeSeedingFromEveryoneMinusToggled guards
-// toggleRow's all-mode exit: toggling a single namespace while in
-// all-namespaces mode must leave every other known namespace checked and
-// only the toggled one unchecked, not start from an empty set.
-func TestNamespaces_SpaceExitsAllModeSeedingFromEveryoneMinusToggled(t *testing.T) {
+// TestNamespaces_SpaceExitsAllModeSelectingOnlyTheToggledRow guards
+// toggleRow's all-mode exit: every row renders unchecked in all-namespaces
+// mode, so toggling one with Space must check *only* that one — matching
+// what's on screen — not implicitly check every other known namespace too.
+func TestNamespaces_SpaceExitsAllModeSelectingOnlyTheToggledRow(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default", "kube-system", "other-ns"})
 	n.SyncConfirmed("ctx1", []string{"default"}, false)
@@ -216,14 +217,51 @@ func TestNamespaces_SpaceExitsAllModeSeedingFromEveryoneMinusToggled(t *testing.
 	if n.allNamespaces["ctx1"] {
 		t.Fatal("expected the Space toggle to exit all-namespaces mode")
 	}
-	if namespaceRowSelected(t, n, "ctx1", "kube-system") {
-		t.Fatal("expected kube-system unchecked — it's the one just toggled")
+	if !namespaceRowSelected(t, n, "ctx1", "kube-system") {
+		t.Fatal("expected kube-system checked — it's the one just toggled")
 	}
-	if !namespaceRowSelected(t, n, "ctx1", "default") {
-		t.Fatal("expected default checked — seeded from everyone minus kube-system")
+	if namespaceRowSelected(t, n, "ctx1", "default") {
+		t.Fatal("expected default to remain unchecked — only the toggled row should be checked")
 	}
-	if !namespaceRowSelected(t, n, "ctx1", "other-ns") {
-		t.Fatal("expected other-ns checked — seeded from everyone minus kube-system")
+	if namespaceRowSelected(t, n, "ctx1", "other-ns") {
+		t.Fatal("expected other-ns to remain unchecked — only the toggled row should be checked")
+	}
+}
+
+// TestNamespaces_SpaceThenToggleAllThenRestore guards the full round-trip
+// this bug came from: pressing Space to select just one namespace, then "a"
+// to switch to all-namespaces mode, then "a" again to restore exactly that
+// one-namespace selection.
+func TestNamespaces_SpaceThenToggleAllThenRestore(t *testing.T) {
+	n := NewNamespacesInfo()
+	n.SetContextNamespaces("ctx1", []string{"default", "kube-system", "other-ns"})
+	n.SyncConfirmed("ctx1", []string{}, true) // context starts in all-namespaces mode
+
+	for i, item := range n.list.Items() {
+		if row, ok := item.(namespaceRow); ok && !row.IsHeader && row.Name == "kube-system" {
+			n.list.Select(i)
+		}
+	}
+	n.toggleRow()
+	if !namespaceRowSelected(t, n, "ctx1", "kube-system") {
+		t.Fatal("expected kube-system checked after the Space toggle")
+	}
+
+	n.list.Select(0) // header row — toggleAllNamespaces works from any row in the group
+	n.toggleAllNamespaces()
+	if !n.allNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 back in all-namespaces mode")
+	}
+
+	n.toggleAllNamespaces()
+	if n.allNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 out of all-namespaces mode after restoring")
+	}
+	if !namespaceRowSelected(t, n, "ctx1", "kube-system") {
+		t.Fatal("expected kube-system checked again after restoring the prior selection")
+	}
+	if namespaceRowSelected(t, n, "ctx1", "default") || namespaceRowSelected(t, n, "ctx1", "other-ns") {
+		t.Fatal("expected only kube-system checked after restoring the prior selection")
 	}
 }
 

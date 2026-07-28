@@ -107,10 +107,72 @@ func TestSetAllNamespaces_DistinctFromEmptyCheckedSet(t *testing.T) {
 	}
 }
 
-// TestAddRemoveNamespace_NeverDropsTheLastOne guards the safety backstop:
-// unchecking every namespace for a context would leave it selected but
-// watching nothing, so RemoveNamespace must refuse to remove the last one.
-func TestAddRemoveNamespace_NeverDropsTheLastOne(t *testing.T) {
+// TestAddContext_EmptyNamespaceEntersAllNamespacesMode guards a real-cluster
+// regression: a kubeconfig context with no namespace directive at all
+// (raw value "", distinct from an explicit "default") must default to
+// all-namespaces mode, not a checked set containing the empty string —
+// filterRowsByNamespace matches checked namespaces against a row's real
+// namespace string, which "" could never match, so seeding checked=[""]
+// silently filtered every row out.
+func TestAddContext_EmptyNamespaceEntersAllNamespacesMode(t *testing.T) {
+	a := NewAppState()
+	a.AddContext("ctx1", "")
+
+	snap := a.Snapshot()
+	if !snap.AllNamespaces["ctx1"] {
+		t.Fatal("expected an empty kubeconfig namespace to enter all-namespaces mode")
+	}
+	if len(snap.SelectedContexts["ctx1"]) != 0 {
+		t.Fatalf("expected no checked namespaces in all-namespaces mode, got %v", snap.SelectedContexts["ctx1"])
+	}
+
+	// An explicit namespace must still scope normally, not stay in
+	// all-namespaces mode from a prior AddContext call.
+	a.AddContext("ctx2", "default")
+	snap = a.Snapshot()
+	if snap.AllNamespaces["ctx2"] {
+		t.Fatal("expected an explicit namespace to not enter all-namespaces mode")
+	}
+	if got := snap.SelectedContexts["ctx2"]; len(got) != 1 || got[0] != "default" {
+		t.Fatalf("expected ctx2 scoped to just 'default', got %v", got)
+	}
+}
+
+// TestDefaultNamespace_TracksOriginalAndClearsOnRemove guards the fallback
+// MainPage uses when a context confirms with nothing checked (see
+// applyNamespacesState): DefaultNamespace must keep reporting the original
+// value AddContext seeded a context with, regardless of later
+// Add/RemoveNamespace/SetAllNamespaces churn, until RemoveContext clears it.
+func TestDefaultNamespace_TracksOriginalAndClearsOnRemove(t *testing.T) {
+	a := NewAppState()
+	a.AddContext("ctx1", "kube-system")
+
+	if got := a.DefaultNamespace("ctx1"); got != "kube-system" {
+		t.Fatalf("expected DefaultNamespace to report kube-system, got %q", got)
+	}
+
+	// Churning the checked set and all-namespaces mode must not change it.
+	a.AddNamespace("ctx1", "other-ns")
+	a.RemoveNamespace("ctx1", "kube-system")
+	a.SetAllNamespaces("ctx1", true)
+	if got := a.DefaultNamespace("ctx1"); got != "kube-system" {
+		t.Fatalf("expected DefaultNamespace to stay kube-system despite churn, got %q", got)
+	}
+
+	a.RemoveContext("ctx1")
+	if got := a.DefaultNamespace("ctx1"); got != "" {
+		t.Fatalf("expected DefaultNamespace cleared after RemoveContext, got %q", got)
+	}
+}
+
+// TestRemoveNamespace_CanDropTheLastOne guards a real regression: checked
+// namespaces are a display-only filter now (see filterRowsByNamespace), not
+// tied to a watch's lifecycle, so dropping the last checked namespace is a
+// legitimate "show nothing for this context" state — RemoveNamespace must
+// not silently refuse it. A prior version did refuse, which caused the
+// Namespaces pane to visibly re-check a box the user had just deselected
+// the moment they confirmed.
+func TestRemoveNamespace_CanDropTheLastOne(t *testing.T) {
 	a := NewAppState()
 	a.AddContext("ctx1", "default")
 
@@ -124,10 +186,10 @@ func TestAddRemoveNamespace_NeverDropsTheLastOne(t *testing.T) {
 		t.Fatalf("expected only other-ns left, got %v", got)
 	}
 
-	// Removing the last one must be a no-op.
+	// Removing the last one must now succeed, leaving zero checked.
 	a.RemoveNamespace("ctx1", "other-ns")
-	if got := a.Snapshot().SelectedContexts["ctx1"]; len(got) != 1 || got[0] != "other-ns" {
-		t.Fatalf("expected the last namespace to survive removal, got %v", got)
+	if got := a.Snapshot().SelectedContexts["ctx1"]; len(got) != 0 {
+		t.Fatalf("expected zero namespaces left, got %v", got)
 	}
 }
 

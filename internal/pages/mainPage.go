@@ -802,11 +802,9 @@ func (m *MainPage) applyNodesAccess(msg msgs.NodesAccessMsg) tea.Cmd {
 // change now — every context's watch is cluster-wide regardless of which
 // namespaces are checked (see watch.Supervisor's stateKey doc comment), so
 // there's no watch to start or stop here, just AppState bookkeeping
-// followed by re-filtering each tab's already-loaded rows. AddNamespace/
-// RemoveNamespace have final say on Added/Removed — RemoveNamespace refuses
-// to drop a context's last checked namespace — so the pane is resynced
-// afterward (SyncConfirmed) so a refused removal doesn't leave a checkbox
-// unchecked for a namespace still being shown.
+// followed by re-filtering each tab's already-loaded rows. The pane is
+// resynced afterward (SyncConfirmed) so it always reflects exactly what
+// AppState now reports as selected.
 func (m *MainPage) applyNamespacesState(msg msgs.NamespacesStateMsg) tea.Cmd {
 	for _, ns := range msg.Removed {
 		m.appState.RemoveNamespace(msg.Context, ns)
@@ -818,10 +816,24 @@ func (m *MainPage) applyNamespacesState(msg msgs.NamespacesStateMsg) tea.Cmd {
 		m.appState.SetAllNamespaces(msg.Context, *msg.AllNamespaces)
 	}
 
+	// Confirming with zero checked namespaces and not in all-namespaces mode
+	// would silently show nothing for this context — rarely what "deselect
+	// everything" was meant to produce. Fall back to wherever the context
+	// started instead: its original kubeconfig namespace, or all-namespaces
+	// if it had none (see AppState.DefaultNamespace).
+	snapshot := m.appState.Snapshot()
+	if !snapshot.AllNamespaces[msg.Context] && len(snapshot.SelectedContexts[msg.Context]) == 0 {
+		if defaultNS := m.appState.DefaultNamespace(msg.Context); defaultNS == "" {
+			m.appState.SetAllNamespaces(msg.Context, true)
+		} else {
+			m.appState.AddNamespace(msg.Context, defaultNS)
+		}
+		snapshot = m.appState.Snapshot()
+	}
+
 	for _, kind := range m.tabs {
 		m.tables[kind].SetRows(m.filteredRows(kind))
 	}
-	snapshot := m.appState.Snapshot()
 	m.namespacesPane.SyncConfirmed(msg.Context, snapshot.SelectedContexts[msg.Context], snapshot.AllNamespaces[msg.Context])
 	m.syncContextStates()
 
