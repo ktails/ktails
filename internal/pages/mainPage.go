@@ -66,8 +66,9 @@ type MainPage struct {
 	clusterList *models.ClustersInfo
 	// namespacesPane lets each selected context's checked namespace set grow
 	// beyond the kubeconfig default it starts with (see
-	// state.AppState.AddContext), driving watchSup.AddNamespace/
-	// RemoveNamespace per confirm.
+	// state.AppState.AddContext) — a display-only filter over each
+	// context's already cluster-wide watch (see filteredRows), not
+	// something that starts or stops a watch.
 	namespacesPane *models.NamespacesInfo
 	// activeLeftSection is which stacked left-pane section ("[" / "]"
 	// cycle it) is focused while focus == focusLeftPane.
@@ -427,7 +428,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			snapshot := m.appState.Snapshot()
-			if !m.appStateLoaded || !allContextsLoaded(snapshot.SelectedContexts, snapshot.LoadedContexts, snapshot.Errors) {
+			if !m.appStateLoaded || !allContextsLoaded(snapshot.SelectedContexts, snapshot.LoadedKinds[m.tabs[next]], snapshot.Errors) {
 				return m, nil
 			}
 			m.activeTab = next
@@ -439,7 +440,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			snapshot := m.appState.Snapshot()
-			if !m.appStateLoaded || !allContextsLoaded(snapshot.SelectedContexts, snapshot.LoadedContexts, snapshot.Errors) {
+			if !m.appStateLoaded || !allContextsLoaded(snapshot.SelectedContexts, snapshot.LoadedKinds[m.tabs[prev]], snapshot.Errors) {
 				return m, nil
 			}
 			m.activeTab = prev
@@ -600,7 +601,8 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.namespacesPane.SetContextNamespaces(msg.Context, msg.Namespaces)
-		m.namespacesPane.SyncConfirmed(msg.Context, m.appState.Snapshot().SelectedContexts[msg.Context])
+		snapshot := m.appState.Snapshot()
+		m.namespacesPane.SyncConfirmed(msg.Context, snapshot.SelectedContexts[msg.Context], snapshot.AllNamespaces[msg.Context])
 		return m, nil
 
 	case msgs.NamespacesStateMsg:
@@ -610,11 +612,11 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			// Allow a later Ctrl+W toggle to retry instead of getting stuck
 			// showing the "…" placeholder forever.
-			m.watchSup.ClearEndpointsRequested(msg.Context, msg.Namespace)
+			m.watchSup.ClearEndpointsRequested(msg.Context)
 			return m, nil
 		}
-		m.watchSup.SetEndpoints(msg.Context, msg.Namespace, msg.Endpoints)
-		m.tables[msgs.KindServices].SetRows(m.watchSup.Rows(msgs.KindServices))
+		m.watchSup.SetEndpoints(msg.Context, msg.Endpoints)
+		m.tables[msgs.KindServices].SetRows(m.filteredRows(msgs.KindServices))
 		return m, nil
 
 	case msgs.RefreshTickMsg:
@@ -672,10 +674,54 @@ func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
 	}
 	if upd.RowsChanged {
 		m.appState.MarkLoaded(upd.Kind, upd.Context)
-		m.tables[upd.Kind].SetRows(m.watchSup.Rows(upd.Kind))
+		m.tables[upd.Kind].SetRows(m.filteredRows(upd.Kind))
 		m.syncContextStates()
 		m.updateFocusStates()
 	}
+}
+
+// filteredRows returns watchSup.Rows(kind) narrowed to each row's context's
+// checked namespaces, or unfiltered for a context in all-namespaces mode.
+// The Namespaces pane's checked set is a display-only filter now — every
+// context watches cluster-wide regardless (see watch.Supervisor's stateKey
+// doc comment) — so this is where "which namespaces are checked" actually
+// takes effect. KindNodes is cluster-scoped and carries no namespace
+// column, so it's exempt.
+func (m *MainPage) filteredRows(kind msgs.ResourceKind) []msgs.RowData {
+	rows := m.watchSup.Rows(kind)
+	if kind == msgs.KindNodes {
+		return rows
+	}
+	snapshot := m.appState.Snapshot()
+	return filterRowsByNamespace(rows, snapshot.SelectedContexts, snapshot.AllNamespaces)
+}
+
+// filterRowsByNamespace keeps only rows whose (context, namespace) is
+// checked in selected, or whose context is in allNS — a pure function so
+// the filtering logic is testable independent of the Supervisor/AppState.
+func filterRowsByNamespace(rows []msgs.RowData, selected map[string][]string, allNS map[string]bool) []msgs.RowData {
+	checkedSets := make(map[string]map[string]bool, len(selected))
+	for ctxName, namespaces := range selected {
+		set := make(map[string]bool, len(namespaces))
+		for _, ns := range namespaces {
+			set[ns] = true
+		}
+		checkedSets[ctxName] = set
+	}
+
+	var filtered []msgs.RowData
+	for _, row := range rows {
+		ctxName, _ := row[msgs.KeyContext].(string)
+		if allNS[ctxName] {
+			filtered = append(filtered, row)
+			continue
+		}
+		namespace, _ := row[msgs.KeyNamespace].(string)
+		if checkedSets[ctxName][namespace] {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
 }
 
 // applyContextsState reconciles a selection change from the Context List.
@@ -700,7 +746,7 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 		for _, kind := range m.tabs {
 			m.appState.SetLoading(kind, added.ContextName, true)
 		}
-		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName, []string{added.DefaultNamespace})...)
+		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName)...)
 		cmdSequence = append(cmdSequence, cmds.LoadNamespacesCmd(m.Client, added.ContextName))
 		// Nodes is cluster-scoped and commonly restricted — check access
 		// before opening its watch (see applyNodesAccess) instead of
@@ -709,7 +755,7 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 	}
 
 	for _, kind := range m.tabs {
-		m.tables[kind].SetRows(m.watchSup.Rows(kind))
+		m.tables[kind].SetRows(m.filteredRows(kind))
 	}
 	m.syncContextStates()
 
@@ -748,45 +794,38 @@ func (m *MainPage) applyNodesAccess(msg msgs.NodesAccessMsg) tea.Cmd {
 		m.syncContextStates()
 		return nil
 	}
-	return m.watchSup.StartKind(msgs.KindNodes, msg.Context, "")
+	return m.watchSup.StartKind(msgs.KindNodes, msg.Context)
 }
 
 // applyNamespacesState reconciles a checked-namespace change from the
-// Namespaces pane for one context. AddNamespace has final say on Removed —
-// it refuses to drop a context's last checked namespace — so watchSup is
-// only told to stop a namespace's watches when AppState's set actually
-// shrank, and the pane is resynced afterward (SyncConfirmed) so a refused
-// removal doesn't leave a checkbox unchecked for a namespace still being
-// watched.
+// Namespaces pane for one context. This is purely a display-side filter
+// change now — every context's watch is cluster-wide regardless of which
+// namespaces are checked (see watch.Supervisor's stateKey doc comment), so
+// there's no watch to start or stop here, just AppState bookkeeping
+// followed by re-filtering each tab's already-loaded rows. AddNamespace/
+// RemoveNamespace have final say on Added/Removed — RemoveNamespace refuses
+// to drop a context's last checked namespace — so the pane is resynced
+// afterward (SyncConfirmed) so a refused removal doesn't leave a checkbox
+// unchecked for a namespace still being shown.
 func (m *MainPage) applyNamespacesState(msg msgs.NamespacesStateMsg) tea.Cmd {
 	for _, ns := range msg.Removed {
-		before := len(m.appState.Snapshot().SelectedContexts[msg.Context])
 		m.appState.RemoveNamespace(msg.Context, ns)
-		after := len(m.appState.Snapshot().SelectedContexts[msg.Context])
-		if after < before {
-			m.watchSup.RemoveNamespace(msg.Context, ns)
-		}
 	}
-
-	var cmdSequence []tea.Cmd
 	for _, ns := range msg.Added {
 		m.appState.AddNamespace(msg.Context, ns)
-		for _, kind := range m.tabs {
-			m.appState.SetLoading(kind, msg.Context, true)
-		}
-		cmdSequence = append(cmdSequence, m.watchSup.AddNamespace(msg.Context, ns)...)
+	}
+	if msg.AllNamespaces != nil {
+		m.appState.SetAllNamespaces(msg.Context, *msg.AllNamespaces)
 	}
 
 	for _, kind := range m.tabs {
-		m.tables[kind].SetRows(m.watchSup.Rows(kind))
+		m.tables[kind].SetRows(m.filteredRows(kind))
 	}
-	m.namespacesPane.SyncConfirmed(msg.Context, m.appState.Snapshot().SelectedContexts[msg.Context])
+	snapshot := m.appState.Snapshot()
+	m.namespacesPane.SyncConfirmed(msg.Context, snapshot.SelectedContexts[msg.Context], snapshot.AllNamespaces[msg.Context])
 	m.syncContextStates()
 
-	if len(cmdSequence) == 0 {
-		return nil
-	}
-	return tea.Batch(cmdSequence...)
+	return nil
 }
 
 // syncContextStates pushes the current loading/error/loaded status into the
@@ -971,17 +1010,20 @@ func (m *MainPage) reRenderAgeFromWatchCaches() {
 		return
 	}
 	for _, kind := range m.tabs {
-		m.tables[kind].SetRows(m.watchSup.Rows(kind))
+		m.tables[kind].SetRows(m.filteredRows(kind))
 	}
 	m.syncContextStates()
 }
 
 // fetchServiceEndpointsIfNeeded dispatches LoadServiceEndpointsCmd for every
-// selected context+namespace that hasn't had its Endpoint IPs fetched yet
-// (see watch.Supervisor.NeedsEndpoints). Called only when svc wide mode
-// turns on — the Ctrl+W toggle itself already revealed the other new
-// columns synchronously; this just fills in the one column that needs a
-// network round trip, without blocking or repeating that round trip.
+// selected context that hasn't had its Endpoint IPs fetched yet (see
+// watch.Supervisor.NeedsEndpoints) — one cluster-wide fetch per context,
+// matching the Services watch's own scope (see watch.Supervisor's stateKey
+// doc comment), regardless of which namespaces are currently checked in the
+// Namespaces pane. Called only when svc wide mode turns on — the Ctrl+W
+// toggle itself already revealed the other new columns synchronously; this
+// just fills in the one column that needs a network round trip, without
+// blocking or repeating that round trip.
 func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 	snapshot := m.appState.Snapshot()
 	if len(snapshot.SelectedContexts) == 0 {
@@ -989,14 +1031,12 @@ func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 	}
 
 	var cmdSequence []tea.Cmd
-	for context, namespaces := range snapshot.SelectedContexts {
-		for _, namespace := range namespaces {
-			if !m.watchSup.NeedsEndpoints(context, namespace) {
-				continue
-			}
-			m.watchSup.MarkEndpointsRequested(context, namespace)
-			cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, namespace))
+	for context := range snapshot.SelectedContexts {
+		if !m.watchSup.NeedsEndpoints(context) {
+			continue
 		}
+		m.watchSup.MarkEndpointsRequested(context)
+		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, ""))
 	}
 
 	if len(cmdSequence) == 0 {
@@ -1582,12 +1622,14 @@ func hasLoading(loading map[string]bool) bool {
 	return false
 }
 
-// allContextsLoaded reports whether every selected context has settled: it
-// either completed a successful Deployments load, or gave up permanently
-// (e.g. an RBAC denial recorded in errors — that context will never load, so
-// it must not hold tab navigation hostage forever). Tab navigation is gated
-// on this so switching away from Deployments never lands on a still-empty
-// tab, while a context this user can't view doesn't stick every tab shut.
+// allContextsLoaded reports whether every selected context has settled for
+// one specific tab's kind: it either completed a successful load for that
+// kind, or gave up permanently (e.g. an RBAC denial recorded in errors —
+// that context will never load, so it must not hold tab navigation hostage
+// forever). Tab navigation passes the target tab's own snapshot.LoadedKinds
+// entry as loaded, so each tab unlocks independently as its own List/watch
+// settles rather than every tab waiting on Deployments+Pods together, while
+// a context this user can't view doesn't stick every tab shut.
 func allContextsLoaded(selected map[string][]string, loaded map[string]bool, errors map[string]string) bool {
 	if len(selected) == 0 {
 		return false

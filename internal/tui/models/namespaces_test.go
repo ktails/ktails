@@ -26,7 +26,7 @@ func mustNamespacesState(t *testing.T, cmd tea.Cmd) msgs.NamespacesStateMsg {
 func TestNamespaces_ConfirmDiffsAddedAndRemoved(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default", "kube-system", "other-ns"})
-	n.SyncConfirmed("ctx1", []string{"default"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	n.checked["ctx1"]["default"] = false
 	n.checked["ctx1"]["other-ns"] = true
@@ -48,7 +48,7 @@ func TestNamespaces_ConfirmDiffsAddedAndRemoved(t *testing.T) {
 func TestNamespaces_ConfirmNoOpWhenUnchanged(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default"})
-	n.SyncConfirmed("ctx1", []string{"default"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	if cmd := n.confirmChanges(); cmd != nil {
 		t.Fatal("expected nil command when nothing changed since the last confirm")
@@ -63,7 +63,7 @@ func TestNamespaces_ConfirmNoOpWhenUnchanged(t *testing.T) {
 func TestNamespaces_RebuildPreservesPendingToggles(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default", "other-ns"})
-	n.SyncConfirmed("ctx1", []string{"default"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	// Pending toggle: check other-ns, without confirming yet.
 	n.checked["ctx1"]["other-ns"] = true
@@ -94,7 +94,7 @@ func TestNamespaces_RebuildPreservesPendingToggles(t *testing.T) {
 func TestNamespaces_SyncConfirmedReconcilesRefusedRemoval(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default"})
-	n.SyncConfirmed("ctx1", []string{"default"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	// Pending uncheck of the only namespace — not yet confirmed.
 	n.checked["ctx1"]["default"] = false
@@ -102,7 +102,7 @@ func TestNamespaces_SyncConfirmedReconcilesRefusedRemoval(t *testing.T) {
 
 	// AppState refused the removal (it's the last namespace) — MainPage
 	// calls SyncConfirmed with what's still actually selected.
-	n.SyncConfirmed("ctx1", []string{"default"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	for _, item := range n.list.Items() {
 		row := item.(namespaceRow)
@@ -126,38 +126,104 @@ func namespaceRowSelected(t *testing.T, n *NamespacesInfo, context, name string)
 	return false
 }
 
-// TestNamespaces_ToggleAllSelectsThenRestoresPriorSet guards the "a" key: it
-// must first check every namespace (remembering what was checked before),
-// then on a second press restore exactly that prior set — visibly
-// unchecking whatever it had added — rather than only ever selecting all.
-func TestNamespaces_ToggleAllSelectsThenRestoresPriorSet(t *testing.T) {
+// TestNamespaces_ToggleAllEntersAllModeThenRestoresPriorSet guards the "a"
+// key: it must enter all-namespaces mode (every row visibly unchecked — see
+// rebuild's AllNS header suffix — rather than every box checked), saving
+// the prior checked set, then on a second press leave that mode and restore
+// exactly that prior set.
+func TestNamespaces_ToggleAllEntersAllModeThenRestoresPriorSet(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default", "kube-system", "other-ns"})
-	n.SyncConfirmed("ctx1", []string{"default"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	// Cursor sits on the header row (index 0) — toggling from there should
 	// still affect the whole context's group.
 	n.list.Select(0)
 	n.toggleAllNamespaces()
 
+	if !n.allNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 to be in all-namespaces mode after toggle-all")
+	}
 	for _, ns := range []string{"default", "kube-system", "other-ns"} {
-		if !namespaceRowSelected(t, n, "ctx1", ns) {
-			t.Fatalf("expected %s checked after toggle-all, got unchecked", ns)
+		if namespaceRowSelected(t, n, "ctx1", ns) {
+			t.Fatalf("expected %s visibly unchecked in all-namespaces mode, got checked", ns)
 		}
 	}
 
-	// Second press restores the pre-toggle set (just "default"), visibly
-	// unchecking kube-system and other-ns.
+	// Second press leaves all-namespaces mode, restoring the pre-toggle set
+	// (just "default").
 	n.toggleAllNamespaces()
 
+	if n.allNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 to have left all-namespaces mode")
+	}
 	if !namespaceRowSelected(t, n, "ctx1", "default") {
-		t.Fatal("expected default to remain checked after restoring the prior set")
+		t.Fatal("expected default to be checked again after restoring the prior set")
 	}
 	if namespaceRowSelected(t, n, "ctx1", "kube-system") {
-		t.Fatal("expected kube-system visibly unchecked after restoring the prior set")
+		t.Fatal("expected kube-system to remain unchecked after restoring the prior set")
 	}
 	if namespaceRowSelected(t, n, "ctx1", "other-ns") {
-		t.Fatal("expected other-ns visibly unchecked after restoring the prior set")
+		t.Fatal("expected other-ns to remain unchecked after restoring the prior set")
+	}
+}
+
+// TestNamespaces_ToggleAllConfirmReportsAllNamespaces guards that entering
+// all-namespaces mode and confirming reports it on NamespacesStateMsg, and
+// that a no-op confirm (nothing changed) leaves it nil.
+func TestNamespaces_ToggleAllConfirmReportsAllNamespaces(t *testing.T) {
+	n := NewNamespacesInfo()
+	n.SetContextNamespaces("ctx1", []string{"default", "other-ns"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
+
+	n.list.Select(0)
+	n.toggleAllNamespaces()
+
+	state := mustNamespacesState(t, n.confirmChanges())
+	if state.AllNamespaces == nil || !*state.AllNamespaces {
+		t.Fatalf("expected AllNamespaces=true reported, got %v", state.AllNamespaces)
+	}
+
+	// Confirming again with nothing changed must report a nil command.
+	if cmd := n.confirmChanges(); cmd != nil {
+		t.Fatal("expected nil command when nothing changed since the last confirm")
+	}
+}
+
+// TestNamespaces_SpaceExitsAllModeSeedingFromEveryoneMinusToggled guards
+// toggleRow's all-mode exit: toggling a single namespace while in
+// all-namespaces mode must leave every other known namespace checked and
+// only the toggled one unchecked, not start from an empty set.
+func TestNamespaces_SpaceExitsAllModeSeedingFromEveryoneMinusToggled(t *testing.T) {
+	n := NewNamespacesInfo()
+	n.SetContextNamespaces("ctx1", []string{"default", "kube-system", "other-ns"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
+
+	n.list.Select(0)
+	n.toggleAllNamespaces()
+	if !n.allNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 in all-namespaces mode before the Space toggle")
+	}
+
+	// Move the cursor onto the "kube-system" row and toggle it.
+	for i, item := range n.list.Items() {
+		if row, ok := item.(namespaceRow); ok && !row.IsHeader && row.Name == "kube-system" {
+			n.list.Select(i)
+		}
+	}
+	n.toggleRow()
+
+	if n.allNamespaces["ctx1"] {
+		t.Fatal("expected the Space toggle to exit all-namespaces mode")
+	}
+	if namespaceRowSelected(t, n, "ctx1", "kube-system") {
+		t.Fatal("expected kube-system unchecked — it's the one just toggled")
+	}
+	if !namespaceRowSelected(t, n, "ctx1", "default") {
+		t.Fatal("expected default checked — seeded from everyone minus kube-system")
+	}
+	if !namespaceRowSelected(t, n, "ctx1", "other-ns") {
+		t.Fatal("expected other-ns checked — seeded from everyone minus kube-system")
 	}
 }
 
@@ -168,7 +234,7 @@ func TestNamespaces_ToggleAllSelectsThenRestoresPriorSet(t *testing.T) {
 func TestNamespaces_FilterHidesNonMatchingRowsWithoutLosingState(t *testing.T) {
 	n := NewNamespacesInfo()
 	n.SetContextNamespaces("ctx1", []string{"default", "kube-system", "other-ns"})
-	n.SyncConfirmed("ctx1", []string{"default"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
 
 	// Check kube-system, then filter it out of view.
 	n.checked["ctx1"]["kube-system"] = true

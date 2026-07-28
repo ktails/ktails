@@ -74,6 +74,25 @@ func (c *Client) WatchJobs(ctx context.Context, kubeContext, namespace string) (
 	return w, nil
 }
 
+// ListJobs fetches every Job in the given namespace in one call. See
+// ListPods for why this exists alongside the watch.
+func (c *Client) ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list jobs in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	out := make([]*batchv1.Job, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
+}
+
 // GetJobDetail fetches a single Job's status, rendered YAML, and recent events.
 func (c *Client) GetJobDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Job"}

@@ -7,7 +7,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kwatch "k8s.io/apimachinery/pkg/watch"
 
@@ -80,6 +83,53 @@ func (f *fakeCluster) WatchIngresses(context.Context, string, string) (kwatch.In
 	return f.watch(msgs.KindIngresses)
 }
 
+// List<Kind> fakes: every kind lists as empty (no error) by default —
+// nothing in this test suite exercises the List-first paint's row content,
+// only its ordering ahead of the watch, so an empty list is sufficient.
+func (f *fakeCluster) ListPods(context.Context, string, string) ([]*corev1.Pod, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListDeployments(context.Context, string, string) ([]*appsv1.Deployment, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListServices(context.Context, string, string) ([]*corev1.Service, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListConfigMaps(context.Context, string, string) ([]*corev1.ConfigMap, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListSecrets(context.Context, string, string) ([]*corev1.Secret, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListJobs(context.Context, string, string) ([]*batchv1.Job, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListCronJobs(context.Context, string, string) ([]*batchv1.CronJob, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListStatefulSets(context.Context, string, string) ([]*appsv1.StatefulSet, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListDaemonSets(context.Context, string, string) ([]*appsv1.DaemonSet, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListIngresses(context.Context, string, string) ([]*networkingv1.Ingress, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListNodes(context.Context, string, string) ([]*corev1.Node, error) {
+	return nil, nil
+}
+
 // runCmd executes a tea.Cmd synchronously and returns its message.
 func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	t.Helper()
@@ -89,18 +139,38 @@ func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	return cmd()
 }
 
-// startPodsWatch drives one context's Pods watch through open+adopt: it runs
-// StartContext, executes the Pods open command, and hands the resulting
-// WatchOpenedMsg to Handle, returning the wait command that reads events.
+// driveToOpened runs a start/AddNamespace command through the List-first
+// sequence (see Supervisor.start): it executes cmd, expects a
+// ListLoadedMsg, feeds it to Handle to seed the cache and obtain the
+// follow-up open command, executes that, and returns the resulting
+// WatchOpenedMsg — the point every pre-List-first test used to start from.
+func driveToOpened(t *testing.T, s *Supervisor, cmd tea.Cmd) msgs.WatchOpenedMsg {
+	t.Helper()
+	msg := runCmd(t, cmd)
+	listMsg, ok := msg.(msgs.ListLoadedMsg)
+	if !ok {
+		t.Fatalf("expected ListLoadedMsg, got %T", msg)
+	}
+	_, openCmd, handled := s.Handle(listMsg)
+	if !handled || openCmd == nil {
+		t.Fatalf("expected the list result to hand back an open command, handled=%v openCmd=%v", handled, openCmd)
+	}
+	opened, ok := runCmd(t, openCmd).(msgs.WatchOpenedMsg)
+	if !ok {
+		t.Fatalf("expected WatchOpenedMsg, got %T", opened)
+	}
+	return opened
+}
+
+// startPodsWatch drives one context's Pods watch through list+open+adopt: it
+// runs StartContext, drives each kind's List->Watch sequence, and hands the
+// Pods WatchOpenedMsg to Handle, returning the wait command that reads
+// events.
 func startPodsWatch(t *testing.T, s *Supervisor) tea.Cmd {
 	t.Helper()
 	var waitCmd tea.Cmd
-	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
-		msg := runCmd(t, cmd)
-		opened, ok := msg.(msgs.WatchOpenedMsg)
-		if !ok {
-			t.Fatalf("expected WatchOpenedMsg, got %T", msg)
-		}
+	for _, cmd := range s.StartContext("ctx1") {
+		opened := driveToOpened(t, s, cmd)
 		upd, next, handled := s.Handle(opened)
 		if !handled || upd == nil || !upd.RowsChanged || next == nil {
 			t.Fatalf("expected opened msg to report loaded with a wait command, got upd=%v next=%v handled=%v", upd, next, handled)
@@ -124,9 +194,9 @@ func TestSupervisor_OpenWithNoEventsStillMarksLoaded(t *testing.T) {
 	s := NewSupervisor(cluster)
 
 	var secretsOpened msgs.WatchOpenedMsg
-	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
-		msg := runCmd(t, cmd)
-		if opened, ok := msg.(msgs.WatchOpenedMsg); ok && opened.Kind == msgs.KindSecrets {
+	for _, cmd := range s.StartContext("ctx1") {
+		opened := driveToOpened(t, s, cmd)
+		if opened.Kind == msgs.KindSecrets {
 			secretsOpened = opened
 		}
 	}
@@ -145,6 +215,52 @@ func TestSupervisor_OpenWithNoEventsStillMarksLoaded(t *testing.T) {
 	}
 	if rows := s.Rows(msgs.KindSecrets); len(rows) != 0 {
 		t.Fatalf("expected zero rows for an empty namespace, got %+v", rows)
+	}
+}
+
+// TestSupervisor_ListSeedsCacheBeforeWatchOpens guards the List-first hybrid
+// load: start() must issue a List() call before the watch opens, and the
+// List result must seed the cache (so Rows() returns every listed object at
+// once) rather than waiting for the watch's synthetic Added replay to
+// trickle rows in one at a time.
+func TestSupervisor_ListSeedsCacheBeforeWatchOpens(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	var podsCmd tea.Cmd
+	for _, cmd := range s.StartContext("ctx1") {
+		if opened := runCmd(t, cmd); opened != nil {
+			if lm, ok := opened.(msgs.ListLoadedMsg); ok && lm.Kind == msgs.KindPods {
+				podsCmd = cmd
+			}
+		}
+	}
+	if podsCmd == nil {
+		t.Fatal("expected a List command for Pods")
+	}
+
+	listMsg := runCmd(t, podsCmd).(msgs.ListLoadedMsg)
+	upd, openCmd, handled := s.Handle(listMsg)
+	if !handled || upd == nil || !upd.RowsChanged {
+		t.Fatalf("expected the List result to report loaded rows immediately, got upd=%+v handled=%v", upd, handled)
+	}
+	if openCmd == nil {
+		t.Fatal("expected the List result to hand back a command to open the watch")
+	}
+
+	// The cache was seeded from the List result before the watch ever
+	// opened — Rows() must already reflect it.
+	rows := s.Rows(msgs.KindPods)
+	if len(rows) != 0 {
+		t.Fatalf("expected the fake's empty List result reflected in Rows(), got %+v", rows)
+	}
+
+	opened, ok := runCmd(t, openCmd).(msgs.WatchOpenedMsg)
+	if !ok {
+		t.Fatalf("expected the open command to yield WatchOpenedMsg, got %T", opened)
+	}
+	if opened.Kind != msgs.KindPods || opened.Context != "ctx1" {
+		t.Fatalf("expected WatchOpenedMsg for (Pods, ctx1), got %+v", opened)
 	}
 }
 
@@ -187,7 +303,7 @@ func TestSupervisor_StaleGenerationDropped(t *testing.T) {
 	// its watcher stopped, not adopted.
 	staleWatcher := kwatch.NewFakeWithChanSize(1, false)
 	upd, next, handled := s.Handle(msgs.WatchOpenedMsg{
-		Kind: msgs.KindPods, Context: "ctx1", Namespace: "default", Generation: 0, Watcher: staleWatcher,
+		Kind: msgs.KindPods, Context: "ctx1", Generation: 0, Watcher: staleWatcher,
 	})
 	if !handled || upd != nil || next != nil {
 		t.Fatalf("expected stale opened msg swallowed, got upd=%v next=%v", upd, next)
@@ -227,7 +343,7 @@ func TestSupervisor_ClosedReconnectsThenGivesUp(t *testing.T) {
 	startPodsWatch(t, s)
 
 	closed := msgs.WatchClosedMsg{
-		Kind: msgs.KindPods, Context: "ctx1", Namespace: "default", Generation: 1, Err: errors.New("stream broke"),
+		Kind: msgs.KindPods, Context: "ctx1", Generation: 1, Err: errors.New("stream broke"),
 	}
 
 	// The first maxReconnectFailures closes each get a reconnect command.
@@ -256,8 +372,8 @@ func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 	s := NewSupervisor(cluster)
 
 	var svcWait tea.Cmd
-	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
-		opened := runCmd(t, cmd).(msgs.WatchOpenedMsg)
+	for _, cmd := range s.StartContext("ctx1") {
+		opened := driveToOpened(t, s, cmd)
 		_, next, _ := s.Handle(opened)
 		if opened.Kind == msgs.KindServices {
 			svcWait = next
@@ -269,67 +385,48 @@ func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 	})
 	s.Handle(runCmd(t, svcWait))
 
-	if !s.NeedsEndpoints("ctx1", "default") {
+	if !s.NeedsEndpoints("ctx1") {
 		t.Fatal("expected endpoints to be needed before any fetch")
 	}
-	s.MarkEndpointsRequested("ctx1", "default")
-	if s.NeedsEndpoints("ctx1", "default") {
+	s.MarkEndpointsRequested("ctx1")
+	if s.NeedsEndpoints("ctx1") {
 		t.Fatal("expected no duplicate fetch while one is in flight")
 	}
 
-	s.SetEndpoints("ctx1", "default", map[string][]string{"svc-a": {"10.0.0.2", "10.0.0.1"}})
+	s.SetEndpoints("ctx1", map[string][]string{"default/svc-a": {"10.0.0.2", "10.0.0.1"}})
 	rows := s.Rows(msgs.KindServices)
 	if len(rows) != 1 || rows[0][msgs.SvcKeyEndpointIPs] != "10.0.0.1,10.0.0.2" {
 		t.Fatalf("expected sorted endpoint IPs overlaid on svc rows, got %+v", rows)
 	}
 
-	// A namespace change makes the fetch needed again.
-	if !s.NeedsEndpoints("ctx1", "other-ns") {
-		t.Fatal("expected endpoints needed again after namespace change")
+	// A context change (StopContext) makes the fetch needed again.
+	s.StopContext("ctx1")
+	if !s.NeedsEndpoints("ctx1") {
+		t.Fatal("expected endpoints needed again after the context was stopped")
 	}
 }
 
-// TestSupervisor_AddRemoveNamespace_TracksIndependentWatches guards the
-// multi-namespace bookkeeping: adding a second namespace to an
-// already-selected context must start its own independent watch per
-// namespaced kind without disturbing the first namespace's watch, must skip
-// the cluster-scoped KindNodes entirely (already covered by StartContext),
-// and removing that namespace again must stop only its own watches.
-func TestSupervisor_AddRemoveNamespace_TracksIndependentWatches(t *testing.T) {
+// TestSupervisor_StartContextIsOneWatchPerKindClusterWide guards the
+// collapsed (kind, context) keying: StartContext must open exactly one
+// watch per namespaced kind for a context — cluster-wide (namespace="")
+// rather than one per checked namespace — since which namespaces are
+// checked in the Namespaces pane is now a display-only filter applied
+// downstream (MainPage), not something the Supervisor's watches key on.
+func TestSupervisor_StartContextIsOneWatchPerKindClusterWide(t *testing.T) {
 	cluster := newFakeCluster()
 	s := NewSupervisor(cluster)
 
-	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
-		runCmd(t, cmd)
+	cmds := s.StartContext("ctx1")
+	wantKinds := len(msgs.Kinds()) - 1 // every kind except KindNodes
+	if len(cmds) != wantKinds {
+		t.Fatalf("expected %d start commands (one per namespaced kind), got %d", wantKinds, len(cmds))
 	}
 
-	key := func(kind msgs.ResourceKind, ns string) stateKey {
-		return stateKey{kind: kind, context: "ctx1", namespace: ns}
+	if _, ok := s.states[stateKey{kind: msgs.KindPods, context: "ctx1"}]; !ok {
+		t.Fatal("expected a single cluster-wide Pods watch state for ctx1")
 	}
-
-	if _, ok := s.states[key(msgs.KindPods, "default")]; !ok {
-		t.Fatal("expected a Pods watch state for the default namespace")
-	}
-
-	for _, cmd := range s.AddNamespace("ctx1", "other-ns") {
-		runCmd(t, cmd)
-	}
-	if _, ok := s.states[key(msgs.KindPods, "other-ns")]; !ok {
-		t.Fatal("expected AddNamespace to start a Pods watch for the new namespace")
-	}
-	if _, ok := s.states[key(msgs.KindPods, "default")]; !ok {
-		t.Fatal("expected the original default-namespace watch to remain untouched")
-	}
-	if _, ok := s.states[key(msgs.KindNodes, "other-ns")]; ok {
-		t.Fatal("expected AddNamespace to skip cluster-scoped KindNodes")
-	}
-
-	s.RemoveNamespace("ctx1", "other-ns")
-	if _, ok := s.states[key(msgs.KindPods, "other-ns")]; ok {
-		t.Fatal("expected RemoveNamespace to stop the Pods watch for that namespace")
-	}
-	if _, ok := s.states[key(msgs.KindPods, "default")]; !ok {
-		t.Fatal("expected the default-namespace watch to survive removing a different namespace")
+	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1"}]; ok {
+		t.Fatal("expected StartContext to skip cluster-scoped KindNodes")
 	}
 }
 
@@ -341,18 +438,18 @@ func TestStartContext_ExcludesNodes_StartKindAddsIt(t *testing.T) {
 	cluster := newFakeCluster()
 	s := NewSupervisor(cluster)
 
-	for _, cmd := range s.StartContext("ctx1", []string{"default"}) {
+	for _, cmd := range s.StartContext("ctx1") {
 		msg := runCmd(t, cmd)
-		if opened, ok := msg.(msgs.WatchOpenedMsg); ok && opened.Kind == msgs.KindNodes {
+		if listMsg, ok := msg.(msgs.ListLoadedMsg); ok && listMsg.Kind == msgs.KindNodes {
 			t.Fatal("expected StartContext to never open a Nodes watch")
 		}
 	}
-	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1", namespace: ""}]; ok {
+	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1"}]; ok {
 		t.Fatal("expected no Nodes watch state after StartContext alone")
 	}
 
-	runCmd(t, s.StartKind(msgs.KindNodes, "ctx1", ""))
-	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1", namespace: ""}]; !ok {
+	runCmd(t, s.StartKind(msgs.KindNodes, "ctx1"))
+	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1"}]; !ok {
 		t.Fatal("expected StartKind to open a Nodes watch state")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -280,7 +281,10 @@ func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
 // WatchPods opens a watch on pods in the given namespace. A bare Watch with
 // no ResourceVersion set has the server replay every currently-existing
 // object as a synthetic Added event before continuing with live changes, so
-// no separate initial List() call is needed.
+// no separate initial List() call is needed to keep the watch itself
+// correct — ListPods exists purely so callers can paint a fast, atomic
+// initial table instead of watching that replay trickle in one event at a
+// time (see watch.Supervisor.start).
 func (c *Client) WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
@@ -292,6 +296,25 @@ func (c *Client) WatchPods(ctx context.Context, kubeContext, namespace string) (
 		return nil, fmt.Errorf("failed to watch pods in namespace %s (context %s): %w", namespace, kubeContext, err)
 	}
 	return w, nil
+}
+
+// ListPods fetches every pod in the given namespace in one call. See
+// WatchPods for why this exists alongside the watch.
+func (c *Client) ListPods(ctx context.Context, kubeContext, namespace string) ([]*v1.Pod, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	out := make([]*v1.Pod, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
 }
 
 // WatchDeployments opens a watch on deployments in the given namespace. See
@@ -309,6 +332,25 @@ func (c *Client) WatchDeployments(ctx context.Context, kubeContext, namespace st
 	return w, nil
 }
 
+// ListDeployments fetches every deployment in the given namespace in one
+// call. See ListPods for why this exists alongside the watch.
+func (c *Client) ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	out := make([]*appsv1.Deployment, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
+}
+
 // WatchServices opens a watch on services in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
 func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
@@ -322,6 +364,25 @@ func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace strin
 		return nil, fmt.Errorf("failed to watch services in namespace %s (context %s): %w", namespace, kubeContext, err)
 	}
 	return w, nil
+}
+
+// ListServices fetches every service in the given namespace in one call. See
+// ListPods for why this exists alongside the watch.
+func (c *Client) ListServices(ctx context.Context, kubeContext, namespace string) ([]*v1.Service, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list services in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	out := make([]*v1.Service, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
 }
 
 // GetPodDetail fetches a single pod's status, rendered YAML, and recent events.

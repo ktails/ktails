@@ -4,6 +4,7 @@ package msgs
 import (
 	"io"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/ktails/ktails/internal/k8s"
@@ -294,11 +295,16 @@ type NamespacesMsg struct {
 
 // NamespacesStateMsg reports how one context's checked namespaces changed
 // since the last Namespaces-pane confirm — Added and Removed are already
-// diffed, mirroring ContextsStateMsg's Added/Deselected shape.
+// diffed, mirroring ContextsStateMsg's Added/Deselected shape. This is a
+// display-only filter change now (see watch.Supervisor's stateKey doc
+// comment) — it never starts or stops a watch. AllNamespaces is non-nil
+// only when the context's all-namespaces mode changed (entered or left);
+// nil means Added/Removed alone describe the change.
 type NamespacesStateMsg struct {
-	Context string
-	Added   []string
-	Removed []string
+	Context       string
+	Added         []string
+	Removed       []string
+	AllNamespaces *bool
 }
 
 // ResourceDetailMsg carries a single resource's (Deployment, Pod, ...) detail
@@ -342,15 +348,32 @@ type LogStreamClosedMsg struct {
 // calls) — see MainPage's RefreshTickMsg handler.
 type RefreshTickMsg struct{}
 
-// WatchOpenedMsg carries a freshly opened watch for one resource kind in one
-// context+namespace. Generation must match that (kind, context)'s current
-// generation in the watch Supervisor before the watch is adopted — otherwise
-// it's been superseded (a manual "r" restart or context deselect) and should
-// just be stopped.
+// ListLoadedMsg carries the result of a one-shot, cluster-wide List() call
+// for one resource kind in one context, issued before that watch opens so
+// the table can paint every row at once instead of waiting for the watch's
+// synthetic Added replay to trickle in — see watch.Supervisor.start.
+// Generation must match that (kind, context)'s current generation before the
+// result is adopted; Err is non-nil on failure, in which case the watch is
+// opened anyway and reports/handles the failure through its own path (see
+// Supervisor.Handle). Objects is kind-erased (metav1.Object) since this
+// message is kind-agnostic; the Supervisor's per-kind cache asserts it back
+// to its concrete type when seeding.
+type ListLoadedMsg struct {
+	Kind       ResourceKind
+	Context    string
+	Generation int
+	Objects    []metav1.Object
+	Err        error
+}
+
+// WatchOpenedMsg carries a freshly opened, cluster-wide watch for one
+// resource kind in one context. Generation must match that (kind,
+// context)'s current generation in the watch Supervisor before the watch is
+// adopted — otherwise it's been superseded (a manual "r" restart or context
+// deselect) and should just be stopped.
 type WatchOpenedMsg struct {
 	Kind       ResourceKind
 	Context    string
-	Namespace  string
 	Generation int
 	Watcher    watch.Interface
 }
@@ -360,7 +383,6 @@ type WatchOpenedMsg struct {
 type WatchEventMsg struct {
 	Kind       ResourceKind
 	Context    string
-	Namespace  string
 	Generation int
 	Rows       []RowData
 }
@@ -370,7 +392,6 @@ type WatchEventMsg struct {
 type WatchClosedMsg struct {
 	Kind       ResourceKind
 	Context    string
-	Namespace  string
 	Generation int
 	Err        error
 }

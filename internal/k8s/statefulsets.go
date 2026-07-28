@@ -53,6 +53,25 @@ func (c *Client) WatchStatefulSets(ctx context.Context, kubeContext, namespace s
 	return w, nil
 }
 
+// ListStatefulSets fetches every StatefulSet in the given namespace in one
+// call. See ListPods for why this exists alongside the watch.
+func (c *Client) ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.AppsV1().StatefulSets(namespace).List(ctx, v1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list statefulsets in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	out := make([]*appsv1.StatefulSet, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
+}
+
 // GetStatefulSetDetail fetches a single StatefulSet's status, rendered
 // YAML, and recent events.
 func (c *Client) GetStatefulSetDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {

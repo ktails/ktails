@@ -24,6 +24,11 @@ type namespaceRow struct {
 	IsHeader bool
 	Loading  bool
 	Err      string
+	// AllNS marks a loaded header row whose context is in all-namespaces
+	// mode (see NamespacesInfo.toggleAllNamespaces) — shown as a suffix on
+	// the header text, since individual namespace rows show unchecked in
+	// this mode rather than all appearing individually selected.
+	AllNS bool
 }
 
 func (r namespaceRow) Title() string {
@@ -66,6 +71,8 @@ func (d namespaceDelegate) Render(w io.Writer, m list.Model, index int, item lis
 			text += "  " + lipgloss.NewStyle().Foreground(styles.StatusError).Render("⚠ "+row.Err)
 		case row.Loading:
 			text += "  " + lipgloss.NewStyle().Foreground(p.Overlay1).Render("loading…")
+		case row.AllNS:
+			text += "  " + lipgloss.NewStyle().Foreground(p.Green).Render("(all namespaces)")
 		}
 		line := ansi.TruncateWc(text, paneWidth, "…")
 		fmt.Fprint(w, lipgloss.NewStyle().Foreground(p.Lavender).Bold(true).Width(paneWidth).Render(line))
@@ -125,14 +132,24 @@ type NamespacesInfo struct {
 	// rebuild reads it (never the other way around) when deciding each
 	// visible row's Selected state.
 	checked map[string]map[string]bool
-	// previouslyConfirmed is what's actually being watched as of the last
+	// previouslyConfirmed is what's actually being shown as of the last
 	// confirm (or the last SyncConfirmed reconciliation) — the diff base,
 	// same role as ContextsInfo.previouslySelected.
 	previouslyConfirmed map[string]map[string]bool
+	// allNamespaces is the pending, not-yet-confirmed all-namespaces flag per
+	// context — true means "show every namespace unfiltered", set/cleared by
+	// the "a" key (see toggleAllNamespaces) or by manually toggling a single
+	// namespace while in that mode (see toggleRow). Mirrors checked's role:
+	// the single source of truth rebuild reads from.
+	allNamespaces map[string]bool
+	// previouslyConfirmedAll is allNamespaces' diff base, same role as
+	// previouslyConfirmed.
+	previouslyConfirmedAll map[string]bool
 	// preSelectAll holds, per context, the checked set as it was right
-	// before an "a" bulk-select-all — restored by pressing "a" again while
-	// everything is checked, so it acts as a toggle rather than a one-way
-	// action. Cleared once restored, or once a confirm/sync makes it stale.
+	// before entering all-namespaces mode via "a" — restored by pressing "a"
+	// again to leave that mode, so it acts as a toggle rather than a
+	// one-way action. Cleared once restored, or once a confirm/sync makes it
+	// stale.
 	preSelectAll map[string]map[string]bool
 
 	// filterQuery/filtering implement a "/" substring filter over namespace
@@ -155,12 +172,14 @@ func NewNamespacesInfo() *NamespacesInfo {
 	newList.DisableQuitKeybindings()
 	newList.Title = ""
 	return &NamespacesInfo{
-		list:                newList,
-		namespacesByContext: make(map[string][]string),
-		errByContext:        make(map[string]string),
-		checked:             make(map[string]map[string]bool),
-		previouslyConfirmed: make(map[string]map[string]bool),
-		preSelectAll:        make(map[string]map[string]bool),
+		list:                   newList,
+		namespacesByContext:    make(map[string][]string),
+		errByContext:           make(map[string]string),
+		checked:                make(map[string]map[string]bool),
+		previouslyConfirmed:    make(map[string]map[string]bool),
+		allNamespaces:          make(map[string]bool),
+		previouslyConfirmedAll: make(map[string]bool),
+		preSelectAll:           make(map[string]map[string]bool),
 	}
 }
 
@@ -191,26 +210,35 @@ func (n *NamespacesInfo) RemoveContext(context string) {
 	delete(n.errByContext, context)
 	delete(n.checked, context)
 	delete(n.previouslyConfirmed, context)
+	delete(n.allNamespaces, context)
+	delete(n.previouslyConfirmedAll, context)
 	delete(n.preSelectAll, context)
 	n.rebuild()
 }
 
 // SyncConfirmed resets one context's confirmed *and* pending-checked set to
-// exactly match `selected` — called right after a fetch completes (to seed
-// the initial checked namespace), and after MainPage reconciles a confirm
-// with AppState, since AppState may have refused part of it (e.g. it never
+// exactly match `selected`, and its all-namespaces flag to match `allNS` —
+// called right after a fetch completes (to seed the initial checked
+// namespace), and after MainPage reconciles a confirm with AppState, since
+// AppState may have refused part of the checked-set diff (e.g. it never
 // lets the last checked namespace be removed) — without this, the pane
-// could keep showing an unchecked box for a namespace still actually being
-// watched. Also drops any in-flight "a" toggle checkpoint for the context,
+// could keep showing an unchecked box for a namespace still actually
+// shown. Also drops any in-flight "a" toggle checkpoint for the context,
 // since it no longer corresponds to a real prior state once reality has
 // been resynced from outside.
-func (n *NamespacesInfo) SyncConfirmed(context string, selected []string) {
+func (n *NamespacesInfo) SyncConfirmed(context string, selected []string, allNS bool) {
 	set := make(map[string]bool, len(selected))
 	for _, ns := range selected {
 		set[ns] = true
 	}
 	n.previouslyConfirmed[context] = set
 	n.checked[context] = copyBoolSet(set)
+	n.previouslyConfirmedAll[context] = allNS
+	if allNS {
+		n.allNamespaces[context] = true
+	} else {
+		delete(n.allNamespaces, context)
+	}
 	delete(n.preSelectAll, context)
 	n.rebuild()
 }
@@ -259,7 +287,7 @@ func (n *NamespacesInfo) rebuild() {
 			items = append(items, namespaceRow{Context: c, IsHeader: true, Loading: true})
 			continue
 		}
-		items = append(items, namespaceRow{Context: c, IsHeader: true})
+		items = append(items, namespaceRow{Context: c, IsHeader: true, AllNS: n.allNamespaces[c]})
 		for _, ns := range namespaces {
 			if query != "" && !strings.Contains(strings.ToLower(ns), query) {
 				continue
@@ -357,6 +385,12 @@ func (n *NamespacesInfo) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// toggleRow toggles a single namespace's checked state. If its context is
+// currently in all-namespaces mode, this exits that mode first, seeding the
+// checked set from every known namespace *except* the one under the
+// cursor — since all-mode shows every row unchecked (see rebuild), toggling
+// one "on" while leaving the rest implicitly "on" too is what unchecking
+// just this one, starting from everything, means.
 func (n *NamespacesInfo) toggleRow() {
 	idx := n.list.Index()
 	items := n.list.Items()
@@ -367,6 +401,21 @@ func (n *NamespacesInfo) toggleRow() {
 	if !ok || row.IsHeader {
 		return
 	}
+
+	if n.allNamespaces[row.Context] {
+		full := make(map[string]bool, len(n.namespacesByContext[row.Context]))
+		for _, ns := range n.namespacesByContext[row.Context] {
+			if ns != row.Name {
+				full[ns] = true
+			}
+		}
+		n.checked[row.Context] = full
+		delete(n.allNamespaces, row.Context)
+		delete(n.preSelectAll, row.Context)
+		n.rebuild()
+		return
+	}
+
 	if n.checked[row.Context] == nil {
 		n.checked[row.Context] = make(map[string]bool)
 	}
@@ -374,13 +423,13 @@ func (n *NamespacesInfo) toggleRow() {
 	n.rebuild()
 }
 
-// toggleAllNamespaces bulk-toggles every namespace under the context at the
-// cursor (the header row, or any namespace row beneath it): if not every
-// namespace is currently checked, it saves the current checked set and
-// checks all of them; if every namespace is already checked and a saved set
-// exists, it restores that prior set instead — visibly unchecking whatever
-// "a" had added — so repeated presses act as a toggle between "everything"
-// and "whatever you'd filtered down to" rather than a one-way action.
+// toggleAllNamespaces toggles all-namespaces mode for the context at the
+// cursor (the header row, or any namespace row beneath it): entering it
+// saves the current checked set (for later restore) and clears the checked
+// set — rows show unchecked, with the header's "(all namespaces)" suffix
+// standing in for the selection instead — while leaving it restores the
+// saved checked set, so repeated presses act as a toggle rather than a
+// one-way action.
 func (n *NamespacesInfo) toggleAllNamespaces() {
 	idx := n.list.Index()
 	items := n.list.Items()
@@ -392,39 +441,26 @@ func (n *NamespacesInfo) toggleAllNamespaces() {
 		return
 	}
 	context := row.Context
-	namespaces := n.namespacesByContext[context]
-	if len(namespaces) == 0 {
+	if len(n.namespacesByContext[context]) == 0 {
 		return
 	}
 
-	allChecked := true
-	for _, ns := range namespaces {
-		if !n.checked[context][ns] {
-			allChecked = false
-			break
-		}
-	}
-
-	if allChecked {
-		saved, ok := n.preSelectAll[context]
-		if !ok {
-			return
-		}
+	if n.allNamespaces[context] {
+		saved := n.preSelectAll[context]
 		n.checked[context] = copyBoolSet(saved)
 		delete(n.preSelectAll, context)
+		delete(n.allNamespaces, context)
 	} else {
 		n.preSelectAll[context] = copyBoolSet(n.checked[context])
-		full := make(map[string]bool, len(namespaces))
-		for _, ns := range namespaces {
-			full[ns] = true
-		}
-		n.checked[context] = full
+		n.checked[context] = make(map[string]bool)
+		n.allNamespaces[context] = true
 	}
 	n.rebuild()
 }
 
 // confirmChanges diffs every context's currently-checked namespaces against
-// previouslyConfirmed and returns one command per context with a change,
+// previouslyConfirmed, and its all-namespaces flag against
+// previouslyConfirmedAll, returning one command per context with a change,
 // each carrying a msgs.NamespacesStateMsg — nil if nothing changed anywhere.
 func (n *NamespacesInfo) confirmChanges() tea.Cmd {
 	contexts := make(map[string]bool)
@@ -432,6 +468,12 @@ func (n *NamespacesInfo) confirmChanges() tea.Cmd {
 		contexts[c] = true
 	}
 	for c := range n.previouslyConfirmed {
+		contexts[c] = true
+	}
+	for c := range n.allNamespaces {
+		contexts[c] = true
+	}
+	for c := range n.previouslyConfirmedAll {
 		contexts[c] = true
 	}
 
@@ -448,18 +490,29 @@ func (n *NamespacesInfo) confirmChanges() tea.Cmd {
 				removed = append(removed, ns)
 			}
 		}
-		if len(added) == 0 && len(removed) == 0 {
+
+		var allNS *bool
+		if n.allNamespaces[context] != n.previouslyConfirmedAll[context] {
+			v := n.allNamespaces[context]
+			allNS = &v
+		}
+
+		if len(added) == 0 && len(removed) == 0 && allNS == nil {
 			continue
 		}
 		sort.Strings(added)
 		sort.Strings(removed)
-		state := msgs.NamespacesStateMsg{Context: context, Added: added, Removed: removed}
+		state := msgs.NamespacesStateMsg{Context: context, Added: added, Removed: removed, AllNamespaces: allNS}
 		cmds = append(cmds, func() tea.Msg { return state })
 	}
 
 	n.previouslyConfirmed = make(map[string]map[string]bool, len(n.checked))
 	for c, set := range n.checked {
 		n.previouslyConfirmed[c] = copyBoolSet(set)
+	}
+	n.previouslyConfirmedAll = make(map[string]bool, len(n.allNamespaces))
+	for c, v := range n.allNamespaces {
+		n.previouslyConfirmedAll[c] = v
 	}
 
 	if len(cmds) == 0 {

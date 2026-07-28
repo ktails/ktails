@@ -65,6 +65,25 @@ func (c *Client) WatchSecrets(ctx context.Context, kubeContext, namespace string
 	return w, nil
 }
 
+// ListSecrets fetches every Secret in the given namespace in one call. See
+// ListPods for why this exists alongside the watch.
+func (c *Client) ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list secrets in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	out := make([]*corev1.Secret, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
+}
+
 // GetSecretDetail fetches a single Secret's key names, redacted YAML, and
 // recent events. Data/StringData values are replaced with redactedValue
 // before rendering — never the real (even if base64-encoded) contents.

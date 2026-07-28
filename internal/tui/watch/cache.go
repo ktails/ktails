@@ -46,6 +46,7 @@ func resourceVersionLess(a, b string) bool {
 type rowCache interface {
 	apply(event watch.Event) error
 	rows(kubeContext string) []msgs.RowData
+	seed(objs []metav1.Object)
 }
 
 // resourceCache is a local, per-context mirror of one resource kind's state
@@ -101,6 +102,30 @@ func (c *resourceCache[T]) apply(event watch.Event) error {
 		delete(c.byKey, obj.GetNamespace()+"/"+obj.GetName())
 	}
 	return nil
+}
+
+// seed replaces the cache's entire contents with the result of a List()
+// call — a full reset rather than an upsert-merge, since (unlike a watch
+// event) a List result is a complete, authoritative snapshot: merging would
+// leave behind entries for objects deleted since the cache was last
+// populated. Objects that don't assert to T are skipped (kind-erased
+// ListLoadedMsg carries metav1.Object; every element is expected to be T in
+// practice, since a cache is only ever seeded from its own kind's List
+// result).
+func (c *resourceCache[T]) seed(objs []metav1.Object) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	byKey := make(map[string]cacheEntry[T], len(objs))
+	for _, o := range objs {
+		obj, ok := o.(T)
+		if !ok {
+			continue
+		}
+		key := obj.GetNamespace() + "/" + obj.GetName()
+		byKey[key] = cacheEntry[T]{obj: obj, resourceVersion: obj.GetResourceVersion()}
+	}
+	c.byKey = byKey
 }
 
 // rows rebuilds every row fresh from the stored raw objects, sorted by

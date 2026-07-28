@@ -16,8 +16,17 @@ type AppState struct {
 	// Selected contexts and their checked namespaces — always at least one
 	// entry per context (seeded from kubeconfig's default on AddContext),
 	// but a context can have several checked at once via the Namespaces
-	// pane, each watched independently.
-	SelectedContexts map[string][]string // context -> namespaces
+	// pane. This is a display-only filter now (every context's watch is
+	// cluster-wide regardless — see watch.Supervisor's stateKey doc
+	// comment): it narrows which of a context's rows the resource tables
+	// show, it never starts or stops anything.
+	SelectedContexts map[string][]string // context -> checked namespaces
+
+	// allNamespaces marks a context as showing every namespace unfiltered,
+	// distinct from SelectedContexts holding zero checked namespaces — see
+	// NamespacesInfo's "a" (toggle-all) key. Takes priority over
+	// SelectedContexts for that context's row filter when true.
+	allNamespaces map[string]bool
 
 	// Loading states per resource kind
 	loading map[msgs.ResourceKind]map[string]bool // kind -> context -> isLoading
@@ -33,6 +42,15 @@ type AppState struct {
 	// flips true once every required kind has (see MarkLoaded).
 	loadedKinds map[string]map[msgs.ResourceKind]bool
 
+	// kindLoaded tracks, per resource kind, which contexts have delivered a
+	// first successful load for that kind specifically — the per-tab
+	// counterpart to loadedKinds/LoadedContexts. Unlike LoadedContexts
+	// (gated on Deployments+Pods together, for the Contexts pane checkmark),
+	// this lets each tab unlock independently as its own List/watch
+	// settles, so switching to e.g. the Services tab doesn't wait on
+	// Deployments finishing first.
+	kindLoaded map[msgs.ResourceKind]map[string]bool
+
 	// contextColors assigns each context its identity colour (styles.IdentityColor)
 	// the first time it's added, in rotation order. Entries are never removed on
 	// RemoveContext so a context re-added within the same session keeps its colour.
@@ -46,23 +64,29 @@ type AppState struct {
 // Snapshot captures a read-only view of application state data.
 type Snapshot struct {
 	SelectedContexts map[string][]string
-	LoadingStates    map[string]bool // Combined across resource kinds
-	LoadedContexts   map[string]bool // Contexts with at least one successful load
+	AllNamespaces    map[string]bool                       // context -> showing every namespace unfiltered
+	LoadingStates    map[string]bool                       // Combined across resource kinds
+	LoadedContexts   map[string]bool                       // Contexts with at least one successful load
+	LoadedKinds      map[msgs.ResourceKind]map[string]bool // kind -> context -> loaded, for per-tab unlock
 	Errors           map[string]string
 	ContextColors    map[string]color.Color
 }
 
 func NewAppState() *AppState {
 	loading := make(map[msgs.ResourceKind]map[string]bool)
+	kindLoaded := make(map[msgs.ResourceKind]map[string]bool)
 	for _, kind := range msgs.Kinds() {
 		loading[kind] = make(map[string]bool)
+		kindLoaded[kind] = make(map[string]bool)
 	}
 	return &AppState{
 		SelectedContexts: make(map[string][]string),
+		allNamespaces:    make(map[string]bool),
 		loading:          loading,
 		Errors:           make(map[string]string),
 		LoadedContexts:   make(map[string]bool),
 		loadedKinds:      make(map[string]map[msgs.ResourceKind]bool),
+		kindLoaded:       kindLoaded,
 		contextColors:    make(map[string]color.Color),
 	}
 }
@@ -131,6 +155,19 @@ func (a *AppState) RemoveNamespace(context, namespace string) {
 	a.SelectedContexts[context] = kept
 }
 
+// SetAllNamespaces sets whether a context's row filter shows every
+// namespace unfiltered — see NamespacesInfo's "a" (toggle-all) key.
+func (a *AppState) SetAllNamespaces(context string, all bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if all {
+		a.allNamespaces[context] = true
+	} else {
+		delete(a.allNamespaces, context)
+	}
+}
+
 // SetLoading marks one resource kind as loading (or not) for a context.
 func (a *AppState) SetLoading(kind msgs.ResourceKind, context string, loading bool) {
 	a.mu.Lock()
@@ -148,6 +185,7 @@ func (a *AppState) MarkLoaded(kind msgs.ResourceKind, context string) {
 	defer a.mu.Unlock()
 
 	a.loading[kind][context] = false
+	a.kindLoaded[kind][context] = true
 	if !requiredForLoaded[kind] {
 		return
 	}
@@ -179,7 +217,11 @@ func (a *AppState) RemoveContext(context string) {
 	defer a.mu.Unlock()
 
 	delete(a.SelectedContexts, context)
+	delete(a.allNamespaces, context)
 	for _, byContext := range a.loading {
+		delete(byContext, context)
+	}
+	for _, byContext := range a.kindLoaded {
 		delete(byContext, context)
 	}
 	delete(a.Errors, context)
@@ -200,10 +242,17 @@ func (a *AppState) Snapshot() Snapshot {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
+	loadedKinds := make(map[msgs.ResourceKind]map[string]bool, len(a.kindLoaded))
+	for kind, byContext := range a.kindLoaded {
+		loadedKinds[kind] = copyBoolMap(byContext)
+	}
+
 	return Snapshot{
 		SelectedContexts: copyStringSliceMap(a.SelectedContexts),
+		AllNamespaces:    copyBoolMap(a.allNamespaces),
 		LoadingStates:    a.combinedLoadingStates(),
 		LoadedContexts:   copyBoolMap(a.LoadedContexts),
+		LoadedKinds:      loadedKinds,
 		Errors:           copyStringMap(a.Errors),
 		ContextColors:    copyColorMap(a.contextColors),
 	}

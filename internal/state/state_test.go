@@ -50,6 +50,63 @@ func TestMarkLoaded_ClearsErrorOnceBothRequiredKindsDeliver(t *testing.T) {
 	}
 }
 
+// TestMarkLoaded_TracksEachKindIndependently guards the per-tab unlock: each
+// kind must flip loaded in LoadedKinds the moment it delivers, independent
+// of every other kind — unlike LoadedContexts (gated on Deployments+Pods
+// together for the Contexts pane checkmark), a tab like Services must not
+// wait on Deployments finishing first.
+func TestMarkLoaded_TracksEachKindIndependently(t *testing.T) {
+	a := NewAppState()
+	a.AddContext("ctx1", "default")
+
+	if a.Snapshot().LoadedKinds[msgs.KindServices]["ctx1"] {
+		t.Fatal("expected Services not loaded yet")
+	}
+
+	a.MarkLoaded(msgs.KindServices, "ctx1")
+	snap := a.Snapshot()
+	if !snap.LoadedKinds[msgs.KindServices]["ctx1"] {
+		t.Fatal("expected Services loaded immediately after MarkLoaded, without Deployments/Pods")
+	}
+	if snap.LoadedKinds[msgs.KindDeployments]["ctx1"] {
+		t.Fatal("expected Deployments to remain unloaded — only Services has delivered")
+	}
+
+	a.RemoveContext("ctx1")
+	if a.Snapshot().LoadedKinds[msgs.KindServices]["ctx1"] {
+		t.Fatal("expected RemoveContext to clear per-kind loaded state too")
+	}
+}
+
+// TestSetAllNamespaces_DistinctFromEmptyCheckedSet guards the tri-state
+// namespace filter: a context with zero checked namespaces and a context in
+// all-namespaces mode must be told apart, and RemoveContext must clear the
+// flag along with everything else.
+func TestSetAllNamespaces_DistinctFromEmptyCheckedSet(t *testing.T) {
+	a := NewAppState()
+	a.AddContext("ctx1", "default")
+
+	if a.Snapshot().AllNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 not in all-namespaces mode by default")
+	}
+
+	a.SetAllNamespaces("ctx1", true)
+	if !a.Snapshot().AllNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 in all-namespaces mode after SetAllNamespaces(true)")
+	}
+
+	a.SetAllNamespaces("ctx1", false)
+	if a.Snapshot().AllNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 out of all-namespaces mode after SetAllNamespaces(false)")
+	}
+
+	a.SetAllNamespaces("ctx1", true)
+	a.RemoveContext("ctx1")
+	if a.Snapshot().AllNamespaces["ctx1"] {
+		t.Fatal("expected RemoveContext to clear all-namespaces mode too")
+	}
+}
+
 // TestAddRemoveNamespace_NeverDropsTheLastOne guards the safety backstop:
 // unchecking every namespace for a context would leave it selected but
 // watching nothing, so RemoveNamespace must refuse to remove the last one.

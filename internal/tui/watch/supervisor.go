@@ -8,7 +8,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/ktails/ktails/internal/tui/msgs"
@@ -16,20 +21,34 @@ import (
 
 // Cluster is the seam to the Kubernetes client: everything the Supervisor
 // needs from a cluster connection. *k8s.Client is the production adapter; a
-// fake serving pre-canned watch.Interface streams is the test adapter.
+// fake serving pre-canned watch.Interface streams (and List results) is the
+// test adapter. Each Watch<Kind> has a matching List<Kind>, used for the
+// fast initial paint before the watch opens — see start. Every call is
+// always made with namespace="" (cluster-wide) — see stateKey.
 type Cluster interface {
 	WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListPods(ctx context.Context, kubeContext, namespace string) ([]*corev1.Pod, error)
 	WatchDeployments(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, error)
 	WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListServices(ctx context.Context, kubeContext, namespace string) ([]*corev1.Service, error)
 	WatchConfigMaps(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, error)
 	WatchSecrets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, error)
 	WatchJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, error)
 	WatchCronJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListCronJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.CronJob, error)
 	WatchStatefulSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, error)
 	WatchDaemonSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, error)
 	WatchIngresses(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	// WatchNodes ignores namespace — Nodes are cluster-scoped.
+	ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, error)
+	// WatchNodes/ListNodes ignore namespace — Nodes are cluster-scoped.
 	WatchNodes(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListNodes(ctx context.Context, kubeContext, namespace string) ([]*corev1.Node, error)
 }
 
 // maxReconnectFailures is how many consecutive reconnect failures a
@@ -56,12 +75,12 @@ func backoffDelay(failures int) time.Duration {
 	return delay
 }
 
-// watchState is the live plumbing state for one (kind, context, namespace)
-// Watch() stream: the current generation (bumped on every restart, guarding
-// against stale in-flight messages), the open watcher itself (nil between a
-// restart and its WatchOpenedMsg landing), the local cache it's keeping in
-// sync, and a consecutive-failure counter driving reconnect backoff (reset
-// to 0 the moment any event is applied).
+// watchState is the live plumbing state for one (kind, context) Watch()
+// stream: the current generation (bumped on every restart, guarding against
+// stale in-flight messages), the open watcher itself (nil between a restart
+// and its WatchOpenedMsg landing), the local cache it's keeping in sync, and
+// a consecutive-failure counter driving reconnect backoff (reset to 0 the
+// moment any event is applied).
 type watchState struct {
 	generation int
 	watcher    watch.Interface
@@ -69,14 +88,15 @@ type watchState struct {
 	failures   int
 }
 
-// stateKey identifies one watch stream. namespace is always "" for
-// KindNodes (cluster-scoped — see the Cluster interface's WatchNodes doc),
-// regardless of how many namespaces are selected for the context; every
-// other kind gets one stateKey per selected namespace.
+// stateKey identifies one watch stream: one per (kind, context), always
+// watching every namespace at once (namespace="" against the Cluster seam —
+// see Cluster's doc comment). Which namespaces are actually shown is a
+// display-only concern handled by a local filter downstream (MainPage), not
+// by the Supervisor — the Namespaces pane's checked-namespace set never
+// starts, stops, or otherwise touches a watch.
 type stateKey struct {
-	kind      msgs.ResourceKind
-	context   string
-	namespace string
+	kind    msgs.ResourceKind
+	context string
 }
 
 // Update reports what a handled watch message means for the UI: either a
@@ -107,105 +127,61 @@ type Supervisor struct {
 	states  map[stateKey]*watchState
 
 	// Lazily-fetched svc Endpoint IPs, overlaid onto service rows by Rows:
-	// endpoints holds the fetched IPs per context+namespace (service name ->
-	// IPs), keyed by endpointsKey; endpointsFetchedNS records which
-	// context+namespace pairs have already been fetched (or have a fetch in
-	// flight), so NeedsEndpoints can tell a fetch is still pending/valid
-	// without refetching on every toggle.
-	endpoints          map[string]map[string][]string
-	endpointsFetchedNS map[string]bool
+	// endpoints holds the fetched IPs per context (namespace/service name ->
+	// IPs, namespace-qualified since a cluster-wide fetch can see the same
+	// service name reused across namespaces); endpointsFetched records which
+	// contexts have already been fetched (or have a fetch in flight), so
+	// NeedsEndpoints can tell a fetch is still pending/valid without
+	// refetching on every toggle.
+	endpoints        map[string]map[string][]string
+	endpointsFetched map[string]bool
 }
 
 func NewSupervisor(cluster Cluster) *Supervisor {
 	return &Supervisor{
-		cluster:            cluster,
-		states:             make(map[stateKey]*watchState),
-		endpoints:          make(map[string]map[string][]string),
-		endpointsFetchedNS: make(map[string]bool),
+		cluster:          cluster,
+		states:           make(map[stateKey]*watchState),
+		endpoints:        make(map[string]map[string][]string),
+		endpointsFetched: make(map[string]bool),
 	}
 }
 
-// endpointsKey identifies one context+namespace pair's fetched Endpoint IPs.
-func endpointsKey(kubeContext, namespace string) string {
-	return kubeContext + "\x00" + namespace
-}
-
-// StartContext opens watches for every namespaced resource kind against one
-// context, one watch per given namespace. KindNodes (cluster-scoped) is
-// deliberately excluded here — it's gated behind a permission pre-check
-// (see StartKind and cmds.CheckNodesAccessCmd) rather than started
-// unconditionally, since it's commonly restricted and opening a watch that
-// will just fail is wasted work the check avoids. Restarts cleanly if
-// already watched.
-func (s *Supervisor) StartContext(kubeContext string, namespaces []string) []tea.Cmd {
+// StartContext opens one cluster-wide watch per namespaced resource kind for
+// a context. KindNodes (cluster-scoped) is deliberately excluded here — it's
+// gated behind a permission pre-check (see StartKind and
+// cmds.CheckNodesAccessCmd) rather than started unconditionally, since it's
+// commonly restricted and opening a watch that will just fail is wasted work
+// the check avoids. Restarts cleanly if already watched.
+func (s *Supervisor) StartContext(kubeContext string) []tea.Cmd {
 	var cmds []tea.Cmd
 	for _, kind := range msgs.Kinds() {
 		if kind == msgs.KindNodes {
 			continue
 		}
-		for _, namespace := range namespaces {
-			cmds = append(cmds, s.start(kind, kubeContext, namespace))
-		}
+		cmds = append(cmds, s.start(kind, kubeContext))
 	}
 	return cmds
 }
 
-// StartKind opens the watch for a single (kind, context, namespace) —
-// exported for KindNodes, whose watch MainPage only starts once
-// CheckNodesAccessCmd confirms it's allowed, rather than unconditionally as
-// part of StartContext.
-func (s *Supervisor) StartKind(kind msgs.ResourceKind, kubeContext, namespace string) tea.Cmd {
-	return s.start(kind, kubeContext, namespace)
+// StartKind opens the watch for a single (kind, context) — exported for
+// KindNodes, whose watch MainPage only starts once CheckNodesAccessCmd
+// confirms it's allowed, rather than unconditionally as part of
+// StartContext.
+func (s *Supervisor) StartKind(kind msgs.ResourceKind, kubeContext string) tea.Cmd {
+	return s.start(kind, kubeContext)
 }
 
-// AddNamespace starts every namespaced kind's watch for one additional
-// namespace on an already-selected context, without touching any other
-// namespace or kind already being watched for it — the Namespaces pane's
-// Enter-confirm calls this per newly-checked namespace. KindNodes is
-// cluster-scoped and already started by StartContext, so it's skipped.
-func (s *Supervisor) AddNamespace(kubeContext, namespace string) []tea.Cmd {
-	var cmds []tea.Cmd
-	for _, kind := range msgs.Kinds() {
-		if kind == msgs.KindNodes {
-			continue
-		}
-		cmds = append(cmds, s.start(kind, kubeContext, namespace))
-	}
-	return cmds
-}
-
-// RemoveNamespace stops every namespaced kind's watch for one namespace on a
-// context — the Namespaces pane's Enter-confirm calls this per
-// newly-unchecked namespace — without deselecting the context itself or
-// touching its other namespaces.
-func (s *Supervisor) RemoveNamespace(kubeContext, namespace string) {
-	for _, kind := range msgs.Kinds() {
-		if kind == msgs.KindNodes {
-			continue
-		}
-		key := stateKey{kind: kind, context: kubeContext, namespace: namespace}
-		st, ok := s.states[key]
-		if !ok {
-			continue
-		}
-		st.generation++
-		if st.watcher != nil {
-			st.watcher.Stop()
-		}
-		delete(s.states, key)
-	}
-	nsKey := endpointsKey(kubeContext, namespace)
-	delete(s.endpoints, nsKey)
-	delete(s.endpointsFetchedNS, nsKey)
-}
-
-// start begins (or supersedes) the watch for one (kind, context, namespace):
-// any open watcher is stopped, the generation is bumped so stale in-flight
-// messages are dropped, and a fresh open command is returned. The cache is
-// created on first start and reused across restarts — a fresh watch's Added
-// replay is idempotent against the upsert-based cache apply.
-func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext, namespace string) tea.Cmd {
-	key := stateKey{kind: kind, context: kubeContext, namespace: namespace}
+// start begins (or supersedes) the watch for one (kind, context): any open
+// watcher is stopped, the generation is bumped so stale in-flight messages
+// are dropped, and a fresh List command is returned — its result (see
+// Handle's ListLoadedMsg case) seeds the cache for an immediate full paint
+// and then opens the watch, rather than opening the watch directly and
+// waiting for its synthetic Added replay to trickle rows in one at a time.
+// The cache is created on first start and reused across restarts — List's
+// seed is a full reset (see resourceCache.seed), and a subsequent watch
+// replay is idempotent against the upsert-based cache apply either way.
+func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext string) tea.Cmd {
+	key := stateKey{kind: kind, context: kubeContext}
 	st, ok := s.states[key]
 	if !ok {
 		st = &watchState{cache: newCacheFor(kind)}
@@ -217,13 +193,13 @@ func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext, namespace string
 	}
 	st.generation++
 	st.failures = 0
-	return s.openCmd(kind, kubeContext, namespace, st.generation, 0)
+	return s.listCmd(kind, kubeContext, st.generation)
 }
 
-// Restart force-restarts one kind's watches across the given contexts, every
-// namespace currently selected for each — the "r" key restarts only the
-// active tab's kind, to avoid tripling API load on tabs the user isn't even
-// looking at. Contexts not currently watched are skipped.
+// Restart force-restarts one kind's watches across the given contexts — the
+// "r" key restarts only the active tab's kind, to avoid tripling API load on
+// tabs the user isn't even looking at. Contexts not currently watched are
+// skipped.
 func (s *Supervisor) Restart(kind msgs.ResourceKind, contexts []string) []tea.Cmd {
 	contextSet := make(map[string]bool, len(contexts))
 	for _, c := range contexts {
@@ -232,18 +208,18 @@ func (s *Supervisor) Restart(kind msgs.ResourceKind, contexts []string) []tea.Cm
 	var cmds []tea.Cmd
 	for key := range s.states {
 		if key.kind == kind && contextSet[key.context] {
-			cmds = append(cmds, s.start(kind, key.context, key.namespace))
+			cmds = append(cmds, s.start(kind, key.context))
 		}
 	}
 	return cmds
 }
 
-// StopContext stops and forgets every kind's watch (across every namespace)
-// for one context — called on context deselect. watch.Interface.Stop() is
-// guaranteed to close ResultChan(), so any goroutine blocked in a wait
-// command's receive unblocks cleanly rather than leaking; bumping the
-// generation first means that goroutine's eventual message is dropped as
-// stale even if it was already past the blocking receive.
+// StopContext stops and forgets every kind's watch for one context — called
+// on context deselect. watch.Interface.Stop() is guaranteed to close
+// ResultChan(), so any goroutine blocked in a wait command's receive
+// unblocks cleanly rather than leaking; bumping the generation first means
+// that goroutine's eventual message is dropped as stale even if it was
+// already past the blocking receive.
 func (s *Supervisor) StopContext(kubeContext string) {
 	for key, st := range s.states {
 		if key.context != kubeContext {
@@ -255,18 +231,8 @@ func (s *Supervisor) StopContext(kubeContext string) {
 		}
 		delete(s.states, key)
 	}
-
-	prefix := kubeContext + "\x00"
-	for key := range s.endpoints {
-		if strings.HasPrefix(key, prefix) {
-			delete(s.endpoints, key)
-		}
-	}
-	for key := range s.endpointsFetchedNS {
-		if strings.HasPrefix(key, prefix) {
-			delete(s.endpointsFetchedNS, key)
-		}
-	}
+	delete(s.endpoints, kubeContext)
+	delete(s.endpointsFetched, kubeContext)
 }
 
 // Watching reports whether any context is currently being watched — i.e.
@@ -275,69 +241,83 @@ func (s *Supervisor) Watching() bool {
 	return len(s.states) > 0
 }
 
-// Rows rebuilds one kind's rows across every watched context+namespace,
-// sorted by (context, namespace) for a stable cross-context order. Every row
-// map is freshly allocated by the cache, so callers own the result outright
-// — no defensive cloning needed anywhere downstream.
+// Rows rebuilds one kind's rows across every watched context, sorted by
+// context for a stable cross-context order. Every row map is freshly
+// allocated by the cache, so callers own the result outright — no defensive
+// cloning needed anywhere downstream. Rows are unfiltered by namespace here
+// — every namespace this context can see comes back; narrowing to the
+// namespaces checked in the Namespaces pane is a display-only concern
+// handled by the caller (MainPage), not the Supervisor.
 func (s *Supervisor) Rows(kind msgs.ResourceKind) []msgs.RowData {
-	type ctxNS struct{ context, namespace string }
-	var keys []ctxNS
+	var contexts []string
 	for key := range s.states {
 		if key.kind == kind {
-			keys = append(keys, ctxNS{key.context, key.namespace})
+			contexts = append(contexts, key.context)
 		}
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].context != keys[j].context {
-			return keys[i].context < keys[j].context
-		}
-		return keys[i].namespace < keys[j].namespace
-	})
+	sort.Strings(contexts)
 
 	var all []msgs.RowData
-	for _, k := range keys {
-		rows := s.states[stateKey{kind: kind, context: k.context, namespace: k.namespace}].cache.rows(k.context)
+	for _, ctx := range contexts {
+		rows := s.states[stateKey{kind: kind, context: ctx}].cache.rows(ctx)
 		if kind == msgs.KindServices {
-			s.overlayEndpoints(k.context, k.namespace, rows)
+			s.overlayEndpoints(ctx, rows)
 		}
 		all = append(all, rows...)
 	}
 	return all
 }
 
-// Handle processes one of the three watch messages, returning the resulting
+// Handle processes one of the four watch messages, returning the resulting
 // UI update (nil if the message was stale or needs no UI change), the next
 // command to keep the stream going, and whether the message was a watch
 // message at all.
 func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 	switch msg := msg.(type) {
+	case msgs.ListLoadedMsg:
+		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
+		if !ok {
+			return nil, nil, true
+		}
+		if msg.Err != nil {
+			// The List failed (e.g. an RBAC denial) — don't surface a
+			// separate error here. The watch is opened anyway and will hit
+			// the same failure, reported through the existing
+			// WatchClosedMsg path (immediate give-up on Forbidden, backoff
+			// otherwise) rather than duplicating that logic here.
+			return nil, s.openCmd(msg.Kind, msg.Context, msg.Generation, 0), true
+		}
+		st.cache.seed(msg.Objects)
+		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
+		return upd, s.openCmd(msg.Kind, msg.Context, msg.Generation, 0), true
+
 	case msgs.WatchOpenedMsg:
-		st, ok := s.current(msg.Kind, msg.Context, msg.Namespace, msg.Generation)
+		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
 		if !ok {
 			msg.Watcher.Stop()
 			return nil, nil, true
 		}
 		st.watcher = msg.Watcher
 		// Report loaded as soon as the watch is live, not on the first
-		// applied event: a namespace with zero objects of this kind gets no
+		// applied event: a context with zero objects of this kind gets no
 		// synthetic replay at all (Kubernetes only replays what exists), so
 		// waiting for an event here would wait forever. Rows(kind) already
 		// returns an empty slice correctly when the cache is empty — an
 		// empty tab is a valid loaded state, not a still-loading one.
 		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
-		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Namespace, msg.Generation, msg.Watcher, st.cache), true
+		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Generation, msg.Watcher, st.cache), true
 
 	case msgs.WatchEventMsg:
-		st, ok := s.current(msg.Kind, msg.Context, msg.Namespace, msg.Generation)
+		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
 		if !ok {
 			return nil, nil, true
 		}
 		st.failures = 0
 		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
-		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Namespace, msg.Generation, st.watcher, st.cache), true
+		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Generation, st.watcher, st.cache), true
 
 	case msgs.WatchClosedMsg:
-		st, ok := s.current(msg.Kind, msg.Context, msg.Namespace, msg.Generation)
+		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
 		if !ok {
 			return nil, nil, true
 		}
@@ -346,26 +326,25 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 		// the list/watch verb on this resource or it doesn't — so give up
 		// immediately instead of burning through backoff attempts first.
 		if apierrors.IsForbidden(msg.Err) {
-			err := fmt.Errorf("RBAC: not permitted to view %s in namespace '%s' for context '%s'",
-				strings.ToLower(msg.Kind.Title()), msg.Namespace, msg.Context)
+			err := fmt.Errorf("RBAC: not permitted to view %s for context '%s'",
+				strings.ToLower(msg.Kind.Title()), msg.Context)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
 		}
 		st.failures++
 		if st.failures > maxReconnectFailures {
-			err := fmt.Errorf("failed to watch %s in namespace '%s' for context '%s' after %d attempts: %v",
-				strings.ToLower(msg.Kind.Title()), msg.Namespace, msg.Context, st.failures, msg.Err)
+			err := fmt.Errorf("failed to watch %s for context '%s' after %d attempts: %v",
+				strings.ToLower(msg.Kind.Title()), msg.Context, st.failures, msg.Err)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
 		}
-		return nil, s.openCmd(msg.Kind, msg.Context, msg.Namespace, msg.Generation, backoffDelay(st.failures)), true
+		return nil, s.openCmd(msg.Kind, msg.Context, msg.Generation, backoffDelay(st.failures)), true
 	}
 	return nil, nil, false
 }
 
-// current returns the live state for (kind, context, namespace) only if
-// generation is still the current one — the single staleness check every
-// handler shares.
-func (s *Supervisor) current(kind msgs.ResourceKind, kubeContext, namespace string, generation int) (*watchState, bool) {
-	st, ok := s.states[stateKey{kind: kind, context: kubeContext, namespace: namespace}]
+// current returns the live state for (kind, context) only if generation is
+// still the current one — the single staleness check every handler shares.
+func (s *Supervisor) current(kind msgs.ResourceKind, kubeContext string, generation int) (*watchState, bool) {
+	st, ok := s.states[stateKey{kind: kind, context: kubeContext}]
 	if !ok || st.generation != generation {
 		return nil, false
 	}
@@ -401,20 +380,105 @@ func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, k
 	return nil
 }
 
-// openCmd opens (after an optional backoff delay) a watch for one
-// (kind, context), reporting the outcome as a WatchOpenedMsg or
-// WatchClosedMsg carrying the generation it was issued under.
-func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, delay time.Duration) tea.Cmd {
+// toObjects converts a concrete List() result (e.g. []*corev1.Pod) to the
+// kind-erased []metav1.Object carried by ListLoadedMsg.
+func toObjects[T metav1.Object](items []T) []metav1.Object {
+	out := make([]metav1.Object, len(items))
+	for i, v := range items {
+		out[i] = v
+	}
+	return out
+}
+
+// listFn returns the Cluster method that lists kind, already adapted to the
+// kind-erased []metav1.Object shape listCmd needs.
+func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+	switch kind {
+	case msgs.KindPods:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListPods(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindDeployments:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListDeployments(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindServices:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListServices(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindConfigMaps:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListConfigMaps(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindSecrets:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListSecrets(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindJobs:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListJobs(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindCronJobs:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListCronJobs(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindStatefulSets:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListStatefulSets(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindDaemonSets:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListDaemonSets(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindIngresses:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListIngresses(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindNodes:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListNodes(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	}
+	return nil
+}
+
+// listCmd issues the one-shot, cluster-wide (namespace="") List() call for
+// one (kind, context), reporting the outcome as a ListLoadedMsg carrying the
+// generation it was issued under.
+func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext string, generation int) tea.Cmd {
+	list := s.listFn(kind)
+	return func() tea.Msg {
+		objs, err := list(context.Background(), kubeContext, "")
+		return msgs.ListLoadedMsg{Kind: kind, Context: kubeContext, Generation: generation, Objects: objs, Err: err}
+	}
+}
+
+// openCmd opens (after an optional backoff delay) a cluster-wide
+// (namespace="") watch for one (kind, context), reporting the outcome as a
+// WatchOpenedMsg or WatchClosedMsg carrying the generation it was issued
+// under.
+func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext string, generation int, delay time.Duration) tea.Cmd {
 	open := s.watchFn(kind)
 	return func() tea.Msg {
 		if delay > 0 {
 			time.Sleep(delay)
 		}
-		w, err := open(context.Background(), kubeContext, namespace)
+		w, err := open(context.Background(), kubeContext, "")
 		if err != nil {
-			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Err: err}
+			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
 		}
-		return msgs.WatchOpenedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Watcher: w}
+		return msgs.WatchOpenedMsg{Kind: kind, Context: kubeContext, Generation: generation, Watcher: w}
 	}
 }
 
@@ -424,70 +488,73 @@ func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 // UI updates instead of one message per object) before returning a freshly
 // rebuilt row set. Handle re-issues this command after each WatchEventMsg to
 // keep the read loop going.
-func (s *Supervisor) waitCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, watcher watch.Interface, cache rowCache) tea.Cmd {
+func (s *Supervisor) waitCmd(kind msgs.ResourceKind, kubeContext string, generation int, watcher watch.Interface, cache rowCache) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-watcher.ResultChan()
 		if !ok {
-			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation}
+			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation}
 		}
 		if err := cache.apply(ev); err != nil {
-			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Err: err}
+			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
 		}
 
 		for {
 			select {
 			case ev, ok := <-watcher.ResultChan():
 				if !ok {
-					return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Rows: cache.rows(kubeContext)}
+					return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation, Rows: cache.rows(kubeContext)}
 				}
 				if err := cache.apply(ev); err != nil {
-					return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Err: err}
+					return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
 				}
 			default:
-				return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Namespace: namespace, Generation: generation, Rows: cache.rows(kubeContext)}
+				return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation, Rows: cache.rows(kubeContext)}
 			}
 		}
 	}
 }
 
 // NeedsEndpoints reports whether svc Endpoint IPs still need fetching for
-// this context+namespace — false once fetched (or requested), true again if
-// that namespace is removed and re-added (RemoveNamespace clears it).
-func (s *Supervisor) NeedsEndpoints(kubeContext, namespace string) bool {
-	return !s.endpointsFetchedNS[endpointsKey(kubeContext, namespace)]
+// this context — false once fetched (or requested).
+func (s *Supervisor) NeedsEndpoints(kubeContext string) bool {
+	return !s.endpointsFetched[kubeContext]
 }
 
-// MarkEndpointsRequested records that a fetch for this context+namespace is
-// in flight (or done), so a second wide-mode toggle before the first fetch
-// resolves doesn't dispatch a duplicate request.
-func (s *Supervisor) MarkEndpointsRequested(kubeContext, namespace string) {
-	s.endpointsFetchedNS[endpointsKey(kubeContext, namespace)] = true
+// MarkEndpointsRequested records that a fetch for this context is in flight
+// (or done), so a second wide-mode toggle before the first fetch resolves
+// doesn't dispatch a duplicate request.
+func (s *Supervisor) MarkEndpointsRequested(kubeContext string) {
+	s.endpointsFetched[kubeContext] = true
 }
 
-// ClearEndpointsRequested un-marks a context+namespace's fetch, letting the
-// next wide-mode toggle retry — used when a fetch comes back with an error.
-func (s *Supervisor) ClearEndpointsRequested(kubeContext, namespace string) {
-	delete(s.endpointsFetchedNS, endpointsKey(kubeContext, namespace))
+// ClearEndpointsRequested un-marks a context's fetch, letting the next
+// wide-mode toggle retry — used when a fetch comes back with an error.
+func (s *Supervisor) ClearEndpointsRequested(kubeContext string) {
+	delete(s.endpointsFetched, kubeContext)
 }
 
-// SetEndpoints stores a resolved Endpoint IPs fetch for a context+namespace;
-// Rows overlays it onto that namespace's service rows from then on.
-func (s *Supervisor) SetEndpoints(kubeContext, namespace string, endpoints map[string][]string) {
-	key := endpointsKey(kubeContext, namespace)
-	s.endpoints[key] = endpoints
-	s.endpointsFetchedNS[key] = true
+// SetEndpoints stores a resolved Endpoint IPs fetch for a context, keyed by
+// "namespace/service name" (namespace-qualified since the fetch is
+// cluster-wide — the same service name can exist in more than one
+// namespace); Rows overlays it onto that context's service rows from then
+// on.
+func (s *Supervisor) SetEndpoints(kubeContext string, endpoints map[string][]string) {
+	s.endpoints[kubeContext] = endpoints
+	s.endpointsFetched[kubeContext] = true
 }
 
 // overlayEndpoints replaces the Endpoint IPs placeholder on freshly built
-// service rows with the context+namespace's fetched IPs, if any.
-func (s *Supervisor) overlayEndpoints(kubeContext, namespace string, rows []msgs.RowData) {
-	endpoints, ok := s.endpoints[endpointsKey(kubeContext, namespace)]
+// service rows with the context's fetched IPs, if any, matched by
+// "namespace/service name".
+func (s *Supervisor) overlayEndpoints(kubeContext string, rows []msgs.RowData) {
+	endpoints, ok := s.endpoints[kubeContext]
 	if !ok {
 		return
 	}
 	for _, row := range rows {
 		name, _ := row[msgs.SvcKeyName].(string)
-		row[msgs.SvcKeyEndpointIPs] = formatEndpointIPs(endpoints[name])
+		namespace, _ := row[msgs.SvcKeyNamespace].(string)
+		row[msgs.SvcKeyEndpointIPs] = formatEndpointIPs(endpoints[namespace+"/"+name])
 	}
 }
 

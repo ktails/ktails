@@ -102,6 +102,26 @@ func (c *Client) WatchNodes(ctx context.Context, kubeContext, _ string) (watch.I
 	return w, nil
 }
 
+// ListNodes fetches every Node in the cluster in one call. namespace is
+// ignored — Nodes are cluster-scoped. See ListPods for why this exists
+// alongside the watch.
+func (c *Client) ListNodes(ctx context.Context, kubeContext, _ string) ([]*corev1.Node, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list nodes (context %s): %w", kubeContext, err)
+	}
+	out := make([]*corev1.Node, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
+}
+
 // GetNodeDetail fetches a single Node's status, rendered YAML, and recent
 // events. namespace is ignored — Nodes are cluster-scoped.
 func (c *Client) GetNodeDetail(kubeContextName, _, name string) (ResourceDetail, error) {

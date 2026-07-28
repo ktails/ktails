@@ -41,9 +41,11 @@ func ServiceToServiceInfo(svc *corev1.Service) ServiceInfo {
 }
 
 // GetServiceEndpoints lists EndpointSlices for the whole namespace in one
-// call and groups their addresses by owning service name (via the
-// kubernetes.io/service-name label EndpointSlices carry), so callers don't
-// need one API round trip per service.
+// call and groups their addresses by owning service, keyed by
+// "namespace/service name" (via the kubernetes.io/service-name label
+// EndpointSlices carry) — namespace-qualified because namespace="" lists
+// cluster-wide, where the same service name can be reused across
+// namespaces, so callers don't need one API round trip per service.
 func (c *Client) GetServiceEndpoints(kubeContextName, namespace string) (map[string][]string, error) {
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
@@ -62,8 +64,9 @@ func (c *Client) GetServiceEndpoints(kubeContextName, namespace string) (map[str
 		if !ok {
 			continue
 		}
+		key := slice.Namespace + "/" + svcName
 		for _, ep := range slice.Endpoints {
-			endpoints[svcName] = append(endpoints[svcName], ep.Addresses...)
+			endpoints[key] = append(endpoints[key], ep.Addresses...)
 		}
 	}
 

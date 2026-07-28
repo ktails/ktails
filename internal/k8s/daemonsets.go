@@ -48,6 +48,25 @@ func (c *Client) WatchDaemonSets(ctx context.Context, kubeContext, namespace str
 	return w, nil
 }
 
+// ListDaemonSets fetches every DaemonSet in the given namespace in one call.
+// See ListPods for why this exists alongside the watch.
+func (c *Client) ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, error) {
+	clientset, err := c.GetClientForContext(kubeContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+	}
+
+	list, err := clientset.AppsV1().DaemonSets(namespace).List(ctx, v1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list daemonsets in namespace %s (context %s): %w", namespace, kubeContext, err)
+	}
+	out := make([]*appsv1.DaemonSet, len(list.Items))
+	for i := range list.Items {
+		out[i] = &list.Items[i]
+	}
+	return out, nil
+}
+
 // GetDaemonSetDetail fetches a single DaemonSet's status, rendered YAML,
 // and recent events.
 func (c *Client) GetDaemonSetDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
