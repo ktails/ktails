@@ -11,7 +11,9 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	kwatch "k8s.io/apimachinery/pkg/watch"
 
 	"github.com/ktails/ktails/internal/tui/msgs"
@@ -364,6 +366,34 @@ func TestSupervisor_ClosedReconnectsThenGivesUp(t *testing.T) {
 	}
 	if upd == nil || !upd.GaveUp || upd.Err == nil {
 		t.Fatalf("expected a GaveUp update with an error, got %+v", upd)
+	}
+	if upd.Forbidden {
+		t.Fatal("expected an exhausted-reconnect failure to not be marked Forbidden")
+	}
+}
+
+// TestSupervisor_ForbiddenGivesUpImmediatelyAndMarksForbidden guards the
+// quiet-RBAC-failure path: an RBAC denial must give up on the first close
+// (no backoff/reconnect attempts wasted on a permission that isn't coming
+// back) and set Update.Forbidden so the caller (MainPage) can fail quietly
+// instead of surfacing a loud error banner — the same treatment a denied
+// Nodes watch already gets via its pre-flight check.
+func TestSupervisor_ForbiddenGivesUpImmediatelyAndMarksForbidden(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+	startPodsWatch(t, s)
+
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", errors.New("denied"))
+	closed := msgs.WatchClosedMsg{
+		Kind: msgs.KindPods, Context: "ctx1", Generation: 1, Err: forbidden,
+	}
+
+	upd, next, handled := s.Handle(closed)
+	if !handled || next != nil {
+		t.Fatal("expected no reconnect command for an RBAC denial")
+	}
+	if upd == nil || !upd.GaveUp || !upd.Forbidden {
+		t.Fatalf("expected a GaveUp+Forbidden update, got %+v", upd)
 	}
 }
 

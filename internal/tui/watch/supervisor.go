@@ -113,6 +113,14 @@ type Update struct {
 	// last failure.
 	GaveUp bool
 	Err    error
+	// Forbidden is set alongside GaveUp when the failure was an RBAC denial
+	// (apierrors.IsForbidden) rather than exhausted reconnect attempts —
+	// callers use it to fail quietly (clear the loading indicator, nothing
+	// more) the same way a denied Nodes watch already does via its
+	// CanWatchNodes pre-flight check, rather than surfacing a loud
+	// context-wide error banner for a resource kind that's just not
+	// accessible in this cluster.
+	Forbidden bool
 }
 
 // Supervisor owns every watch stream, cache, and reconnect decision. Its
@@ -328,7 +336,7 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 		if apierrors.IsForbidden(msg.Err) {
 			err := fmt.Errorf("RBAC: not permitted to view %s for context '%s'",
 				strings.ToLower(msg.Kind.Title()), msg.Context)
-			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
+			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err, Forbidden: true}, nil, true
 		}
 		st.failures++
 		if st.failures > maxReconnectFailures {

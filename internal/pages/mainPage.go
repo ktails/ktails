@@ -597,6 +597,23 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.NamespacesMsg:
 		if msg.Err != nil {
+			// Listing every namespace is a cluster-scoped call and commonly
+			// needs broader RBAC than watching resources within just this
+			// context's own namespace — a RoleBinding scoped to one
+			// namespace often grants the latter but not the former. Fall
+			// back to just that namespace (already scoped via
+			// AppState.DefaultNamespace/SelectedContexts, so resource
+			// browsing itself is unaffected) instead of a loud error the
+			// user can't act on. A context with no namespace pinned at all
+			// (all-namespaces mode, DefaultNamespace=="") has no single
+			// namespace to fall back to — that one still surfaces the error,
+			// since there's genuinely nothing this pane can offer.
+			if defaultNS := m.appState.DefaultNamespace(msg.Context); defaultNS != "" {
+				m.namespacesPane.SetContextNamespaces(msg.Context, []string{defaultNS})
+				snapshot := m.appState.Snapshot()
+				m.namespacesPane.SyncConfirmed(msg.Context, snapshot.SelectedContexts[msg.Context], snapshot.AllNamespaces[msg.Context])
+				return m, nil
+			}
 			m.namespacesPane.SetContextError(msg.Context, msg.Err.Error())
 			return m, nil
 		}
@@ -666,6 +683,18 @@ func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
 		return
 	}
 	if upd.GaveUp {
+		if upd.Forbidden {
+			// An RBAC denial on one resource kind isn't a broken connection
+			// worth a loud banner — many clusters simply restrict some kinds
+			// (audit-only ServiceAccounts commonly can't see Secrets, Jobs,
+			// etc.) — so this fails quietly the same way a denied Nodes
+			// watch already does (see applyNodesAccess): clear just this
+			// kind's loading indicator and move on, leaving that tab to show
+			// as empty rather than context-wide broken.
+			m.appState.SetLoading(upd.Kind, upd.Context, false)
+			m.syncContextStates()
+			return
+		}
 		errMsg := upd.Err.Error()
 		m.appState.SetError(upd.Context, errMsg)
 		m.errorMessage = errMsg
