@@ -55,16 +55,18 @@ release:
   draft: false
   prerelease: auto
 
-homebrew_casks:
+brews:
   - name: ktails
     repository:
       owner: ktails
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Casks
+    directory: Formula
     homepage: "https://github.com/ktails/ktails"
     description: "A terminal-based Kubernetes resource browser built with Go and Bubble Tea"
     license: "GPL-3.0"
-    binaries:
-      - ktails
+    test: |
+      system "#{bin}/ktails --version"
+    install: |
+      bin.install "ktails"
