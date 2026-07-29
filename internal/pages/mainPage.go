@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -121,7 +122,43 @@ type MainPage struct {
 	logStreams  map[string]*logStreamState
 
 	tableW, tableH int
+
+	// sortField/sortDir hold the currently active column sort (applied by
+	// filteredRows, last, after namespace filtering) — Shift+N/M/A cycle
+	// sortField through name/namespace/age and sortDir through
+	// ascending/descending/off. sortNone (the zero value) is a true no-op
+	// that preserves each cache's existing context/namespace/name order.
+	sortField sortField
+	sortDir   sortDir
+
+	// lastMetricsFetch throttles fetchMetricsIfNeeded well below the
+	// refresh tick's cadence — metrics-server itself only refreshes
+	// internally every ~60s by default, so fetching on every tick
+	// (default 5s) would be pure waste.
+	lastMetricsFetch time.Time
 }
+
+// metricsFetchInterval is the minimum time between fetchMetricsIfNeeded
+// dispatches — see lastMetricsFetch.
+const metricsFetchInterval = 15 * time.Second
+
+// sortField identifies which column, if any, rows are currently ordered by.
+type sortField int
+
+const (
+	sortNone sortField = iota
+	sortByName
+	sortByNamespace
+	sortByAge
+)
+
+// sortDir is the direction of the active sortField.
+type sortDir int
+
+const (
+	sortAsc sortDir = iota
+	sortDesc
+)
 
 // logStreamState is the live stream-plumbing state for one open log
 // source, keyed by the same context/namespace/pod/container key used in
@@ -497,6 +534,24 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Shift+N/M/A cycle sorting by Name/Namespace/Age: ascending ->
+		// descending -> off, switching to a different column resets to
+		// ascending. Applies across every tab (filteredRows), not just the
+		// active one, so it stays put across tab switches.
+		if m.appStateLoaded {
+			switch keypress {
+			case "N":
+				m.cycleSort(sortByName)
+				return m, nil
+			case "M":
+				m.cycleSort(sortByNamespace)
+				return m, nil
+			case "A":
+				m.cycleSort(sortByAge)
+				return m, nil
+			}
+		}
+
 		// Ctrl+W toggles wide mode on the active tab's table (sticky per tab,
 		// reset on resize); Shift+Left/Right scroll one column at a time while
 		// wide mode is on.
@@ -636,6 +691,26 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tables[msgs.KindServices].SetRows(m.filteredRows(msgs.KindServices))
 		return m, nil
 
+	case msgs.PodMetricsMsg:
+		if msg.Err != nil {
+			// metrics-server commonly isn't installed; stop retrying this
+			// context rather than re-erroring on every tick forever.
+			m.watchSup.MarkPodMetricsUnavailable(msg.Context)
+			return m, nil
+		}
+		m.watchSup.SetPodMetrics(msg.Context, msg.Usage)
+		m.tables[msgs.KindPods].SetRows(m.filteredRows(msgs.KindPods))
+		return m, nil
+
+	case msgs.NodeMetricsMsg:
+		if msg.Err != nil {
+			m.watchSup.MarkNodeMetricsUnavailable(msg.Context)
+			return m, nil
+		}
+		m.watchSup.SetNodeMetrics(msg.Context, msg.Usage)
+		m.tables[msgs.KindNodes].SetRows(m.filteredRows(msgs.KindNodes))
+		return m, nil
+
 	case msgs.RefreshTickMsg:
 		// Always reschedule, even when auto-refresh is off or paused, so it
 		// resumes on its own the moment the pane closes / it's toggled back on.
@@ -647,6 +722,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, next
 		}
 		m.reRenderAgeFromWatchCaches()
+		if metricsCmd := m.fetchMetricsIfNeeded(); metricsCmd != nil {
+			return m, tea.Batch(next, metricsCmd)
+		}
 		return m, next
 	}
 
@@ -719,11 +797,11 @@ func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
 // exempt.
 func (m *MainPage) filteredRows(kind msgs.ResourceKind) []msgs.RowData {
 	rows := m.watchSup.Rows(kind)
-	if kind == msgs.KindNodes {
-		return rows
+	if kind != msgs.KindNodes {
+		snapshot := m.appState.Snapshot()
+		rows = filterRowsByNamespace(rows, snapshot.SelectedContexts, snapshot.AllNamespaces)
 	}
-	snapshot := m.appState.Snapshot()
-	return filterRowsByNamespace(rows, snapshot.SelectedContexts, snapshot.AllNamespaces)
+	return sortRows(rows, m.sortField, m.sortDir)
 }
 
 // filterRowsByNamespace keeps only rows whose (context, namespace) is
@@ -752,6 +830,63 @@ func filterRowsByNamespace(rows []msgs.RowData, selected map[string][]string, al
 		}
 	}
 	return filtered
+}
+
+// sortRows orders rows by field/dir, stably — sortNone is a true no-op,
+// preserving whatever order rows already arrived in (each cache's
+// namespace/name order — see resourceCache.rows). Rows missing a field
+// (e.g. KindNodes has no KeyNamespace) sort as the zero value for that
+// field, which is harmless: it just groups them together rather than
+// erroring.
+func sortRows(rows []msgs.RowData, field sortField, dir sortDir) []msgs.RowData {
+	if field == sortNone {
+		return rows
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		var less bool
+		switch field {
+		case sortByName:
+			less = strings.ToLower(rowString(rows[i], msgs.KeyName)) < strings.ToLower(rowString(rows[j], msgs.KeyName))
+		case sortByNamespace:
+			less = strings.ToLower(rowString(rows[i], msgs.KeyNamespace)) < strings.ToLower(rowString(rows[j], msgs.KeyNamespace))
+		case sortByAge:
+			less = rowCreatedAt(rows[i]).Before(rowCreatedAt(rows[j]))
+		}
+		if dir == sortDesc {
+			return !less
+		}
+		return less
+	})
+	return rows
+}
+
+func rowString(row msgs.RowData, key string) string {
+	s, _ := row[key].(string)
+	return s
+}
+
+func rowCreatedAt(row msgs.RowData) time.Time {
+	t, _ := row[msgs.KeyCreatedAt].(time.Time)
+	return t
+}
+
+// cycleSort advances the active sort for field: switching to a new field
+// starts it at ascending; pressing the same field's key again cycles
+// ascending -> descending -> off. Every visible tab is re-rendered
+// immediately so the change is visible regardless of which tab is active.
+func (m *MainPage) cycleSort(f sortField) {
+	if m.sortField != f {
+		m.sortField = f
+		m.sortDir = sortAsc
+	} else if m.sortDir == sortAsc {
+		m.sortDir = sortDesc
+	} else {
+		m.sortField = sortNone
+		m.sortDir = sortAsc
+	}
+	for _, kind := range m.tabs {
+		m.tables[kind].SetRows(m.filteredRows(kind))
+	}
 }
 
 // applyContextsState reconciles a selection change from the Context List.
@@ -1014,6 +1149,10 @@ func (m *MainPage) openResourceDetail(kind msgs.ResourceKind) tea.Cmd {
 		return cmds.LoadDaemonSetDetailCmd(m.Client, ctxName, namespace, name)
 	case msgs.KindIngresses:
 		return cmds.LoadIngressDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindPodDisruptionBudgets:
+		return cmds.LoadPodDisruptionBudgetDetailCmd(m.Client, ctxName, namespace, name)
+	case msgs.KindHorizontalPodAutoscalers:
+		return cmds.LoadHorizontalPodAutoscalerDetailCmd(m.Client, ctxName, namespace, name)
 	case msgs.KindNodes:
 		return cmds.LoadNodeDetailCmd(m.Client, ctxName, namespace, name)
 	}
@@ -1080,6 +1219,44 @@ func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 		}
 		m.watchSup.MarkEndpointsRequested(context)
 		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, ""))
+	}
+
+	if len(cmdSequence) == 0 {
+		return nil
+	}
+	return tea.Batch(cmdSequence...)
+}
+
+// fetchMetricsIfNeeded dispatches a CPU/Memory usage fetch (LoadPodMetricsCmd
+// or LoadNodeMetricsCmd) for every selected context, but only while the
+// active tab is Pods or Nodes — usage on tabs the user isn't looking at
+// isn't worth the API calls — and throttled to metricsFetchInterval via
+// lastMetricsFetch. A context whose fetch has ever failed (see
+// Supervisor.PodMetricsUnavailable/NodeMetricsUnavailable — most commonly:
+// no metrics-server installed) is skipped rather than retried forever.
+func (m *MainPage) fetchMetricsIfNeeded() tea.Cmd {
+	kind := m.activeKind()
+	if kind != msgs.KindPods && kind != msgs.KindNodes {
+		return nil
+	}
+	if time.Since(m.lastMetricsFetch) < metricsFetchInterval {
+		return nil
+	}
+	m.lastMetricsFetch = time.Now()
+
+	snapshot := m.appState.Snapshot()
+	var cmdSequence []tea.Cmd
+	for context := range snapshot.SelectedContexts {
+		switch kind {
+		case msgs.KindPods:
+			if !m.watchSup.PodMetricsUnavailable(context) {
+				cmdSequence = append(cmdSequence, cmds.LoadPodMetricsCmd(m.Client, context, ""))
+			}
+		case msgs.KindNodes:
+			if !m.watchSup.NodeMetricsUnavailable(context) {
+				cmdSequence = append(cmdSequence, cmds.LoadNodeMetricsCmd(m.Client, context))
+			}
+		}
 	}
 
 	if len(cmdSequence) == 0 {
@@ -1460,6 +1637,7 @@ func (m *MainPage) renderHelpOverlay() string {
 		{"c (log pane focused)", "Isolate one source's view, or return to the full merge"},
 		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
 		{"R", "Toggle auto-refresh on/off"},
+		{"Shift+N / Shift+M / Shift+A", "Cycle sorting by Name / Namespace / Age: ascending -> descending -> off"},
 		{"↑/↓ j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
 		{"y (detail pane focused)", "Jump straight to the YAML section"},
 		{"Home / End", "Jump to top / bottom of detail/log pane"},

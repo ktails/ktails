@@ -9,9 +9,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -47,6 +49,10 @@ type Cluster interface {
 	ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, error)
 	WatchIngresses(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, error)
+	WatchPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, error)
+	WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
+	ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, error)
 	// WatchNodes/ListNodes ignore namespace — Nodes are cluster-scoped.
 	WatchNodes(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	ListNodes(ctx context.Context, kubeContext, namespace string) ([]*corev1.Node, error)
@@ -152,15 +158,34 @@ type Supervisor struct {
 	// refetching on every toggle.
 	endpoints        map[string]map[string][]string
 	endpointsFetched map[string]bool
+
+	// Lazily, periodically-fetched Pods/Nodes CPU/Memory usage from
+	// metrics.k8s.io, overlaid onto rows by Rows the same way endpoints is.
+	// Unlike endpoints (fetched once per context+namespace on a wide-mode
+	// toggle and kept forever), usage changes continuously, so MainPage
+	// refetches it on a throttled timer rather than once — see
+	// MainPage.fetchMetricsIfNeeded. podMetricsUnavailable/
+	// nodeMetricsUnavailable record a context whose metrics fetch has ever
+	// failed (most commonly: metrics-server isn't installed), so
+	// fetchMetricsIfNeeded stops retrying that context rather than
+	// re-erroring every tick forever.
+	podMetrics             map[string]map[string]msgs.ResourceUsage // context -> "namespace/name" -> usage
+	podMetricsUnavailable  map[string]bool
+	nodeMetrics            map[string]map[string]msgs.ResourceUsage // context -> node name -> usage
+	nodeMetricsUnavailable map[string]bool
 }
 
 func NewSupervisor(cluster Cluster) *Supervisor {
 	return &Supervisor{
-		cluster:          cluster,
-		states:           make(map[stateKey]*watchState),
-		namespaces:       make(map[string]string),
-		endpoints:        make(map[string]map[string][]string),
-		endpointsFetched: make(map[string]bool),
+		cluster:                cluster,
+		states:                 make(map[stateKey]*watchState),
+		namespaces:             make(map[string]string),
+		endpoints:              make(map[string]map[string][]string),
+		endpointsFetched:       make(map[string]bool),
+		podMetrics:             make(map[string]map[string]msgs.ResourceUsage),
+		podMetricsUnavailable:  make(map[string]bool),
+		nodeMetrics:            make(map[string]map[string]msgs.ResourceUsage),
+		nodeMetricsUnavailable: make(map[string]bool),
 	}
 }
 
@@ -259,6 +284,10 @@ func (s *Supervisor) StopContext(kubeContext string) {
 	delete(s.namespaces, kubeContext)
 	delete(s.endpoints, kubeContext)
 	delete(s.endpointsFetched, kubeContext)
+	delete(s.podMetrics, kubeContext)
+	delete(s.podMetricsUnavailable, kubeContext)
+	delete(s.nodeMetrics, kubeContext)
+	delete(s.nodeMetricsUnavailable, kubeContext)
 }
 
 // Watching reports whether any context is currently being watched — i.e.
@@ -286,8 +315,13 @@ func (s *Supervisor) Rows(kind msgs.ResourceKind) []msgs.RowData {
 	var all []msgs.RowData
 	for _, ctx := range contexts {
 		rows := s.states[stateKey{kind: kind, context: ctx}].cache.rows(ctx)
-		if kind == msgs.KindServices {
+		switch kind {
+		case msgs.KindServices:
 			s.overlayEndpoints(ctx, rows)
+		case msgs.KindPods:
+			s.overlayPodMetrics(ctx, rows)
+		case msgs.KindNodes:
+			s.overlayNodeMetrics(ctx, rows)
 		}
 		all = append(all, rows...)
 	}
@@ -400,6 +434,10 @@ func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, k
 		return s.cluster.WatchDaemonSets
 	case msgs.KindIngresses:
 		return s.cluster.WatchIngresses
+	case msgs.KindPodDisruptionBudgets:
+		return s.cluster.WatchPodDisruptionBudgets
+	case msgs.KindHorizontalPodAutoscalers:
+		return s.cluster.WatchHorizontalPodAutoscalers
 	case msgs.KindNodes:
 		return s.cluster.WatchNodes
 	}
@@ -468,6 +506,16 @@ func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, ku
 	case msgs.KindIngresses:
 		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
 			items, err := s.cluster.ListIngresses(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindPodDisruptionBudgets:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListPodDisruptionBudgets(ctx, kubeContext, namespace)
+			return toObjects(items), err
+		}
+	case msgs.KindHorizontalPodAutoscalers:
+		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+			items, err := s.cluster.ListHorizontalPodAutoscalers(ctx, kubeContext, namespace)
 			return toObjects(items), err
 		}
 	case msgs.KindNodes:
@@ -595,4 +643,83 @@ func formatEndpointIPs(ips []string) string {
 	copy(sorted, ips)
 	sort.Strings(sorted)
 	return strings.Join(sorted, ",")
+}
+
+// PodMetricsUnavailable reports whether a Pods metrics fetch has ever failed
+// for this context (most commonly: no metrics-server installed) —
+// MainPage.fetchMetricsIfNeeded stops retrying once true, rather than
+// re-erroring every tick forever.
+func (s *Supervisor) PodMetricsUnavailable(kubeContext string) bool {
+	return s.podMetricsUnavailable[kubeContext]
+}
+
+// MarkPodMetricsUnavailable records that this context's Pods metrics fetch
+// failed.
+func (s *Supervisor) MarkPodMetricsUnavailable(kubeContext string) {
+	s.podMetricsUnavailable[kubeContext] = true
+}
+
+// SetPodMetrics stores a resolved CPU/Memory usage fetch for a context,
+// keyed by "namespace/name"; Rows overlays it onto that context's Pods rows
+// from then on, replacing whatever was there before (a successful refetch
+// naturally clears any earlier MarkPodMetricsUnavailable, since a fresh
+// fetch call only reaches here on success).
+func (s *Supervisor) SetPodMetrics(kubeContext string, usage map[string]msgs.ResourceUsage) {
+	s.podMetrics[kubeContext] = usage
+	delete(s.podMetricsUnavailable, kubeContext)
+}
+
+// overlayPodMetrics replaces the CPU/Memory placeholder on freshly built pod
+// rows with the context's fetched usage, if any, matched by
+// "namespace/name". Pods with no matching entry (e.g. metrics-server hasn't
+// reported for a just-started pod yet) keep the "-" placeholder set by
+// podRow.
+func (s *Supervisor) overlayPodMetrics(kubeContext string, rows []msgs.RowData) {
+	usage, ok := s.podMetrics[kubeContext]
+	if !ok {
+		return
+	}
+	for _, row := range rows {
+		name, _ := row[msgs.PodKeyName].(string)
+		namespace, _ := row[msgs.PodKeyNamespace].(string)
+		u, found := usage[namespace+"/"+name]
+		if !found {
+			continue
+		}
+		row[msgs.PodKeyCPU] = u.CPU
+		row[msgs.PodKeyMemory] = u.Memory
+	}
+}
+
+// NodeMetricsUnavailable/MarkNodeMetricsUnavailable/SetNodeMetrics/
+// overlayNodeMetrics are PodMetricsUnavailable/MarkPodMetricsUnavailable/
+// SetPodMetrics/overlayPodMetrics's Nodes counterparts, keyed by node name
+// instead of "namespace/name" — Nodes are cluster-scoped.
+func (s *Supervisor) NodeMetricsUnavailable(kubeContext string) bool {
+	return s.nodeMetricsUnavailable[kubeContext]
+}
+
+func (s *Supervisor) MarkNodeMetricsUnavailable(kubeContext string) {
+	s.nodeMetricsUnavailable[kubeContext] = true
+}
+
+func (s *Supervisor) SetNodeMetrics(kubeContext string, usage map[string]msgs.ResourceUsage) {
+	s.nodeMetrics[kubeContext] = usage
+	delete(s.nodeMetricsUnavailable, kubeContext)
+}
+
+func (s *Supervisor) overlayNodeMetrics(kubeContext string, rows []msgs.RowData) {
+	usage, ok := s.nodeMetrics[kubeContext]
+	if !ok {
+		return
+	}
+	for _, row := range rows {
+		name, _ := row[msgs.NodeKeyName].(string)
+		u, found := usage[name]
+		if !found {
+			continue
+		}
+		row[msgs.NodeKeyCPU] = u.CPU
+		row[msgs.NodeKeyMemory] = u.Memory
+	}
 }

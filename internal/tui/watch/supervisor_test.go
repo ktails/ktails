@@ -8,9 +8,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -89,6 +91,14 @@ func (f *fakeCluster) WatchDaemonSets(context.Context, string, string) (kwatch.I
 	return f.watch(msgs.KindDaemonSets)
 }
 
+func (f *fakeCluster) WatchPodDisruptionBudgets(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindPodDisruptionBudgets)
+}
+
+func (f *fakeCluster) WatchHorizontalPodAutoscalers(context.Context, string, string) (kwatch.Interface, error) {
+	return f.watch(msgs.KindHorizontalPodAutoscalers)
+}
+
 func (f *fakeCluster) WatchIngresses(context.Context, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindIngresses)
 }
@@ -134,6 +144,14 @@ func (f *fakeCluster) ListDaemonSets(context.Context, string, string) ([]*appsv1
 }
 
 func (f *fakeCluster) ListIngresses(context.Context, string, string) ([]*networkingv1.Ingress, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListPodDisruptionBudgets(context.Context, string, string) ([]*policyv1.PodDisruptionBudget, error) {
+	return nil, nil
+}
+
+func (f *fakeCluster) ListHorizontalPodAutoscalers(context.Context, string, string) ([]*autoscalingv2.HorizontalPodAutoscaler, error) {
 	return nil, nil
 }
 
@@ -442,6 +460,60 @@ func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 	s.StopContext("ctx1")
 	if !s.NeedsEndpoints("ctx1") {
 		t.Fatal("expected endpoints needed again after the context was stopped")
+	}
+}
+
+// TestSupervisor_PodMetricsOverlayAndUnavailable guards the Pods CPU/Memory
+// overlay: rows default to the "-" placeholder, SetPodMetrics overlays
+// fetched usage matched by "namespace/name", and MarkPodMetricsUnavailable
+// records a failed fetch so callers (MainPage.fetchMetricsIfNeeded) can stop
+// retrying that context — mirroring TestSupervisor_EndpointsOverlayAndDedup
+// for the periodic-refetch metrics case instead of the fetch-once endpoints
+// case.
+func TestSupervisor_PodMetricsOverlayAndUnavailable(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	var podWait tea.Cmd
+	for _, cmd := range s.StartContext("ctx1", "") {
+		opened := driveToOpened(t, s, cmd)
+		_, next, _ := s.Handle(opened)
+		if opened.Kind == msgs.KindPods {
+			podWait = next
+		}
+	}
+
+	cluster.watchers[msgs.KindPods].Add(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default", ResourceVersion: "1"},
+	})
+	s.Handle(runCmd(t, podWait))
+
+	rows := s.Rows(msgs.KindPods)
+	if len(rows) != 1 || rows[0][msgs.PodKeyCPU] != MetricsPlaceholder {
+		t.Fatalf("expected the CPU placeholder before any fetch, got %+v", rows)
+	}
+
+	if s.PodMetricsUnavailable("ctx1") {
+		t.Fatal("expected metrics not yet marked unavailable")
+	}
+	s.MarkPodMetricsUnavailable("ctx1")
+	if !s.PodMetricsUnavailable("ctx1") {
+		t.Fatal("expected metrics marked unavailable after MarkPodMetricsUnavailable")
+	}
+
+	s.SetPodMetrics("ctx1", map[string]msgs.ResourceUsage{"default/pod-a": {CPU: "120m", Memory: "256Mi"}})
+	if s.PodMetricsUnavailable("ctx1") {
+		t.Fatal("expected a successful SetPodMetrics to clear the unavailable flag")
+	}
+	rows = s.Rows(msgs.KindPods)
+	if len(rows) != 1 || rows[0][msgs.PodKeyCPU] != "120m" || rows[0][msgs.PodKeyMemory] != "256Mi" {
+		t.Fatalf("expected fetched CPU/Memory overlaid on pod rows, got %+v", rows)
+	}
+
+	// A context change (StopContext) makes the fetch needed again.
+	s.StopContext("ctx1")
+	if s.PodMetricsUnavailable("ctx1") {
+		t.Fatal("expected unavailable flag cleared after the context was stopped")
 	}
 }
 

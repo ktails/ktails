@@ -27,7 +27,7 @@ func TestCompactTierDropsAgeColumn(t *testing.T) {
 	}
 
 	p.SetTier(views.TierStandard)
-	p.SetSize(60, 20)
+	p.SetSize(90, 20) // wider than the TierCompact case above: Pods now has 2 more flex columns (CPU/Memory), so 60 cols isn't enough room for every column's header to render un-truncated
 	view = p.View()
 	if !strings.Contains(view, "Age") {
 		t.Fatalf("TierStandard should keep the Age column:\n%s", view)

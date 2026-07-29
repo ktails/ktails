@@ -26,6 +26,8 @@ const (
 	KindStatefulSets
 	KindDaemonSets
 	KindIngresses
+	KindPodDisruptionBudgets
+	KindHorizontalPodAutoscalers
 	// KindNodes is cluster-scoped, not namespaced — its rows carry no
 	// KeyNamespace, and its watch ignores the namespace argument.
 	KindNodes
@@ -36,6 +38,7 @@ func Kinds() []ResourceKind {
 	return []ResourceKind{
 		KindDeployments, KindPods, KindServices, KindConfigMaps, KindSecrets,
 		KindJobs, KindCronJobs, KindStatefulSets, KindDaemonSets, KindIngresses,
+		KindPodDisruptionBudgets, KindHorizontalPodAutoscalers,
 		KindNodes,
 	}
 }
@@ -63,6 +66,10 @@ func (k ResourceKind) Title() string {
 		return "DaemonSets"
 	case KindIngresses:
 		return "Ingresses"
+	case KindPodDisruptionBudgets:
+		return "PDBs"
+	case KindHorizontalPodAutoscalers:
+		return "HPAs"
 	case KindNodes:
 		return "Nodes"
 	}
@@ -92,6 +99,10 @@ func (k ResourceKind) Kind() string {
 		return "DaemonSet"
 	case KindIngresses:
 		return "Ingress"
+	case KindPodDisruptionBudgets:
+		return "PodDisruptionBudget"
+	case KindHorizontalPodAutoscalers:
+		return "HorizontalPodAutoscaler"
 	case KindNodes:
 		return "Node"
 	}
@@ -115,6 +126,12 @@ const (
 	KeyName      = "name"
 	KeyNamespace = "namespace"
 	KeyContext   = "context"
+	// KeyCreatedAt carries each row's raw creation timestamp (time.Time),
+	// set once at row-build time by watch.cache's row converters. It backs
+	// nothing visible — Age's displayed string comes from the per-kind
+	// KeyAge field — it exists purely so Age can be sorted chronologically
+	// rather than as text (see MainPage.sortRows).
+	KeyCreatedAt = "createdAt"
 )
 
 // Column keys for Pods rows (see watch.Supervisor / models.ResourceTable).
@@ -131,6 +148,8 @@ const (
 	PodKeyNodeIP     = "nodeIP"     // wide mode only
 	PodKeyPodIP      = "podIP"      // wide mode only
 	PodKeyReady      = "ready"      // wide mode only, "ready/total" containers
+	PodKeyCPU        = "cpu"        // "-" until lazily fetched from metrics-server
+	PodKeyMemory     = "memory"     // "-" until lazily fetched from metrics-server
 )
 
 // Column keys for Deployments rows.
@@ -235,6 +254,30 @@ const (
 	IngressKeyBackends  = "backends" // wide mode only, service:port list
 )
 
+// Column keys for PodDisruptionBudgets rows.
+const (
+	PDBKeyName               = KeyName
+	PDBKeyNamespace          = KeyNamespace
+	PDBKeyMinMaxAvailable    = "minMaxAvailable" // e.g. "minAvailable=2" or "maxUnavailable=25%"
+	PDBKeyAllowedDisruptions = "allowedDisruptions"
+	PDBKeyAge                = "age"
+	PDBKeyContext            = KeyContext       // Context column; also used by the detail tab
+	PDBKeyCurrentHealthy     = "currentHealthy" // wide mode only
+	PDBKeyDesiredHealthy     = "desiredHealthy" // wide mode only
+)
+
+// Column keys for HorizontalPodAutoscalers rows.
+const (
+	HPAKeyName      = KeyName
+	HPAKeyNamespace = KeyNamespace
+	HPAKeyReference = "reference" // "kind/name" the HPA scales
+	HPAKeyMinMax    = "minMax"    // "min-max" replica bounds
+	HPAKeyReplicas  = "replicas"  // current replica count
+	HPAKeyTargets   = "targets"   // best-effort "current%/target%" metric summary
+	HPAKeyAge       = "age"
+	HPAKeyContext   = KeyContext // Context column; also used by the detail tab
+)
+
 // Column keys for Nodes rows. Nodes are cluster-scoped: there is no
 // KeyNamespace here, and Node rows are not deduplicated per namespace.
 const (
@@ -246,6 +289,8 @@ const (
 	NodeKeyContext    = KeyContext   // Context column; also used by the detail tab
 	NodeKeyInternalIP = "internalIP" // wide mode only
 	NodeKeyOS         = "os"         // wide mode only
+	NodeKeyCPU        = "cpu"        // "-" until lazily fetched from metrics-server
+	NodeKeyMemory     = "memory"     // "-" until lazily fetched from metrics-server
 )
 
 // ContextsSelectedMsg represents a selected context with its namespace
@@ -263,6 +308,33 @@ type ServiceEndpointsMsg struct {
 	Namespace string
 	Endpoints map[string][]string
 	Err       error
+}
+
+// ResourceUsage is one resource's current CPU/Memory usage, pre-formatted
+// (e.g. "120m", "256Mi") by the metrics.k8s.io client — see
+// k8s.PodMetricsInfo/NodeMetricsInfo.
+type ResourceUsage struct {
+	CPU    string
+	Memory string
+}
+
+// PodMetricsMsg carries lazily, periodically-fetched CPU/Memory usage
+// (namespace/name -> usage) for every pod in one context, or an error —
+// see cmds.LoadPodMetricsCmd. Fetched only while the Pods tab is active
+// (see MainPage.fetchMetricsIfNeeded), throttled well below the refresh
+// tick since metrics-server itself only refreshes internally every ~60s.
+type PodMetricsMsg struct {
+	Context string
+	Usage   map[string]ResourceUsage
+	Err     error
+}
+
+// NodeMetricsMsg is PodMetricsMsg's Nodes counterpart — keyed by node name
+// (Nodes are cluster-scoped, so no namespace qualifier is needed).
+type NodeMetricsMsg struct {
+	Context string
+	Usage   map[string]ResourceUsage
+	Err     error
 }
 
 // ContextsStateMsg reports how the context selection changed since the last

@@ -40,6 +40,41 @@ func LoadServiceEndpointsCmd(client *k8s.Client, kubeContext, namespace string) 
 	}
 }
 
+// LoadPodMetricsCmd fetches current CPU/Memory usage for every pod in one
+// context+namespace from the Metrics Server. Triggered periodically while
+// the Pods tab is active — see MainPage.fetchMetricsIfNeeded — independent
+// of the Pods watch, since metrics.k8s.io has no watch support and must be
+// polled.
+func LoadPodMetricsCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
+	return func() tea.Msg {
+		infos, err := client.ListPodMetrics(kubeContext, namespace)
+		if err != nil {
+			return msgs.PodMetricsMsg{Context: kubeContext, Err: err}
+		}
+		usage := make(map[string]msgs.ResourceUsage, len(infos))
+		for _, info := range infos {
+			usage[info.Namespace+"/"+info.Name] = msgs.ResourceUsage{CPU: info.CPU, Memory: info.Memory}
+		}
+		return msgs.PodMetricsMsg{Context: kubeContext, Usage: usage}
+	}
+}
+
+// LoadNodeMetricsCmd is LoadPodMetricsCmd's Nodes counterpart — Nodes are
+// cluster-scoped, so there's no namespace argument.
+func LoadNodeMetricsCmd(client *k8s.Client, kubeContext string) tea.Cmd {
+	return func() tea.Msg {
+		infos, err := client.ListNodeMetrics(kubeContext)
+		if err != nil {
+			return msgs.NodeMetricsMsg{Context: kubeContext, Err: err}
+		}
+		usage := make(map[string]msgs.ResourceUsage, len(infos))
+		for _, info := range infos {
+			usage[info.Name] = msgs.ResourceUsage{CPU: info.CPU, Memory: info.Memory}
+		}
+		return msgs.NodeMetricsMsg{Context: kubeContext, Usage: usage}
+	}
+}
+
 // CheckNodesAccessCmd checks whether the current credentials can watch Nodes
 // in a context (see k8s.Client.CanWatchNodes), before MainPage decides
 // whether to open that context's Nodes watch at all. Dispatched once per
@@ -167,6 +202,30 @@ func LoadDaemonSetDetailCmd(client *k8s.Client, kubeContext, namespace, name str
 func LoadIngressDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
 		detail, err := client.GetIngressDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadPodDisruptionBudgetDetailCmd fetches detailed information for a single
+// PodDisruptionBudget.
+func LoadPodDisruptionBudgetDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetPodDisruptionBudgetDetail(kubeContext, namespace, name)
+		if err != nil {
+			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
+		}
+		return msgs.ResourceDetailMsg{Context: kubeContext, Detail: detail}
+	}
+}
+
+// LoadHorizontalPodAutoscalerDetailCmd fetches detailed information for a
+// single HorizontalPodAutoscaler.
+func LoadHorizontalPodAutoscalerDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		detail, err := client.GetHorizontalPodAutoscalerDetail(kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}

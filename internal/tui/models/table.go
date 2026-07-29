@@ -366,6 +366,8 @@ func podNarrowColumns(compact bool) []btable.Column {
 		paddedFlexColumn(msgs.PodKeyName, "Name", 10),
 		paddedFlexColumn(msgs.PodKeyStatus, "Status", 4),
 		paddedFlexColumn(msgs.PodKeyRestarts, "Restarts", 3),
+		paddedFlexColumn(msgs.PodKeyCPU, "CPU", 3),
+		paddedFlexColumn(msgs.PodKeyMemory, "Memory", 3),
 	}
 	return appendAge(cols, compact, paddedFlexColumn(msgs.PodKeyAge, "Age", 3))
 }
@@ -383,6 +385,8 @@ func podWideColumns(rows []msgs.RowData) []btable.Column {
 		paddedColumn(msgs.PodKeyNode, "Node", widestValue(rows, msgs.PodKeyNode, "Node")),
 		paddedColumn(msgs.PodKeyNodeIP, "Node IP", widestValue(rows, msgs.PodKeyNodeIP, "Node IP")),
 		paddedColumn(msgs.PodKeyPodIP, "Pod IP", widestValue(rows, msgs.PodKeyPodIP, "Pod IP")),
+		paddedColumn(msgs.PodKeyCPU, "CPU", widestValue(rows, msgs.PodKeyCPU, "CPU")),
+		paddedColumn(msgs.PodKeyMemory, "Memory", widestValue(rows, msgs.PodKeyMemory, "Memory")),
 	}
 }
 
@@ -591,6 +595,56 @@ func ingressWideColumns(rows []msgs.RowData) []btable.Column {
 	}
 }
 
+func pdbNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.PDBKeyContext),
+		paddedFlexColumn(msgs.PDBKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.PDBKeyName, "Name", 10),
+		paddedFlexColumn(msgs.PDBKeyMinMaxAvailable, "Min/Max Available", 6),
+		paddedFlexColumn(msgs.PDBKeyAllowedDisruptions, "Allowed Disruptions", 4),
+	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.PDBKeyAge, "Age", 3))
+}
+
+func pdbWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		contextColumn(msgs.PDBKeyContext),
+		paddedColumn(msgs.PDBKeyNamespace, "Namespace", widestValue(rows, msgs.PDBKeyNamespace, "Namespace")),
+		paddedColumn(msgs.PDBKeyName, "Name", widestValue(rows, msgs.PDBKeyName, "Name")),
+		paddedColumn(msgs.PDBKeyMinMaxAvailable, "Min/Max Available", widestValue(rows, msgs.PDBKeyMinMaxAvailable, "Min/Max Available")),
+		paddedColumn(msgs.PDBKeyAllowedDisruptions, "Allowed Disruptions", widestValue(rows, msgs.PDBKeyAllowedDisruptions, "Allowed Disruptions")),
+		paddedColumn(msgs.PDBKeyAge, "Age", widestValue(rows, msgs.PDBKeyAge, "Age")),
+		paddedColumn(msgs.PDBKeyCurrentHealthy, "Current Healthy", widestValue(rows, msgs.PDBKeyCurrentHealthy, "Current Healthy")),
+		paddedColumn(msgs.PDBKeyDesiredHealthy, "Desired Healthy", widestValue(rows, msgs.PDBKeyDesiredHealthy, "Desired Healthy")),
+	}
+}
+
+func hpaNarrowColumns(compact bool) []btable.Column {
+	cols := []btable.Column{
+		contextColumn(msgs.HPAKeyContext),
+		paddedFlexColumn(msgs.HPAKeyNamespace, "Namespace", 5),
+		paddedFlexColumn(msgs.HPAKeyName, "Name", 10),
+		paddedFlexColumn(msgs.HPAKeyReference, "Reference", 8),
+		paddedFlexColumn(msgs.HPAKeyMinMax, "Min-Max", 3),
+		paddedFlexColumn(msgs.HPAKeyReplicas, "Replicas", 3),
+		paddedFlexColumn(msgs.HPAKeyTargets, "Targets", 6),
+	}
+	return appendAge(cols, compact, paddedFlexColumn(msgs.HPAKeyAge, "Age", 3))
+}
+
+func hpaWideColumns(rows []msgs.RowData) []btable.Column {
+	return []btable.Column{
+		contextColumn(msgs.HPAKeyContext),
+		paddedColumn(msgs.HPAKeyNamespace, "Namespace", widestValue(rows, msgs.HPAKeyNamespace, "Namespace")),
+		paddedColumn(msgs.HPAKeyName, "Name", widestValue(rows, msgs.HPAKeyName, "Name")),
+		paddedColumn(msgs.HPAKeyReference, "Reference", widestValue(rows, msgs.HPAKeyReference, "Reference")),
+		paddedColumn(msgs.HPAKeyMinMax, "Min-Max", widestValue(rows, msgs.HPAKeyMinMax, "Min-Max")),
+		paddedColumn(msgs.HPAKeyReplicas, "Replicas", widestValue(rows, msgs.HPAKeyReplicas, "Replicas")),
+		paddedColumn(msgs.HPAKeyTargets, "Targets", widestValue(rows, msgs.HPAKeyTargets, "Targets")),
+		paddedColumn(msgs.HPAKeyAge, "Age", widestValue(rows, msgs.HPAKeyAge, "Age")),
+	}
+}
+
 // nodeNarrowColumns/nodeWideColumns omit Namespace: Nodes are cluster-scoped
 // (see msgs.NodeKeyName's doc comment), so Context is followed directly by
 // Name rather than a Namespace column that would always read empty.
@@ -600,6 +654,8 @@ func nodeNarrowColumns(compact bool) []btable.Column {
 		paddedFlexColumn(msgs.NodeKeyName, "Name", 12),
 		paddedFlexColumn(msgs.NodeKeyStatus, "Status", 4),
 		paddedFlexColumn(msgs.NodeKeyRoles, "Roles", 5),
+		paddedFlexColumn(msgs.NodeKeyCPU, "CPU", 3),
+		paddedFlexColumn(msgs.NodeKeyMemory, "Memory", 3),
 	}
 	cols = appendAge(cols, compact, paddedFlexColumn(msgs.NodeKeyAge, "Age", 3))
 	return append(cols, paddedFlexColumn(msgs.NodeKeyVersion, "Version", 4))
@@ -615,5 +671,7 @@ func nodeWideColumns(rows []msgs.RowData) []btable.Column {
 		paddedColumn(msgs.NodeKeyVersion, "Version", widestValue(rows, msgs.NodeKeyVersion, "Version")),
 		paddedColumn(msgs.NodeKeyInternalIP, "InternalIP", widestValue(rows, msgs.NodeKeyInternalIP, "InternalIP")),
 		paddedColumn(msgs.NodeKeyOS, "OS/Arch", widestValue(rows, msgs.NodeKeyOS, "OS/Arch")),
+		paddedColumn(msgs.NodeKeyCPU, "CPU", widestValue(rows, msgs.NodeKeyCPU, "CPU")),
+		paddedColumn(msgs.NodeKeyMemory, "Memory", widestValue(rows, msgs.NodeKeyMemory, "Memory")),
 	}
 }

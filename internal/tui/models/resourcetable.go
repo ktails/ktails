@@ -108,6 +108,20 @@ func specFor(kind msgs.ResourceKind) tableSpec {
 			displayRow:    ingressDisplayRow,
 			freezeColumns: 1,
 		}
+	case msgs.KindPodDisruptionBudgets:
+		return tableSpec{
+			narrowColumns: pdbNarrowColumns,
+			wideColumns:   pdbWideColumns,
+			displayRow:    pdbDisplayRow,
+			freezeColumns: 1,
+		}
+	case msgs.KindHorizontalPodAutoscalers:
+		return tableSpec{
+			narrowColumns: hpaNarrowColumns,
+			wideColumns:   hpaWideColumns,
+			displayRow:    hpaDisplayRow,
+			freezeColumns: 1,
+		}
 	case msgs.KindNodes:
 		return tableSpec{
 			narrowColumns: nodeNarrowColumns,
@@ -145,6 +159,8 @@ func podDisplayRow(row msgs.RowData, checked bool, colors map[string]color.Color
 		msgs.PodKeyNodeIP:     row[msgs.PodKeyNodeIP],
 		msgs.PodKeyPodIP:      row[msgs.PodKeyPodIP],
 		msgs.PodKeyReady:      row[msgs.PodKeyReady],
+		msgs.PodKeyCPU:        row[msgs.PodKeyCPU],
+		msgs.PodKeyMemory:     row[msgs.PodKeyMemory],
 	}
 }
 
@@ -257,6 +273,32 @@ func ingressDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) 
 	}
 }
 
+func pdbDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+	return btable.RowData{
+		msgs.PDBKeyContext:            contextCell(rowContext(row), colors),
+		msgs.PDBKeyNamespace:          row[msgs.PDBKeyNamespace],
+		msgs.PDBKeyName:               row[msgs.PDBKeyName],
+		msgs.PDBKeyMinMaxAvailable:    row[msgs.PDBKeyMinMaxAvailable],
+		msgs.PDBKeyAllowedDisruptions: row[msgs.PDBKeyAllowedDisruptions],
+		msgs.PDBKeyAge:                row[msgs.PDBKeyAge],
+		msgs.PDBKeyCurrentHealthy:     row[msgs.PDBKeyCurrentHealthy],
+		msgs.PDBKeyDesiredHealthy:     row[msgs.PDBKeyDesiredHealthy],
+	}
+}
+
+func hpaDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+	return btable.RowData{
+		msgs.HPAKeyContext:   contextCell(rowContext(row), colors),
+		msgs.HPAKeyNamespace: row[msgs.HPAKeyNamespace],
+		msgs.HPAKeyName:      row[msgs.HPAKeyName],
+		msgs.HPAKeyReference: row[msgs.HPAKeyReference],
+		msgs.HPAKeyMinMax:    row[msgs.HPAKeyMinMax],
+		msgs.HPAKeyReplicas:  row[msgs.HPAKeyReplicas],
+		msgs.HPAKeyTargets:   row[msgs.HPAKeyTargets],
+		msgs.HPAKeyAge:       row[msgs.HPAKeyAge],
+	}
+}
+
 func nodeDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
 		msgs.NodeKeyContext:    contextCell(rowContext(row), colors),
@@ -267,6 +309,8 @@ func nodeDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) bta
 		msgs.NodeKeyVersion:    row[msgs.NodeKeyVersion],
 		msgs.NodeKeyInternalIP: row[msgs.NodeKeyInternalIP],
 		msgs.NodeKeyOS:         row[msgs.NodeKeyOS],
+		msgs.NodeKeyCPU:        row[msgs.NodeKeyCPU],
+		msgs.NodeKeyMemory:     row[msgs.NodeKeyMemory],
 	}
 }
 

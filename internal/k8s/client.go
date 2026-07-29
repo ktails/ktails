@@ -17,18 +17,25 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
+	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 	"sigs.k8s.io/yaml"
 )
 
 // Client wraps Kubernetes client operations with support for multiple contexts
 type Client struct {
 	clientsByContext map[string]kubernetes.Interface
-	rawConfig        *api.Config
-	kubeconfigPath   string
-	currentContext   string
-	mu               sync.RWMutex // Protect concurrent access
+	// metricsClientsByContext is lazily populated the same way as
+	// clientsByContext, but never eagerly (unlike NewClient's current-context
+	// pre-create): a cluster without metrics-server installed would fail that
+	// pre-create for a feature most users of a given context may never open.
+	metricsClientsByContext map[string]metricsclientset.Interface
+	rawConfig               *api.Config
+	kubeconfigPath          string
+	currentContext          string
+	mu                      sync.RWMutex // Protect concurrent access
 }
 
 // PodInfo contains pod metadata
@@ -97,10 +104,11 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	}
 
 	client := &Client{
-		clientsByContext: make(map[string]kubernetes.Interface),
-		rawConfig:        &rawConfig,
-		kubeconfigPath:   kubeconfigPath,
-		currentContext:   currentContext,
+		clientsByContext:        make(map[string]kubernetes.Interface),
+		metricsClientsByContext: make(map[string]metricsclientset.Interface),
+		rawConfig:               &rawConfig,
+		kubeconfigPath:          kubeconfigPath,
+		currentContext:          currentContext,
 	}
 
 	// Pre-create client for current context and test connection
@@ -111,8 +119,12 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	return client, nil
 }
 
-// createClientForContext creates a new clientset for the specified context
-func (c *Client) createClientForContext(contextName string) (*kubernetes.Clientset, error) {
+// buildRestConfigForContext builds the *rest.Config for one kubeconfig
+// context — the shared first step behind both createClientForContext and
+// createMetricsClientForContext, since a metrics.k8s.io client talks to the
+// same apiserver (metrics-server is registered as an aggregated API) and
+// needs the identical connection config, not a separate one.
+func (c *Client) buildRestConfigForContext(contextName string) (*rest.Config, error) {
 	// Check if context exists in config
 	if _, exists := c.rawConfig.Contexts[contextName]; !exists {
 		return nil, fmt.Errorf("context %s not found in kubeconfig", contextName)
@@ -131,10 +143,18 @@ func (c *Client) createClientForContext(contextName string) (*kubernetes.Clients
 		configOverrides,
 	)
 
-	// Build rest config for this context
 	restConfig, err := clientConfig.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client config for context %s: %w", contextName, err)
+	}
+	return restConfig, nil
+}
+
+// createClientForContext creates a new clientset for the specified context
+func (c *Client) createClientForContext(contextName string) (*kubernetes.Clientset, error) {
+	restConfig, err := c.buildRestConfigForContext(contextName)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create clientset
@@ -153,6 +173,52 @@ func (c *Client) createClientForContext(contextName string) (*kubernetes.Clients
 	}
 
 	return clientset, nil
+}
+
+// createMetricsClientForContext creates a new metrics.k8s.io clientset for
+// the specified context, reusing the same rest.Config as the regular
+// clientset. Unlike createClientForContext, it doesn't test the connection
+// eagerly — metrics-server is an optional, commonly-absent aggregated API,
+// so callers (ListPodMetrics/ListNodeMetrics) are expected to handle a
+// failing call, not a failing client construction.
+func (c *Client) createMetricsClientForContext(contextName string) (metricsclientset.Interface, error) {
+	restConfig, err := c.buildRestConfigForContext(contextName)
+	if err != nil {
+		return nil, err
+	}
+
+	clientset, err := metricsclientset.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metrics client for context %s: %w", contextName, err)
+	}
+	return clientset, nil
+}
+
+// GetMetricsClientForContext returns a metrics.k8s.io clientset for the
+// specified context, creating and caching it if it doesn't exist yet — the
+// same lazy-cache shape as GetClientForContext.
+func (c *Client) GetMetricsClientForContext(contextName string) (metricsclientset.Interface, error) {
+	c.mu.RLock()
+	if client, exists := c.metricsClientsByContext[contextName]; exists {
+		c.mu.RUnlock()
+		return client, nil
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if client, exists := c.metricsClientsByContext[contextName]; exists {
+		return client, nil
+	}
+
+	client, err := c.createMetricsClientForContext(contextName)
+	if err != nil {
+		return nil, err
+	}
+
+	c.metricsClientsByContext[contextName] = client
+	return client, nil
 }
 
 // GetClientForContext returns a clientset for the specified context

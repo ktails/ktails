@@ -13,9 +13,11 @@ import (
 	"sync"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
@@ -26,6 +28,12 @@ import (
 // EndpointIPsPlaceholder is shown in the svc Endpoint IPs wide-mode column
 // until the lazy endpoint fetch resolves for that context+namespace.
 const EndpointIPsPlaceholder = "…"
+
+// MetricsPlaceholder is shown in the Pods/Nodes CPU/Memory wide-mode columns
+// until the periodic metrics-server fetch resolves for that context — or
+// permanently, if that context's cluster has no metrics-server installed
+// (see Supervisor.PodMetricsUnavailable/NodeMetricsUnavailable).
+const MetricsPlaceholder = "-"
 
 // resourceVersionLess reports whether a is an older resourceVersion than b.
 // Kubernetes resourceVersions are opaque strings but are numeric in every
@@ -171,6 +179,10 @@ func newCacheFor(kind msgs.ResourceKind) rowCache {
 		return newResourceCache(daemonSetRow)
 	case msgs.KindIngresses:
 		return newResourceCache(ingressRow)
+	case msgs.KindPodDisruptionBudgets:
+		return newResourceCache(pdbRow)
+	case msgs.KindHorizontalPodAutoscalers:
+		return newResourceCache(hpaRow)
 	case msgs.KindNodes:
 		return newResourceCache(nodeRow)
 	}
@@ -191,6 +203,9 @@ func podRow(pod *corev1.Pod, kubeContext string) msgs.RowData {
 		msgs.PodKeyNodeIP:     info.NodeIP,
 		msgs.PodKeyPodIP:      info.PodIP,
 		msgs.PodKeyReady:      info.ReadyContainers,
+		msgs.PodKeyCPU:        MetricsPlaceholder,
+		msgs.PodKeyMemory:     MetricsPlaceholder,
+		msgs.KeyCreatedAt:     pod.GetCreationTimestamp().Time,
 	}
 }
 
@@ -206,6 +221,7 @@ func deploymentRow(dep *appsv1.Deployment, kubeContext string) msgs.RowData {
 		msgs.DeployKeyAvailable: strconv.FormatInt(int64(info.AvailableReplicas), 10),
 		msgs.DeployKeyUpdated:   strconv.FormatInt(int64(info.UpdatedReplicas), 10),
 		msgs.DeployKeySelector:  info.Selector,
+		msgs.KeyCreatedAt:       dep.GetCreationTimestamp().Time,
 	}
 }
 
@@ -222,6 +238,7 @@ func serviceRow(svc *corev1.Service, kubeContext string) msgs.RowData {
 		msgs.SvcKeySelector:    info.Selector,
 		msgs.SvcKeyExternalIP:  info.ExternalIP,
 		msgs.SvcKeyEndpointIPs: EndpointIPsPlaceholder,
+		msgs.KeyCreatedAt:      svc.GetCreationTimestamp().Time,
 	}
 }
 
@@ -234,6 +251,7 @@ func configMapRow(cm *corev1.ConfigMap, kubeContext string) msgs.RowData {
 		msgs.ConfigMapKeyAge:       info.Age,
 		msgs.ConfigMapKeyContext:   kubeContext,
 		msgs.ConfigMapKeyKeyNames:  strings.Join(info.Keys, ","),
+		msgs.KeyCreatedAt:          cm.GetCreationTimestamp().Time,
 	}
 }
 
@@ -248,6 +266,7 @@ func secretRow(secret *corev1.Secret, kubeContext string) msgs.RowData {
 		msgs.SecretKeyKeys:      strconv.Itoa(len(info.Keys)),
 		msgs.SecretKeyAge:       info.Age,
 		msgs.SecretKeyContext:   kubeContext,
+		msgs.KeyCreatedAt:       secret.GetCreationTimestamp().Time,
 	}
 }
 
@@ -261,6 +280,7 @@ func jobRow(job *batchv1.Job, kubeContext string) msgs.RowData {
 		msgs.JobKeyAge:         info.Age,
 		msgs.JobKeyContext:     kubeContext,
 		msgs.JobKeyStatus:      info.Status,
+		msgs.KeyCreatedAt:      job.GetCreationTimestamp().Time,
 	}
 }
 
@@ -274,6 +294,7 @@ func cronJobRow(cj *batchv1.CronJob, kubeContext string) msgs.RowData {
 		msgs.CronJobKeyAge:           info.Age,
 		msgs.CronJobKeyContext:       kubeContext,
 		msgs.CronJobKeyLastScheduled: info.LastScheduled,
+		msgs.KeyCreatedAt:            cj.GetCreationTimestamp().Time,
 	}
 }
 
@@ -286,6 +307,7 @@ func statefulSetRow(sts *appsv1.StatefulSet, kubeContext string) msgs.RowData {
 		msgs.StatefulSetKeyAge:       info.Age,
 		msgs.StatefulSetKeyContext:   kubeContext,
 		msgs.StatefulSetKeySelector:  info.Selector,
+		msgs.KeyCreatedAt:            sts.GetCreationTimestamp().Time,
 	}
 }
 
@@ -298,6 +320,7 @@ func daemonSetRow(ds *appsv1.DaemonSet, kubeContext string) msgs.RowData {
 		msgs.DaemonSetKeyAge:       info.Age,
 		msgs.DaemonSetKeyContext:   kubeContext,
 		msgs.DaemonSetKeySelector:  info.Selector,
+		msgs.KeyCreatedAt:          ds.GetCreationTimestamp().Time,
 	}
 }
 
@@ -311,6 +334,37 @@ func ingressRow(ing *networkingv1.Ingress, kubeContext string) msgs.RowData {
 		msgs.IngressKeyAge:       info.Age,
 		msgs.IngressKeyContext:   kubeContext,
 		msgs.IngressKeyBackends:  strings.Join(info.Backends, ","),
+		msgs.KeyCreatedAt:        ing.GetCreationTimestamp().Time,
+	}
+}
+
+func pdbRow(pdb *policyv1.PodDisruptionBudget, kubeContext string) msgs.RowData {
+	info := k8s.PodDisruptionBudgetToPodDisruptionBudgetInfo(pdb)
+	return msgs.RowData{
+		msgs.PDBKeyName:               info.Name,
+		msgs.PDBKeyNamespace:          info.Namespace,
+		msgs.PDBKeyMinMaxAvailable:    info.MinMaxAvailable,
+		msgs.PDBKeyAllowedDisruptions: strconv.FormatInt(int64(info.AllowedDisruptions), 10),
+		msgs.PDBKeyAge:                info.Age,
+		msgs.PDBKeyContext:            kubeContext,
+		msgs.PDBKeyCurrentHealthy:     strconv.FormatInt(int64(info.CurrentHealthy), 10),
+		msgs.PDBKeyDesiredHealthy:     strconv.FormatInt(int64(info.DesiredHealthy), 10),
+		msgs.KeyCreatedAt:             pdb.GetCreationTimestamp().Time,
+	}
+}
+
+func hpaRow(hpa *autoscalingv2.HorizontalPodAutoscaler, kubeContext string) msgs.RowData {
+	info := k8s.HorizontalPodAutoscalerToHorizontalPodAutoscalerInfo(hpa)
+	return msgs.RowData{
+		msgs.HPAKeyName:      info.Name,
+		msgs.HPAKeyNamespace: info.Namespace,
+		msgs.HPAKeyReference: info.Reference,
+		msgs.HPAKeyMinMax:    strconv.Itoa(int(info.MinReplicas)) + "-" + strconv.Itoa(int(info.MaxReplicas)),
+		msgs.HPAKeyReplicas:  strconv.Itoa(int(info.CurrentReplicas)),
+		msgs.HPAKeyTargets:   info.Targets,
+		msgs.HPAKeyAge:       info.Age,
+		msgs.HPAKeyContext:   kubeContext,
+		msgs.KeyCreatedAt:    hpa.GetCreationTimestamp().Time,
 	}
 }
 
@@ -328,5 +382,8 @@ func nodeRow(node *corev1.Node, kubeContext string) msgs.RowData {
 		msgs.NodeKeyContext:    kubeContext,
 		msgs.NodeKeyInternalIP: info.InternalIP,
 		msgs.NodeKeyOS:         info.OS,
+		msgs.NodeKeyCPU:        MetricsPlaceholder,
+		msgs.NodeKeyMemory:     MetricsPlaceholder,
+		msgs.KeyCreatedAt:      node.GetCreationTimestamp().Time,
 	}
 }
