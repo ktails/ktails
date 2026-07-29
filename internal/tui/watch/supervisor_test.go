@@ -24,6 +24,13 @@ import (
 type fakeCluster struct {
 	watchers map[msgs.ResourceKind]*kwatch.FakeWatcher
 	err      error
+
+	// gotListNamespace/gotWatchNamespace record the namespace argument each
+	// List/Watch call for KindDeployments was actually made with, so tests
+	// can assert Supervisor threads a context's scoped namespace through
+	// rather than always going cluster-wide.
+	gotListNamespace  string
+	gotWatchNamespace string
 }
 
 func newFakeCluster() *fakeCluster {
@@ -45,7 +52,8 @@ func (f *fakeCluster) WatchPods(context.Context, string, string) (kwatch.Interfa
 	return f.watch(msgs.KindPods)
 }
 
-func (f *fakeCluster) WatchDeployments(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchDeployments(_ context.Context, _ string, namespace string) (kwatch.Interface, error) {
+	f.gotWatchNamespace = namespace
 	return f.watch(msgs.KindDeployments)
 }
 
@@ -92,7 +100,8 @@ func (f *fakeCluster) ListPods(context.Context, string, string) ([]*corev1.Pod, 
 	return nil, nil
 }
 
-func (f *fakeCluster) ListDeployments(context.Context, string, string) ([]*appsv1.Deployment, error) {
+func (f *fakeCluster) ListDeployments(_ context.Context, _ string, namespace string) ([]*appsv1.Deployment, error) {
+	f.gotListNamespace = namespace
 	return nil, nil
 }
 
@@ -171,7 +180,7 @@ func driveToOpened(t *testing.T, s *Supervisor, cmd tea.Cmd) msgs.WatchOpenedMsg
 func startPodsWatch(t *testing.T, s *Supervisor) tea.Cmd {
 	t.Helper()
 	var waitCmd tea.Cmd
-	for _, cmd := range s.StartContext("ctx1") {
+	for _, cmd := range s.StartContext("ctx1", "") {
 		opened := driveToOpened(t, s, cmd)
 		upd, next, handled := s.Handle(opened)
 		if !handled || upd == nil || !upd.RowsChanged || next == nil {
@@ -196,7 +205,7 @@ func TestSupervisor_OpenWithNoEventsStillMarksLoaded(t *testing.T) {
 	s := NewSupervisor(cluster)
 
 	var secretsOpened msgs.WatchOpenedMsg
-	for _, cmd := range s.StartContext("ctx1") {
+	for _, cmd := range s.StartContext("ctx1", "") {
 		opened := driveToOpened(t, s, cmd)
 		if opened.Kind == msgs.KindSecrets {
 			secretsOpened = opened
@@ -230,7 +239,7 @@ func TestSupervisor_ListSeedsCacheBeforeWatchOpens(t *testing.T) {
 	s := NewSupervisor(cluster)
 
 	var podsCmd tea.Cmd
-	for _, cmd := range s.StartContext("ctx1") {
+	for _, cmd := range s.StartContext("ctx1", "") {
 		if opened := runCmd(t, cmd); opened != nil {
 			if lm, ok := opened.(msgs.ListLoadedMsg); ok && lm.Kind == msgs.KindPods {
 				podsCmd = cmd
@@ -402,7 +411,7 @@ func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 	s := NewSupervisor(cluster)
 
 	var svcWait tea.Cmd
-	for _, cmd := range s.StartContext("ctx1") {
+	for _, cmd := range s.StartContext("ctx1", "") {
 		opened := driveToOpened(t, s, cmd)
 		_, next, _ := s.Handle(opened)
 		if opened.Kind == msgs.KindServices {
@@ -446,7 +455,7 @@ func TestSupervisor_StartContextIsOneWatchPerKindClusterWide(t *testing.T) {
 	cluster := newFakeCluster()
 	s := NewSupervisor(cluster)
 
-	cmds := s.StartContext("ctx1")
+	cmds := s.StartContext("ctx1", "")
 	wantKinds := len(msgs.Kinds()) - 1 // every kind except KindNodes
 	if len(cmds) != wantKinds {
 		t.Fatalf("expected %d start commands (one per namespaced kind), got %d", wantKinds, len(cmds))
@@ -460,6 +469,51 @@ func TestSupervisor_StartContextIsOneWatchPerKindClusterWide(t *testing.T) {
 	}
 }
 
+// TestSupervisor_StartContextScopesToNamespace guards against a regression
+// where List/Watch calls were always issued cluster-wide (namespace=""),
+// which silently empties every list for a ServiceAccount whose RBAC only
+// grants list/watch within its own namespace (no cluster-scoped verb) — the
+// context's kubeconfig default namespace must reach the actual List/Watch
+// calls, not just live in AppState.
+func TestSupervisor_StartContextScopesToNamespace(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	var listCmd tea.Cmd
+	cmds := s.StartContext("ctx1", "team-a")
+	for i, kind := range nonNodeKinds() {
+		if kind == msgs.KindDeployments {
+			listCmd = cmds[i]
+		}
+	}
+	if listCmd == nil {
+		t.Fatal("expected a Deployments list command")
+	}
+	runCmd(t, listCmd)
+	if cluster.gotListNamespace != "team-a" {
+		t.Fatalf("expected ListDeployments to be scoped to 'team-a', got %q", cluster.gotListNamespace)
+	}
+
+	runCmd(t, s.openCmd(msgs.KindDeployments, "ctx1", s.namespaces["ctx1"], s.states[stateKey{kind: msgs.KindDeployments, context: "ctx1"}].generation, 0))
+	if cluster.gotWatchNamespace != "team-a" {
+		t.Fatalf("expected WatchDeployments to be scoped to 'team-a', got %q", cluster.gotWatchNamespace)
+	}
+}
+
+// nonNodeKinds returns msgs.Kinds() in the same order StartContext iterates
+// it, minus KindNodes, matching the []tea.Cmd StartContext returns index for
+// index.
+func nonNodeKinds() []msgs.ResourceKind {
+	var out []msgs.ResourceKind
+	for _, kind := range msgs.Kinds() {
+		if kind == msgs.KindNodes {
+			continue
+		}
+		out = append(out, kind)
+	}
+	return out
+}
+
 // TestStartContext_ExcludesNodes_StartKindAddsIt guards the Nodes gating:
 // StartContext must never open a Nodes watch on its own (MainPage gates it
 // behind a CanWatchNodes pre-flight check first), but StartKind must still
@@ -468,7 +522,7 @@ func TestStartContext_ExcludesNodes_StartKindAddsIt(t *testing.T) {
 	cluster := newFakeCluster()
 	s := NewSupervisor(cluster)
 
-	for _, cmd := range s.StartContext("ctx1") {
+	for _, cmd := range s.StartContext("ctx1", "") {
 		msg := runCmd(t, cmd)
 		if listMsg, ok := msg.(msgs.ListLoadedMsg); ok && listMsg.Kind == msgs.KindNodes {
 			t.Fatal("expected StartContext to never open a Nodes watch")

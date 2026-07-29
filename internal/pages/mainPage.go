@@ -711,11 +711,12 @@ func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
 
 // filteredRows returns watchSup.Rows(kind) narrowed to each row's context's
 // checked namespaces, or unfiltered for a context in all-namespaces mode.
-// The Namespaces pane's checked set is a display-only filter now — every
-// context watches cluster-wide regardless (see watch.Supervisor's stateKey
-// doc comment) — so this is where "which namespaces are checked" actually
-// takes effect. KindNodes is cluster-scoped and carries no namespace
-// column, so it's exempt.
+// The Namespaces pane's checked set is a display-only filter on top of
+// whatever the watch itself already returned (which may already be scoped
+// to a single namespace — see watch.Supervisor's stateKey doc comment) — so
+// this is where "which namespaces are checked" actually takes effect.
+// KindNodes is cluster-scoped and carries no namespace column, so it's
+// exempt.
 func (m *MainPage) filteredRows(kind msgs.ResourceKind) []msgs.RowData {
 	rows := m.watchSup.Rows(kind)
 	if kind == msgs.KindNodes {
@@ -775,7 +776,7 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 		for _, kind := range m.tabs {
 			m.appState.SetLoading(kind, added.ContextName, true)
 		}
-		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName)...)
+		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName, added.DefaultNamespace)...)
 		cmdSequence = append(cmdSequence, cmds.LoadNamespacesCmd(m.Client, added.ContextName))
 		// Nodes is cluster-scoped and commonly restricted — check access
 		// before opening its watch (see applyNodesAccess) instead of
@@ -828,7 +829,8 @@ func (m *MainPage) applyNodesAccess(msg msgs.NodesAccessMsg) tea.Cmd {
 
 // applyNamespacesState reconciles a checked-namespace change from the
 // Namespaces pane for one context. This is purely a display-side filter
-// change now — every context's watch is cluster-wide regardless of which
+// change now — each context's watch is already scoped to its kubeconfig
+// default namespace (or cluster-wide, with none pinned) regardless of which
 // namespaces are checked (see watch.Supervisor's stateKey doc comment), so
 // there's no watch to start or stop here, just AppState bookkeeping
 // followed by re-filtering each tab's already-loaded rows. The pane is

@@ -23,8 +23,9 @@ import (
 // needs from a cluster connection. *k8s.Client is the production adapter; a
 // fake serving pre-canned watch.Interface streams (and List results) is the
 // test adapter. Each Watch<Kind> has a matching List<Kind>, used for the
-// fast initial paint before the watch opens — see start. Every call is
-// always made with namespace="" (cluster-wide) — see stateKey.
+// fast initial paint before the watch opens — see start. Every call is made
+// with the context's kubeconfig default namespace, or "" (cluster-wide) for
+// a context with none pinned — see stateKey and StartContext.
 type Cluster interface {
 	WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
 	ListPods(ctx context.Context, kubeContext, namespace string) ([]*corev1.Pod, error)
@@ -88,12 +89,13 @@ type watchState struct {
 	failures   int
 }
 
-// stateKey identifies one watch stream: one per (kind, context), always
-// watching every namespace at once (namespace="" against the Cluster seam —
-// see Cluster's doc comment). Which namespaces are actually shown is a
-// display-only concern handled by a local filter downstream (MainPage), not
-// by the Supervisor — the Namespaces pane's checked-namespace set never
-// starts, stops, or otherwise touches a watch.
+// stateKey identifies one watch stream: one per (kind, context), scoped to
+// the context's kubeconfig default namespace (or every namespace, for a
+// context with none pinned) — see Cluster's doc comment and StartContext.
+// Within that scope, which namespaces are actually shown is a display-only
+// concern handled by a local filter downstream (MainPage), not by the
+// Supervisor — the Namespaces pane's checked-namespace set never starts,
+// stops, or otherwise touches a watch.
 type stateKey struct {
 	kind    msgs.ResourceKind
 	context string
@@ -134,6 +136,13 @@ type Supervisor struct {
 	cluster Cluster
 	states  map[stateKey]*watchState
 
+	// namespaces holds the kubeconfig default namespace each context's
+	// watches/lists are scoped to ("" means cluster-wide) — set by
+	// StartContext, consulted by start so a restart (Restart) or a
+	// StartKind call added after the fact (KindNodes) reuses the same
+	// scope without needing to thread a namespace through every caller.
+	namespaces map[string]string
+
 	// Lazily-fetched svc Endpoint IPs, overlaid onto service rows by Rows:
 	// endpoints holds the fetched IPs per context (namespace/service name ->
 	// IPs, namespace-qualified since a cluster-wide fetch can see the same
@@ -149,18 +158,26 @@ func NewSupervisor(cluster Cluster) *Supervisor {
 	return &Supervisor{
 		cluster:          cluster,
 		states:           make(map[stateKey]*watchState),
+		namespaces:       make(map[string]string),
 		endpoints:        make(map[string]map[string][]string),
 		endpointsFetched: make(map[string]bool),
 	}
 }
 
-// StartContext opens one cluster-wide watch per namespaced resource kind for
-// a context. KindNodes (cluster-scoped) is deliberately excluded here — it's
-// gated behind a permission pre-check (see StartKind and
+// StartContext opens one watch per namespaced resource kind for a context,
+// scoped to namespace (the context's kubeconfig default namespace, or "" for
+// cluster-wide — see AppState.DefaultNamespace). Scoping to the pinned
+// namespace, rather than always going cluster-wide, matters for RBAC: a
+// ServiceAccount granted edit only within its own namespace has no
+// cluster-scoped list/watch verb at all, so a cluster-wide request is
+// outright Forbidden even though the namespaced one would succeed.
+// KindNodes (cluster-scoped) is deliberately excluded here — it's gated
+// behind a permission pre-check (see StartKind and
 // cmds.CheckNodesAccessCmd) rather than started unconditionally, since it's
 // commonly restricted and opening a watch that will just fail is wasted work
 // the check avoids. Restarts cleanly if already watched.
-func (s *Supervisor) StartContext(kubeContext string) []tea.Cmd {
+func (s *Supervisor) StartContext(kubeContext, namespace string) []tea.Cmd {
+	s.namespaces[kubeContext] = namespace
 	var cmds []tea.Cmd
 	for _, kind := range msgs.Kinds() {
 		if kind == msgs.KindNodes {
@@ -201,7 +218,7 @@ func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext string) tea.Cmd {
 	}
 	st.generation++
 	st.failures = 0
-	return s.listCmd(kind, kubeContext, st.generation)
+	return s.listCmd(kind, kubeContext, s.namespaces[kubeContext], st.generation)
 }
 
 // Restart force-restarts one kind's watches across the given contexts — the
@@ -239,6 +256,7 @@ func (s *Supervisor) StopContext(kubeContext string) {
 		}
 		delete(s.states, key)
 	}
+	delete(s.namespaces, kubeContext)
 	delete(s.endpoints, kubeContext)
 	delete(s.endpointsFetched, kubeContext)
 }
@@ -293,11 +311,11 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 			// the same failure, reported through the existing
 			// WatchClosedMsg path (immediate give-up on Forbidden, backoff
 			// otherwise) rather than duplicating that logic here.
-			return nil, s.openCmd(msg.Kind, msg.Context, msg.Generation, 0), true
+			return nil, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, 0), true
 		}
 		st.cache.seed(msg.Objects)
 		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
-		return upd, s.openCmd(msg.Kind, msg.Context, msg.Generation, 0), true
+		return upd, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, 0), true
 
 	case msgs.WatchOpenedMsg:
 		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
@@ -344,7 +362,7 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 				strings.ToLower(msg.Kind.Title()), msg.Context, st.failures, msg.Err)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
 		}
-		return nil, s.openCmd(msg.Kind, msg.Context, msg.Generation, backoffDelay(st.failures)), true
+		return nil, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, backoffDelay(st.failures)), true
 	}
 	return nil, nil, false
 }
@@ -461,28 +479,28 @@ func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, ku
 	return nil
 }
 
-// listCmd issues the one-shot, cluster-wide (namespace="") List() call for
-// one (kind, context), reporting the outcome as a ListLoadedMsg carrying the
-// generation it was issued under.
-func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext string, generation int) tea.Cmd {
+// listCmd issues the one-shot List() call for one (kind, context), scoped to
+// namespace ("" for cluster-wide), reporting the outcome as a ListLoadedMsg
+// carrying the generation it was issued under.
+func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int) tea.Cmd {
 	list := s.listFn(kind)
 	return func() tea.Msg {
-		objs, err := list(context.Background(), kubeContext, "")
+		objs, err := list(context.Background(), kubeContext, namespace)
 		return msgs.ListLoadedMsg{Kind: kind, Context: kubeContext, Generation: generation, Objects: objs, Err: err}
 	}
 }
 
-// openCmd opens (after an optional backoff delay) a cluster-wide
-// (namespace="") watch for one (kind, context), reporting the outcome as a
-// WatchOpenedMsg or WatchClosedMsg carrying the generation it was issued
-// under.
-func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext string, generation int, delay time.Duration) tea.Cmd {
+// openCmd opens (after an optional backoff delay) a watch for one (kind,
+// context), scoped to namespace ("" for cluster-wide), reporting the outcome
+// as a WatchOpenedMsg or WatchClosedMsg carrying the generation it was
+// issued under.
+func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, delay time.Duration) tea.Cmd {
 	open := s.watchFn(kind)
 	return func() tea.Msg {
 		if delay > 0 {
 			time.Sleep(delay)
 		}
-		w, err := open(context.Background(), kubeContext, "")
+		w, err := open(context.Background(), kubeContext, namespace)
 		if err != nil {
 			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
 		}
