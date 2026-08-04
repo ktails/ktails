@@ -92,6 +92,13 @@ type MainPage struct {
 	// UI overlays
 	errorMessage string
 	showHelp     bool
+	// showErrorSummary toggles the non-modal context-error summary overlay
+	// (the "e" keybind) — separate from errorMessage's transient single-
+	// error overlay, and from whether any context actually has an error
+	// (snapshot.Errors): the overlay only renders when both this is true
+	// and errors exist, so a stale toggle from a since-resolved error
+	// doesn't resurface it (see renderView).
+	showErrorSummary bool
 
 	// Auto-refresh — a self-rescheduling tick. Table data itself is kept
 	// current by the watch streams; the tick's only remaining job is to
@@ -370,8 +377,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "esc":
 			// Peel dismissals one at a time: unfocus the detail/log pane, then
-			// close it, then inline error, then context errors. Detail and Logs
-			// are mutually exclusive, so only one of their branches is ever live.
+			// close it, then inline error, then the error summary. Detail and
+			// Logs are mutually exclusive, so only one of their branches is
+			// ever live.
 			if m.detailFocused {
 				m.detailFocused = false
 				m.updateFocusStates()
@@ -386,12 +394,15 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyContentSizes()
 			} else if m.errorMessage != "" {
 				m.errorMessage = ""
-			} else {
-				m.appState.ClearErrors()
+			} else if m.showErrorSummary {
+				m.showErrorSummary = false
 			}
 			return m, nil
 		case "?":
 			m.showHelp = true
+			return m, nil
+		case "e":
+			m.showErrorSummary = !m.showErrorSummary
 			return m, nil
 		case "R":
 			m.autoRefresh = !m.autoRefresh
@@ -1455,7 +1466,7 @@ func (m *MainPage) renderView() string {
 	if m.errorMessage != "" {
 		return m.renderErrorOverlay(m.errorMessage)
 	}
-	if len(snapshot.Errors) > 0 {
+	if m.showErrorSummary && len(snapshot.Errors) > 0 {
 		return m.renderErrorSummaryOverlay(snapshot.Errors)
 	}
 
@@ -1564,9 +1575,6 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	} else if activeCount > 0 {
 		statusBits = append(statusBits, fmt.Sprintf("%s: %d", activeTabName, activeCount))
 	}
-	if errCount > 0 {
-		statusBits = append(statusBits, fmt.Sprintf("⚠ %d error(s)", errCount))
-	}
 	if m.activeKind() == msgs.KindPods {
 		if checkedCount := len(m.tables[msgs.KindPods].CheckedKeys()); checkedCount > 0 {
 			statusBits = append(statusBits, fmt.Sprintf("☑ %d checked", checkedCount))
@@ -1609,11 +1617,21 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 	// Hints are the right zone's only content — a context-sensitive
 	// keybind list (§4), never state, so the two footer zones never
 	// duplicate the same kind of information.
-	hints := lipgloss.NewStyle().Foreground(p.Overlay1).Background(p.Mantle).Faint(true).Render(m.footerHints() + " ")
+	hints := lipgloss.NewStyle().Foreground(p.Overlay1).Background(p.Mantle).Faint(true).Render(m.footerHints(errCount) + " ")
 
 	gap := styles.StatusBar.Render("  ")
 	leftMid := lipgloss.JoinHorizontal(lipgloss.Top, left, gap, mid, gap, status)
+
+	// The error indicator gets its own Red segment (distinct from the
+	// generic Green status text) and its own "(e)" hint, since it's the
+	// entry point into the non-modal error summary (see the "e" keybind) —
+	// a one-line "N errors" isn't itself informative enough to act on.
 	rightSection := hints
+	if errCount > 0 {
+		errorSegment := lipgloss.NewStyle().Foreground(p.Red).Background(p.Mantle).Bold(true).Padding(0, 1).
+			Render(fmt.Sprintf("⚠ %d context error(s) (e)", errCount))
+		rightSection = lipgloss.JoinHorizontal(lipgloss.Top, errorSegment, gap, hints)
+	}
 	spacerWidth := m.width - lipgloss.Width(leftMid) - lipgloss.Width(rightSection)
 	if spacerWidth < 1 {
 		spacerWidth = 1
@@ -1626,20 +1644,27 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 // footerHints returns the right footer zone's keybind hint list (§4),
 // picking the 4-6 keys relevant to whatever currently has focus rather than
 // always showing the same fixed set — e.g. "d delete" makes no sense while
-// the context picker has focus.
-func (m *MainPage) footerHints() string {
+// the context picker has focus. errCount appends "e errors" when nonzero,
+// so the "e" toggle for the non-modal error summary is only advertised when
+// there's actually something to show.
+func (m *MainPage) footerHints(errCount int) string {
+	var hints string
 	switch {
 	case m.showLogs:
-		return "↑↓ scroll  w wrap  c isolate  esc close  ctrl+c quit"
+		hints = "↑↓ scroll  w wrap  c isolate  esc close  ctrl+c quit"
 	case m.showDetail:
-		return "↑↓ scroll  y yaml  ctrl+r focus  esc close  ctrl+c quit"
+		hints = "↑↓ scroll  y yaml  ctrl+r focus  esc close  ctrl+c quit"
 	case m.focus == focusLeftPane:
-		return "space select  ↵ confirm  tab focus  ?  help  ctrl+c quit"
+		hints = "space select  ↵ confirm  tab focus  ?  help  ctrl+c quit"
 	case m.activeKind() == msgs.KindPods:
-		return "/ filter  [ ] tabs  space check  l logs  d describe  ?  help"
+		hints = "/ filter  [ ] tabs  space check  l logs  d describe  ?  help"
 	default:
-		return "/ filter  [ ] tabs  d describe  r refresh  ?  help  ctrl+c quit"
+		hints = "/ filter  [ ] tabs  d describe  r refresh  ?  help  ctrl+c quit"
 	}
+	if errCount > 0 {
+		hints += "  e errors"
+	}
+	return hints
 }
 
 // helpKeyColWidth is the fixed width of the key-binding column in the help
@@ -1680,6 +1705,7 @@ var helpBindings = []helpBinding{
 	{"y (detail focus)", "Jump to the YAML section"},
 	{"Home / End", "Jump to top / bottom of detail/log pane"},
 	{"Esc", "Unfocus, then close pane / overlay / dismiss error"},
+	{"e", "Toggle the context-error summary (when any context has an error)"},
 	{"?", "Toggle this help"},
 	{"Ctrl+C", "Quit"},
 }
@@ -1856,7 +1882,7 @@ func (m *MainPage) renderErrorSummaryOverlay(errors map[string]string) string {
 		bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s", ctx, errors[ctx]))
 	}
 	body := lipgloss.NewStyle().Foreground(p.Text).Render(strings.Join(bodyLines, "\n"))
-	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc to dismiss")
+	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc/e to dismiss")
 
 	content := strings.Join([]string{title, sep, body, "", hint}, "\n")
 	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box.Render(content))
