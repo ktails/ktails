@@ -362,6 +362,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch keypress {
 		case "ctrl+c":
 			m.stopLogStream()
+			m.watchSup.Shutdown()
 			return m, tea.Quit
 		case "tab", "shift+tab":
 			m.toggleFocus()

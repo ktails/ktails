@@ -704,6 +704,32 @@ func TestSupervisor_ReconnectRelistsAndDropsDeletedObjects(t *testing.T) {
 	}
 }
 
+// TestSupervisor_ShutdownCancelsPendingBackoffSleep guards the "goroutines
+// linger past quit sleeping out a stale backoff delay" fix: a reconnect cmd
+// with a long delay must return promptly (nil, swallowed by the generation
+// guard downstream) once Shutdown is called, rather than sleeping the full
+// delay out first.
+func TestSupervisor_ShutdownCancelsPendingBackoffSleep(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	cmd := s.listCmd(msgs.KindPods, "ctx1", "", 1, time.Hour)
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+
+	s.Shutdown()
+
+	select {
+	case msg := <-done:
+		if msg != nil {
+			t.Fatalf("expected the cancelled sleep to yield a nil msg, got %#v", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected Shutdown to cancel the pending backoff sleep promptly")
+	}
+}
+
 func TestBackoffDelay(t *testing.T) {
 	cases := []struct {
 		failures int

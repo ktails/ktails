@@ -173,9 +173,18 @@ type Supervisor struct {
 	podMetricsUnavailable  map[string]bool
 	nodeMetrics            map[string]map[string]msgs.ResourceUsage // context -> node name -> usage
 	nodeMetricsUnavailable map[string]bool
+
+	// ctx/cancel bound every backoff/reconnect sleep in listCmd/openCmd —
+	// cancelled by Shutdown so those goroutines return immediately on quit
+	// instead of sleeping out a stale backoff delay first. This is bounded
+	// waste, not a leak (the generation guard already drops the eventual
+	// result), so it's a cheap improvement rather than a correctness fix.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewSupervisor(cluster Cluster) *Supervisor {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Supervisor{
 		cluster:                cluster,
 		states:                 make(map[stateKey]*watchState),
@@ -186,7 +195,16 @@ func NewSupervisor(cluster Cluster) *Supervisor {
 		podMetricsUnavailable:  make(map[string]bool),
 		nodeMetrics:            make(map[string]map[string]msgs.ResourceUsage),
 		nodeMetricsUnavailable: make(map[string]bool),
+		ctx:                    ctx,
+		cancel:                 cancel,
 	}
+}
+
+// Shutdown cancels every pending backoff/reconnect sleep — call once, from
+// the app's quit path, so those goroutines don't linger past the program
+// exiting just to open a watch nothing will ever read from.
+func (s *Supervisor) Shutdown() {
+	s.cancel()
 }
 
 // StartContext opens one watch per namespaced resource kind for a context,
@@ -551,7 +569,11 @@ func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 	list := s.listFn(kind)
 	return func() tea.Msg {
 		if delay > 0 {
-			time.Sleep(delay)
+			select {
+			case <-time.After(delay):
+			case <-s.ctx.Done():
+				return nil // swallowed; generation guard makes any late msg harmless anyway
+			}
 		}
 		objs, err := list(context.Background(), kubeContext, namespace)
 		return msgs.ListLoadedMsg{Kind: kind, Context: kubeContext, Generation: generation, Objects: objs, Err: err}
@@ -566,7 +588,11 @@ func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 	open := s.watchFn(kind)
 	return func() tea.Msg {
 		if delay > 0 {
-			time.Sleep(delay)
+			select {
+			case <-time.After(delay):
+			case <-s.ctx.Done():
+				return nil // swallowed; generation guard makes any late msg harmless anyway
+			}
 		}
 		w, err := open(context.Background(), kubeContext, namespace)
 		if err != nil {
