@@ -450,13 +450,27 @@ type WatchOpenedMsg struct {
 	Watcher    watch.Interface
 }
 
-// WatchEventMsg carries a freshly rebuilt row set for one (kind, context)
-// watch cache, after applying one or more buffered watch events.
+// WatchEventMsg reports that one (kind, context) watch cache changed after
+// applying one or more buffered watch events. It deliberately carries no row
+// data — callers rebuild rows via Supervisor.Rows(kind) on the resulting
+// WatchFlushMsg, the single source of truth for row conversion (a second
+// copy computed here was previously discarded unread by everything outside
+// tests, paying for row conversion twice per event).
 type WatchEventMsg struct {
 	Kind       ResourceKind
 	Context    string
 	Generation int
-	Rows       []RowData
+}
+
+// WatchFlushMsg fires after a short coalescing delay to convert a burst of
+// WatchEventMsgs into a single row/UI rebuild — client-go's watch channel is
+// unbuffered, so a rollout or mass change arrives as many individual events,
+// each of which would otherwise trigger its own full Rows/filter/sort/render
+// cycle.
+type WatchFlushMsg struct {
+	Kind       ResourceKind
+	Context    string
+	Generation int
 }
 
 // WatchClosedMsg reports that one (kind, context) watch ended, either

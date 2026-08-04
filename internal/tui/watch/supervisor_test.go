@@ -299,6 +299,26 @@ func TestSupervisor_ListSeedsCacheBeforeWatchOpens(t *testing.T) {
 	}
 }
 
+// deliverEventAndFlush drives a WatchEventMsg through Handle — which now
+// schedules a coalescing WatchFlushMsg instead of reporting RowsChanged
+// directly, see the 75ms debounce in the WatchEventMsg arm — then delivers
+// the flush message it would have scheduled (constructed directly rather
+// than executing the real tea.Tick, so tests don't wait out the debounce),
+// returning the flush's resulting Update and the event arm's own follow-up
+// wait command.
+func deliverEventAndFlush(t *testing.T, s *Supervisor, event msgs.WatchEventMsg) (*Update, tea.Cmd) {
+	t.Helper()
+	upd, next, handled := s.Handle(event)
+	if !handled || upd != nil || next == nil {
+		t.Fatalf("expected the event coalesced (no immediate update) with a follow-up wait command, got upd=%v next=%v handled=%v", upd, next, handled)
+	}
+	flushUpd, flushNext, handled := s.Handle(msgs.WatchFlushMsg{Kind: event.Kind, Context: event.Context, Generation: event.Generation})
+	if !handled || flushNext != nil {
+		t.Fatalf("expected WatchFlushMsg handled with no further command, got handled=%v next=%v", handled, flushNext)
+	}
+	return flushUpd, next
+}
+
 func TestSupervisor_EventFlowProducesRows(t *testing.T) {
 	cluster := newFakeCluster()
 	s := NewSupervisor(cluster)
@@ -315,17 +335,42 @@ func TestSupervisor_EventFlowProducesRows(t *testing.T) {
 		t.Fatalf("expected WatchEventMsg, got %T", msg)
 	}
 
-	upd, next, handled := s.Handle(event)
-	if !handled || next == nil {
+	upd, next := deliverEventAndFlush(t, s, event)
+	if next == nil {
 		t.Fatalf("expected event handled with a follow-up wait command")
 	}
 	if upd == nil || !upd.RowsChanged || upd.Kind != msgs.KindPods || upd.Context != "ctx1" {
-		t.Fatalf("expected a RowsChanged update for (Pods, ctx1), got %+v", upd)
+		t.Fatalf("expected a RowsChanged update for (Pods, ctx1) from the flush, got %+v", upd)
 	}
 
 	rows := s.Rows(msgs.KindPods)
 	if len(rows) != 1 || rows[0][msgs.PodKeyName] != "pod-a" {
 		t.Fatalf("expected pod-a in supervisor rows, got %+v", rows)
+	}
+}
+
+// TestSupervisor_BurstOfEventsSharesOneFlush guards the coalescing itself:
+// a second WatchEventMsg arriving before the first's flush fires must not
+// schedule a second flush — it should return only the follow-up wait
+// command, since one flush is already pending.
+func TestSupervisor_BurstOfEventsSharesOneFlush(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+	startPodsWatch(t, s)
+
+	event := msgs.WatchEventMsg{Kind: msgs.KindPods, Context: "ctx1", Generation: 1}
+
+	upd, cmd, handled := s.Handle(event)
+	if !handled || upd != nil || cmd == nil {
+		t.Fatalf("first event: expected coalesced with a scheduled flush, got upd=%v cmd=%v", upd, cmd)
+	}
+	if !s.flushPending[stateKey{kind: msgs.KindPods, context: "ctx1"}] {
+		t.Fatal("expected a flush to be marked pending after the first event")
+	}
+
+	upd, cmd, handled = s.Handle(event)
+	if !handled || upd != nil || cmd == nil {
+		t.Fatalf("second event: expected coalesced with only the wait command, got upd=%v cmd=%v", upd, cmd)
 	}
 }
 
@@ -356,7 +401,11 @@ func TestSupervisor_StopContextStopsWatcherAndDropsRows(t *testing.T) {
 	cluster.watchers[msgs.KindPods].Add(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default", ResourceVersion: "1"},
 	})
-	if upd, _, _ := s.Handle(runCmd(t, waitCmd)); upd == nil || !upd.RowsChanged {
+	event, ok := runCmd(t, waitCmd).(msgs.WatchEventMsg)
+	if !ok {
+		t.Fatalf("expected WatchEventMsg, got %T", event)
+	}
+	if upd, _ := deliverEventAndFlush(t, s, event); upd == nil || !upd.RowsChanged {
 		t.Fatal("expected rows before StopContext")
 	}
 

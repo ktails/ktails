@@ -174,6 +174,12 @@ type Supervisor struct {
 	nodeMetrics            map[string]map[string]msgs.ResourceUsage // context -> node name -> usage
 	nodeMetricsUnavailable map[string]bool
 
+	// flushPending marks a (kind, context) that already has a coalescing
+	// WatchFlushMsg scheduled — see the WatchEventMsg arm in Handle. Without
+	// this, every event in a burst (a rollout, a mass change) would each
+	// schedule their own flush instead of sharing one.
+	flushPending map[stateKey]bool
+
 	// ctx/cancel bound every backoff/reconnect sleep in listCmd/openCmd —
 	// cancelled by Shutdown so those goroutines return immediately on quit
 	// instead of sleeping out a stale backoff delay first. This is bounded
@@ -195,6 +201,7 @@ func NewSupervisor(cluster Cluster) *Supervisor {
 		podMetricsUnavailable:  make(map[string]bool),
 		nodeMetrics:            make(map[string]map[string]msgs.ResourceUsage),
 		nodeMetricsUnavailable: make(map[string]bool),
+		flushPending:           make(map[stateKey]bool),
 		ctx:                    ctx,
 		cancel:                 cancel,
 	}
@@ -261,6 +268,13 @@ func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext string) tea.Cmd {
 	}
 	st.generation++
 	st.failures = 0
+	// A restart (a manual "r", or a fresh StartKind) bumps the generation
+	// without going through StopContext — if a flush was pending for the
+	// pre-restart generation, its eventual WatchFlushMsg will now fail the
+	// generation guard and never clear flushPending, which would wedge every
+	// future WatchEventMsg for this key into believing a flush is already
+	// scheduled when none is.
+	delete(s.flushPending, key)
 	return s.listCmd(kind, kubeContext, s.namespaces[kubeContext], st.generation, 0)
 }
 
@@ -298,6 +312,7 @@ func (s *Supervisor) StopContext(kubeContext string) {
 			st.watcher.Stop()
 		}
 		delete(s.states, key)
+		delete(s.flushPending, key)
 	}
 	delete(s.namespaces, kubeContext)
 	delete(s.endpoints, kubeContext)
@@ -399,8 +414,29 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 			return nil, nil, true
 		}
 		st.failures = 0
-		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
-		return upd, s.waitCmd(msg.Kind, msg.Context, msg.Generation, st.watcher, st.cache), true
+		// The read loop must always continue regardless of coalescing below
+		// — otherwise a quiet period after the first event in a burst would
+		// leave the watch's ResultChan unread.
+		next := s.waitCmd(msg.Kind, msg.Context, msg.Generation, st.watcher, st.cache)
+
+		key := stateKey{kind: msg.Kind, context: msg.Context}
+		if s.flushPending[key] {
+			// A flush is already scheduled for this burst — rows will be
+			// rebuilt once it fires; nothing more to do here.
+			return nil, next, true
+		}
+		s.flushPending[key] = true
+		flush := tea.Tick(75*time.Millisecond, func(time.Time) tea.Msg {
+			return msgs.WatchFlushMsg{Kind: msg.Kind, Context: msg.Context, Generation: msg.Generation}
+		})
+		return nil, tea.Batch(next, flush), true
+
+	case msgs.WatchFlushMsg:
+		if _, ok := s.current(msg.Kind, msg.Context, msg.Generation); !ok {
+			return nil, nil, true
+		}
+		delete(s.flushPending, stateKey{kind: msg.Kind, context: msg.Context})
+		return &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}, nil, true
 
 	case msgs.WatchClosedMsg:
 		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
@@ -605,9 +641,12 @@ func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 // waitCmd blocks for the next event on watcher, applies it to cache, then
 // non-blockingly drains any additional already-buffered events (collapsing
 // bursts — e.g. the initial full-list replay, or a mass rollout — into fewer
-// UI updates instead of one message per object) before returning a freshly
-// rebuilt row set. Handle re-issues this command after each WatchEventMsg to
-// keep the read loop going.
+// messages) before returning. Rows aren't computed here — the caller
+// (Handle's WatchEventMsg arm) coalesces bursts of this message into a
+// single WatchFlushMsg, and Supervisor.Rows(kind) is the only place rows are
+// actually rebuilt; computing them here too would pay for row conversion
+// twice per event for a result nothing reads. Handle re-issues this command
+// after each WatchEventMsg to keep the read loop going.
 func (s *Supervisor) waitCmd(kind msgs.ResourceKind, kubeContext string, generation int, watcher watch.Interface, cache rowCache) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-watcher.ResultChan()
@@ -622,13 +661,13 @@ func (s *Supervisor) waitCmd(kind msgs.ResourceKind, kubeContext string, generat
 			select {
 			case ev, ok := <-watcher.ResultChan():
 				if !ok {
-					return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation, Rows: cache.rows(kubeContext)}
+					return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation}
 				}
 				if err := cache.apply(ev); err != nil {
 					return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
 				}
 			default:
-				return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation, Rows: cache.rows(kubeContext)}
+				return msgs.WatchEventMsg{Kind: kind, Context: kubeContext, Generation: generation}
 			}
 		}
 	}
