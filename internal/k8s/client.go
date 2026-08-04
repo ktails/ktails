@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -139,37 +137,29 @@ type ContextsInfo struct {
 	DefaultNamespace string
 }
 
-// getDefaultKubeconfigPath returns the default kubeconfig path
-func getDefaultKubeconfigPath() string {
-	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
-		return kubeconfig
+// loadingRulesForPath returns the client-cmd loading rules to resolve a
+// kubeconfig from: clientcmd.NewDefaultClientConfigLoadingRules() (which
+// merges $KUBECONFIG's colon-separated paths and falls back to
+// ~/.kube/config, matching kubectl's own precedence) when path is empty, or
+// a single ExplicitPath override when the caller provided one (via
+// NewClient's argument, ultimately --kubeconfig). Previously a single
+// manually-resolved path was computed once in NewClient and reused
+// everywhere via ExplicitPath — including for a caller that passed no path
+// at all, which silently broke $KUBECONFIG's multi-path merge (a:b:c) by
+// treating it as one literal (unstattable) path.
+func loadingRulesForPath(path string) *clientcmd.ClientConfigLoadingRules {
+	if path == "" {
+		return clientcmd.NewDefaultClientConfigLoadingRules()
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".kube", "config")
+	return &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
 }
 
-// NewClient creates a new K8s client
+// NewClient creates a new K8s client. kubeconfigPath, if non-empty,
+// overrides $KUBECONFIG/~/.kube/config entirely (see loadingRulesForPath).
 func NewClient(kubeconfigPath string) (*Client, error) {
-	if kubeconfigPath == "" {
-		kubeconfigPath = getDefaultKubeconfigPath()
-		if kubeconfigPath == "" {
-			return nil, fmt.Errorf("kubeconfig path is empty and could not determine default path")
-		}
-	}
-
-	if _, err := os.Stat(kubeconfigPath); err != nil {
-		return nil, fmt.Errorf("kubeconfig not accessible at %s: %w", kubeconfigPath, err)
-	}
-
 	// Load raw config for context/namespace operations
-	loadingRules := &clientcmd.ClientConfigLoadingRules{
-		ExplicitPath: kubeconfigPath,
-	}
 	rawConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		loadingRules,
+		loadingRulesForPath(kubeconfigPath),
 		&clientcmd.ConfigOverrides{},
 	).RawConfig()
 	if err != nil {
@@ -193,11 +183,14 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	client.buildClient = client.createClientForContext
 	client.buildMetricsClient = client.createMetricsClientForContext
 
-	// Pre-create client for current context and test connection
-	if _, err := client.GetClientForContext(currentContext); err != nil {
-		return nil, fmt.Errorf("failed to connect to current context %s: %w", currentContext, err)
-	}
-
+	// Deliberately no eager connection test here: the current context may
+	// simply be unreachable right now (VPN down, cluster paused, ...),
+	// which shouldn't prevent the app from starting at all — every other
+	// selected context still needs to work, and the lazy per-context dial
+	// (GetClientForContext, deduped per context since 1.3) already handles
+	// this context correctly whenever it's actually selected, surfacing a
+	// failure through the normal per-context error path instead of a
+	// startup crash.
 	return client, nil
 }
 
@@ -213,15 +206,12 @@ func (c *Client) buildRestConfigForContext(contextName string) (*rest.Config, er
 	}
 
 	// Create config with specific context
-	loadingRules := &clientcmd.ClientConfigLoadingRules{
-		ExplicitPath: c.kubeconfigPath,
-	}
 	configOverrides := &clientcmd.ConfigOverrides{
 		CurrentContext: contextName,
 	}
 
 	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		loadingRules,
+		loadingRulesForPath(c.kubeconfigPath),
 		configOverrides,
 	)
 
@@ -327,6 +317,23 @@ func (c *Client) GetCurrentContext() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.currentContext
+}
+
+// SetCurrentContext overrides the client's active context (the one shown
+// with a "★" in the Contexts pane) — used for the --context CLI flag,
+// taking priority over whatever the kubeconfig's own current-context
+// points to. Only updates the marker; it doesn't dial anything itself
+// (see NewClient's doc comment on why an eager dial isn't done here
+// either) — the context still connects lazily whenever it's actually
+// selected.
+func (c *Client) SetCurrentContext(contextName string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.rawConfig.Contexts[contextName]; !exists {
+		return fmt.Errorf("context %s not found in kubeconfig", contextName)
+	}
+	c.currentContext = contextName
+	return nil
 }
 
 // DefaultNamespace returns the default namespace for the specified context

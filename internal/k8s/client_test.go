@@ -3,8 +3,11 @@ package k8s
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -307,6 +310,117 @@ func TestListPods_TimesOutAgainstHungServer(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected a context.DeadlineExceeded-wrapped error, got: %v", err)
+	}
+}
+
+// writeTestKubeconfig writes a minimal valid kubeconfig file to a temp
+// directory with one context named contextName pointing at server, marking
+// it current-context if setCurrent — for exercising NewClient's real
+// kubeconfig-loading path without a live cluster.
+func writeTestKubeconfig(t *testing.T, contextName, server string, setCurrent bool) string {
+	t.Helper()
+	current := ""
+	if setCurrent {
+		current = "current-context: " + contextName + "\n"
+	}
+	content := fmt.Sprintf(`apiVersion: v1
+kind: Config
+%sclusters:
+- name: cluster-%s
+  cluster:
+    server: %s
+contexts:
+- name: %s
+  context:
+    cluster: cluster-%s
+    namespace: default
+users: []
+`, current, contextName, server, contextName, contextName)
+
+	path := filepath.Join(t.TempDir(), "kubeconfig-"+contextName)
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write test kubeconfig: %v", err)
+	}
+	return path
+}
+
+// TestNewClient_DoesNotEagerlyFailOnUnreachableCurrentContext guards the
+// regression this fix targets: NewClient used to dial the current context
+// eagerly and fail outright if it couldn't connect, so one unreachable
+// cluster (VPN down, paused, ...) prevented the whole app from starting —
+// even for a user who only cares about a different, reachable context.
+func TestNewClient_DoesNotEagerlyFailOnUnreachableCurrentContext(t *testing.T) {
+	// Port 1 is a reserved/unassigned port nothing listens on — the dial
+	// would fail if attempted at all, which is exactly what must not
+	// happen here.
+	path := writeTestKubeconfig(t, "unreachable", "https://127.0.0.1:1", true)
+
+	c, err := NewClient(path)
+	if err != nil {
+		t.Fatalf("expected NewClient to succeed without dialing the current context, got: %v", err)
+	}
+	if got := c.GetCurrentContext(); got != "unreachable" {
+		t.Fatalf("expected current context %q, got %q", "unreachable", got)
+	}
+}
+
+// TestNewClient_MergesMultiPathKUBECONFIG guards the multi-path merge
+// regression: $KUBECONFIG can be a colon-separated list of files (kubectl's
+// own convention), which the previous manual resolution treated as one
+// literal, unstattable path — silently losing every context outside the
+// first file. Both files' contexts must be visible after NewClient("").
+func TestNewClient_MergesMultiPathKUBECONFIG(t *testing.T) {
+	pathA := writeTestKubeconfig(t, "ctx-a", "https://127.0.0.1:1", true)
+	pathB := writeTestKubeconfig(t, "ctx-b", "https://127.0.0.1:1", false)
+	t.Setenv("KUBECONFIG", pathA+string(os.PathListSeparator)+pathB)
+
+	c, err := NewClient("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	contexts, err := c.ListContexts()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := make(map[string]bool, len(contexts))
+	for _, ctx := range contexts {
+		names[ctx.Name] = true
+	}
+	if !names["ctx-a"] || !names["ctx-b"] {
+		t.Fatalf("expected both ctx-a and ctx-b visible after merging $KUBECONFIG, got %+v", contexts)
+	}
+	if got := c.GetCurrentContext(); got != "ctx-a" {
+		t.Fatalf("expected current context %q (from the first file), got %q", "ctx-a", got)
+	}
+}
+
+// TestSetCurrentContext_OverridesAndValidates guards the --context flag's
+// underlying mechanism: it must switch the "★" marker to a context that
+// exists in the kubeconfig, and reject one that doesn't rather than
+// silently accepting a typo.
+func TestSetCurrentContext_OverridesAndValidates(t *testing.T) {
+	path := writeTestKubeconfig(t, "ctx-a", "https://127.0.0.1:1", true)
+	pathB := writeTestKubeconfig(t, "ctx-b", "https://127.0.0.1:1", false)
+	t.Setenv("KUBECONFIG", path+string(os.PathListSeparator)+pathB)
+
+	c, err := NewClient("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := c.SetCurrentContext("ctx-b"); err != nil {
+		t.Fatalf("unexpected error switching to a known context: %v", err)
+	}
+	if got := c.GetCurrentContext(); got != "ctx-b" {
+		t.Fatalf("expected current context %q after SetCurrentContext, got %q", "ctx-b", got)
+	}
+
+	if err := c.SetCurrentContext("does-not-exist"); err == nil {
+		t.Fatal("expected an error for a context not in the kubeconfig")
+	}
+	if got := c.GetCurrentContext(); got != "ctx-b" {
+		t.Fatalf("expected current context to stay %q after a failed SetCurrentContext, got %q", "ctx-b", got)
 	}
 }
 
