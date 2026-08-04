@@ -93,9 +93,7 @@ func (c *Client) GetPodDisruptionBudgetDetail(kubeContextName, namespace, name s
 	}
 	d.YAML = renderDetailYAML(pdb, "policy/v1", "PodDisruptionBudget")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "PodDisruptionBudget", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "PodDisruptionBudget", name)
 
 	return d, nil
 }

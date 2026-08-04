@@ -534,9 +534,7 @@ func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceD
 
 	d.YAML = renderDetailYAML(pod, "v1", "Pod")
 
-	if events, err := c.getEvents(kubeContext, namespace, "Pod", podName); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContext, namespace, "Pod", podName)
 
 	return d, nil
 }
@@ -587,6 +585,12 @@ func PodToPodInfo(pod *v1.Pod, kubeContext string) *PodInfo {
 
 // formatDuration formats a duration in a human-readable way
 func formatDuration(d time.Duration) string {
+	// Clock skew between this machine and the apiserver can make a
+	// just-created object's age come out slightly negative — clamp rather
+	// than render a confusing "-3s".
+	if d < 0 {
+		d = 0
+	}
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}

@@ -87,9 +87,7 @@ func (c *Client) GetConfigMapDetail(kubeContextName, namespace, name string) (Re
 	d.Summary = fmt.Sprintf("Keys: %s", strings.Join(info.Keys, ", "))
 	d.YAML = renderDetailYAML(cm, "v1", "ConfigMap")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "ConfigMap", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "ConfigMap", name)
 
 	return d, nil
 }

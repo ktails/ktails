@@ -117,9 +117,7 @@ func (c *Client) GetHorizontalPodAutoscalerDetail(kubeContextName, namespace, na
 	}
 	d.YAML = renderDetailYAML(hpa, "autoscaling/v2", "HorizontalPodAutoscaler")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "HorizontalPodAutoscaler", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "HorizontalPodAutoscaler", name)
 
 	return d, nil
 }

@@ -73,9 +73,7 @@ func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName 
 
 	d.YAML = renderDetailYAML(deployment, "apps/v1", "Deployment")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "Deployment", deploymentName); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "Deployment", deploymentName)
 
 	return d, nil
 }

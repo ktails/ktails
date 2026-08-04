@@ -88,9 +88,7 @@ func (c *Client) GetCronJobDetail(kubeContextName, namespace, name string) (Reso
 	d.Summary = fmt.Sprintf("Schedule: %s, Last scheduled: %s", info.Schedule, info.LastScheduled)
 	d.YAML = renderDetailYAML(cj, "batch/v1", "CronJob")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "CronJob", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "CronJob", name)
 
 	return d, nil
 }

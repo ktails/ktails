@@ -82,9 +82,7 @@ func (c *Client) GetDaemonSetDetail(kubeContextName, namespace, name string) (Re
 	}
 	d.YAML = renderDetailYAML(ds, "apps/v1", "DaemonSet")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "DaemonSet", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "DaemonSet", name)
 
 	return d, nil
 }

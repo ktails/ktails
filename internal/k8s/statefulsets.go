@@ -87,9 +87,7 @@ func (c *Client) GetStatefulSetDetail(kubeContextName, namespace, name string) (
 	}
 	d.YAML = renderDetailYAML(sts, "apps/v1", "StatefulSet")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "StatefulSet", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "StatefulSet", name)
 
 	return d, nil
 }

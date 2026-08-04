@@ -302,7 +302,13 @@ func (d *ResourceDetailPage) render(detail k8s.ResourceDetail) string {
 
 	fmt.Fprintln(&b, titleStyle.Render("Events"))
 	fmt.Fprintln(&b, sep)
-	if len(detail.Events) == 0 {
+	switch {
+	case detail.EventsError != "":
+		// A fetch failure is not the same thing as the resource genuinely
+		// having no events — say so, dim, rather than the two looking
+		// identical (see k8s.ResourceDetail.EventsError's doc comment).
+		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("events unavailable: "+detail.EventsError))
+	case len(detail.Events) == 0:
 		fmt.Fprintln(&b, "No events")
 	}
 	for _, e := range detail.Events {

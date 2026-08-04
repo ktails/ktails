@@ -103,9 +103,7 @@ func (c *Client) GetSecretDetail(kubeContextName, namespace, name string) (Resou
 	}
 	d.YAML = renderDetailYAML(secret, "v1", "Secret")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "Secret", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "Secret", name)
 
 	return d, nil
 }

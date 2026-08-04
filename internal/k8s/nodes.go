@@ -134,9 +134,7 @@ func (c *Client) GetNodeDetail(kubeContextName, _, name string) (ResourceDetail,
 	}
 	d.YAML = renderDetailYAML(node, "v1", "Node")
 
-	if events, err := c.getEvents(kubeContextName, "", "Node", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, "", "Node", name)
 
 	return d, nil
 }

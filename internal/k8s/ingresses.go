@@ -115,9 +115,7 @@ func (c *Client) GetIngressDetail(kubeContextName, namespace, name string) (Reso
 	d.Summary = fmt.Sprintf("Hosts: %s", strings.Join(info.Hosts, ", "))
 	d.YAML = renderDetailYAML(ing, "networking.k8s.io/v1", "Ingress")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "Ingress", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "Ingress", name)
 
 	return d, nil
 }

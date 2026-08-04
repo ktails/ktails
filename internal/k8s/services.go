@@ -106,9 +106,7 @@ func (c *Client) GetServiceDetail(kubeContextName, namespace, serviceName string
 
 	d.YAML = renderDetailYAML(svc, "v1", "Service")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "Service", serviceName); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "Service", serviceName)
 
 	return d, nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -67,21 +68,39 @@ func main() {
 		}
 	}
 
+	kubeconfigFlag := flag.String("kubeconfig", "",
+		"path to the kubeconfig file to use (overrides $KUBECONFIG, ~/.kube/config, and the config file's kubeconfig_path)")
+	contextFlag := flag.String("context", "",
+		"kubeconfig context to select on startup (overrides the kubeconfig's own current-context)")
+	flag.Parse()
+
 	closeLog := setupLogging()
 	defer closeLog()
 
-	// Create client
-	client, err := k8s.NewClient("")
+	// Config is loaded before the client so its kubeconfig_path can feed
+	// into k8s.NewClient below — config.Load never fails (a broken config
+	// file falls back to defaults with a logged warning), so there's
+	// nothing to check here.
+	cfg := config.Load("")
+
+	// Precedence: --kubeconfig flag > config file's kubeconfig_path > k8s.
+	// NewClient's own default resolution ($KUBECONFIG, then ~/.kube/config).
+	kubeconfigPath := *kubeconfigFlag
+	if kubeconfigPath == "" {
+		kubeconfigPath = cfg.KubeconfigPath
+	}
+
+	client, err := k8s.NewClient(kubeconfigPath)
 	if err != nil {
-		fmt.Printf("❌ Failed to create client: %v\n", err)
+		fmt.Printf("❌ Failed to load kubeconfig: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("✅ Client created successfully")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		fmt.Printf("❌ Failed to load config: %v\n", err)
-		os.Exit(1)
+	if *contextFlag != "" {
+		if err := client.SetCurrentContext(*contextFlag); err != nil {
+			fmt.Printf("❌ %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	mp := pages.NewMainPageModel(client, cfg.Preferences.RefreshInterval)

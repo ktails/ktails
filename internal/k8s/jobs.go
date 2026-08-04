@@ -106,9 +106,7 @@ func (c *Client) GetJobDetail(kubeContextName, namespace, name string) (Resource
 	}
 	d.YAML = renderDetailYAML(job, "batch/v1", "Job")
 
-	if events, err := c.getEvents(kubeContextName, namespace, "Job", name); err == nil {
-		d.Events = events
-	}
+	c.attachEvents(&d, kubeContextName, namespace, "Job", name)
 
 	return d, nil
 }

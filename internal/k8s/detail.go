@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -32,7 +33,13 @@ type ResourceDetail struct {
 	Summary   string // e.g. "Ready Replicas: 2" or "Phase: Running  Restarts: 3"
 	Status    []string
 	Events    []EventInfo
-	YAML      string
+	// EventsError is set instead of Events when fetching events failed —
+	// previously that failure was silently swallowed (see attachEvents),
+	// so a genuine "no events" and "couldn't check" looked identical to
+	// the user. Empty when Events was fetched successfully (however many
+	// events that turned out to be, including zero).
+	EventsError string
+	YAML        string
 }
 
 // detailObject is any k8s API object Get*Detail renders — every concrete
@@ -69,6 +76,33 @@ func renderDetailYAML(obj detailObject, apiVersion, kind string) string {
 		return fmt.Sprintf("failed to render YAML: %v", err)
 	}
 	return string(yamlBytes)
+}
+
+// attachEvents fetches kind's recent events and attaches them to d — or, on
+// failure, a short human-readable reason in d.EventsError instead (see
+// ResourceDetail.EventsError's doc comment), rather than the previous
+// silent swallow every Get*Detail function used to do
+// (`if events, err := c.getEvents(...); err == nil { d.Events = events }`,
+// doing nothing at all when err != nil).
+func (c *Client) attachEvents(d *ResourceDetail, kubeContextName, namespace, kind, name string) {
+	events, err := c.getEvents(kubeContextName, namespace, kind, name)
+	if err != nil {
+		d.EventsError = humanizeEventsError(err)
+		return
+	}
+	d.Events = events
+}
+
+// humanizeEventsError translates an events-fetch failure into a short,
+// human-readable reason — an RBAC denial (a ServiceAccount that can see the
+// resource itself but not core/v1 Events, a real and common combination)
+// reads very differently from a generic connectivity failure, so callers
+// shouldn't have to guess which happened from a raw wrapped error string.
+func humanizeEventsError(err error) string {
+	if apierrors.IsForbidden(err) {
+		return "not permitted to view events (RBAC)"
+	}
+	return err.Error()
 }
 
 // getEvents fetches events for a specific object, newest first.

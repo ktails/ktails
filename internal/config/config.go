@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -84,43 +85,46 @@ func EnsureConfigDir() error {
 	return nil
 }
 
-// Load loads configuration from file
-// If the file doesn't exist, returns default config
-// If path is empty, uses default config path
-func Load(path string) (*Config, error) {
-	// Use default path if not specified
+// Load loads configuration from file. A missing file is expected and
+// returns DefaultConfig() silently; anything else that goes wrong — the
+// file can't be read (permissions, some other non-existence stat error), it
+// doesn't parse as YAML, or it parses but fails Validate() (e.g. an unknown
+// theme) — also falls back to DefaultConfig(), logging a warning via the
+// standard log package instead of failing. A config file, corrupted or
+// merely outdated, must never be able to stop the app from starting; the
+// user can always fix or delete it once they're actually running and can
+// see the warning (KTAILS_DEBUG=1; see main.go's setupLogging). If path is
+// empty, uses the default config path.
+func Load(path string) *Config {
 	if path == "" {
 		defaultPath, err := GetDefaultConfigPath()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get default config path: %w", err)
+			log.Printf("config: failed to determine default config path, using defaults: %v", err)
+			return DefaultConfig()
 		}
 		path = defaultPath
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		// File doesn't exist, return default config
-		return DefaultConfig(), nil
-	}
-
-	// Read file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		if !os.IsNotExist(err) {
+			log.Printf("config: failed to read config file %s, using defaults: %v", path, err)
+		}
+		return DefaultConfig()
 	}
 
-	// Parse YAML
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		log.Printf("config: failed to parse config file %s, using defaults: %v", path, err)
+		return DefaultConfig()
 	}
 
-	// Validate config
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		log.Printf("config: invalid config in %s, using defaults: %v", path, err)
+		return DefaultConfig()
 	}
 
-	return &cfg, nil
+	return &cfg
 }
 
 // Save saves configuration to file
