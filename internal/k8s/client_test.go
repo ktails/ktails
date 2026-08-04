@@ -2,7 +2,10 @@ package k8s
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -167,6 +170,105 @@ func TestCanWatchNodes_AllowedAndDenied(t *testing.T) {
 	}
 	if !allowed {
 		t.Fatal("expected allowed once the reactor grants it")
+	}
+}
+
+// newDialTestClient builds a Client whose dial is controlled entirely by
+// build — no real kubeconfig or network involved — for exercising
+// GetClientForContext's in-flight dedup (see getOrBuild).
+func newDialTestClient(build func(contextName string) (kubernetes.Interface, error)) *Client {
+	c := &Client{
+		clientsByContext: make(map[string]kubernetes.Interface),
+		building:         make(map[string]*buildResult[kubernetes.Interface]),
+	}
+	c.buildClient = build
+	return c
+}
+
+// TestGetClientForContext_DifferentContextsDoNotBlock guards the regression
+// this fix targets: GetClientForContext used to hold the write lock across
+// the whole dial, so one slow/unreachable context's lookup froze every other
+// context's lookup too. A dial for "fast" must complete without waiting for
+// a concurrent, still-in-flight dial for "slow".
+func TestGetClientForContext_DifferentContextsDoNotBlock(t *testing.T) {
+	release := make(chan struct{})
+	c := newDialTestClient(func(contextName string) (kubernetes.Interface, error) {
+		if contextName == "slow" {
+			<-release
+		}
+		return fake.NewClientset(), nil
+	})
+
+	slowDone := make(chan struct{})
+	go func() {
+		defer close(slowDone)
+		if _, err := c.GetClientForContext("slow"); err != nil {
+			t.Errorf("slow dial failed: %v", err)
+		}
+	}()
+
+	// Give the "slow" goroutine a head start so it's genuinely in flight
+	// before "fast" is requested — without the fix, "fast" would queue
+	// behind it regardless of order.
+	time.Sleep(20 * time.Millisecond)
+
+	fastDone := make(chan struct{})
+	go func() {
+		defer close(fastDone)
+		if _, err := c.GetClientForContext("fast"); err != nil {
+			t.Errorf("fast dial failed: %v", err)
+		}
+	}()
+
+	select {
+	case <-fastDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fast dial blocked behind the in-flight slow dial")
+	case <-slowDone:
+		t.Fatal("slow dial finished before fast was even released — release channel never closed yet")
+	}
+
+	close(release)
+	<-slowDone
+}
+
+// TestGetClientForContext_SameContextDedupsInFlightDials guards the other
+// half of getOrBuild: concurrent requests for the *same* context must share
+// one dial rather than each triggering their own.
+func TestGetClientForContext_SameContextDedupsInFlightDials(t *testing.T) {
+	var buildCalls int64
+	release := make(chan struct{})
+	c := newDialTestClient(func(contextName string) (kubernetes.Interface, error) {
+		atomic.AddInt64(&buildCalls, 1)
+		<-release
+		return fake.NewClientset(), nil
+	})
+
+	const n = 5
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = c.GetClientForContext("shared")
+		}(i)
+	}
+
+	// Let every goroutine reach the in-flight wait before releasing the
+	// single dial, so this actually exercises the dedup path rather than
+	// racing ahead of it.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, err)
+		}
+	}
+	if got := atomic.LoadInt64(&buildCalls); got != 1 {
+		t.Fatalf("expected exactly one build call for concurrent requests to the same context, got %d", got)
 	}
 }
 

@@ -36,6 +36,75 @@ type Client struct {
 	kubeconfigPath          string
 	currentContext          string
 	mu                      sync.RWMutex // Protect concurrent access
+
+	// building/metricsBuilding track in-flight dials, per context, so a
+	// second caller for the same context waits on the first's result instead
+	// of dialing again — see getOrBuild. Callers for a *different* context
+	// are unaffected either way, which is the fix for GetClientForContext
+	// previously holding the write lock across the whole network dial (every
+	// context's lookup, plus UI-thread readers like ListContexts, queued
+	// behind one unreachable cluster's dial timeout).
+	building        map[string]*buildResult[kubernetes.Interface]
+	metricsBuilding map[string]*buildResult[metricsclientset.Interface]
+
+	// buildClient/buildMetricsClient perform the actual dial for a context.
+	// Production always wires these to createClientForContext/
+	// createMetricsClientForContext (see NewClient); tests override them to
+	// control dial timing without a real kubeconfig.
+	buildClient        func(contextName string) (kubernetes.Interface, error)
+	buildMetricsClient func(contextName string) (metricsclientset.Interface, error)
+}
+
+// buildResult is one in-flight or completed dial, shared by every caller
+// requesting the same context concurrently — see getOrBuild.
+type buildResult[T any] struct {
+	done   chan struct{}
+	client T
+	err    error
+}
+
+// getOrBuild returns the cached client for name, or coordinates a single
+// in-flight build via building: the first caller for a name runs build and
+// populates cache; concurrent callers for the *same* name wait on that
+// build's result instead of dialing again, while callers for a different
+// name proceed immediately (only building[name] is touched, never a
+// lock held across build()). A failed build is not cached — building[name]
+// is deleted either way, so a later call retries the dial rather than
+// replaying the same error forever.
+func getOrBuild[T any](mu *sync.RWMutex, cache map[string]T, building map[string]*buildResult[T], name string, build func() (T, error)) (T, error) {
+	mu.RLock()
+	if client, ok := cache[name]; ok {
+		mu.RUnlock()
+		return client, nil
+	}
+	mu.RUnlock()
+
+	mu.Lock()
+	if client, ok := cache[name]; ok {
+		mu.Unlock()
+		return client, nil
+	}
+	if entry, ok := building[name]; ok {
+		mu.Unlock()
+		<-entry.done
+		return entry.client, entry.err
+	}
+	entry := &buildResult[T]{done: make(chan struct{})}
+	building[name] = entry
+	mu.Unlock()
+
+	client, err := build()
+
+	mu.Lock()
+	if err == nil {
+		cache[name] = client
+	}
+	delete(building, name)
+	entry.client, entry.err = client, err
+	close(entry.done)
+	mu.Unlock()
+
+	return client, err
 }
 
 // PodInfo contains pod metadata
@@ -106,10 +175,14 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	client := &Client{
 		clientsByContext:        make(map[string]kubernetes.Interface),
 		metricsClientsByContext: make(map[string]metricsclientset.Interface),
+		building:                make(map[string]*buildResult[kubernetes.Interface]),
+		metricsBuilding:         make(map[string]*buildResult[metricsclientset.Interface]),
 		rawConfig:               &rawConfig,
 		kubeconfigPath:          kubeconfigPath,
 		currentContext:          currentContext,
 	}
+	client.buildClient = client.createClientForContext
+	client.buildMetricsClient = client.createMetricsClientForContext
 
 	// Pre-create client for current context and test connection
 	if _, err := client.GetClientForContext(currentContext); err != nil {
@@ -151,7 +224,7 @@ func (c *Client) buildRestConfigForContext(contextName string) (*rest.Config, er
 }
 
 // createClientForContext creates a new clientset for the specified context
-func (c *Client) createClientForContext(contextName string) (*kubernetes.Clientset, error) {
+func (c *Client) createClientForContext(contextName string) (kubernetes.Interface, error) {
 	restConfig, err := c.buildRestConfigForContext(contextName)
 	if err != nil {
 		return nil, err
@@ -196,60 +269,46 @@ func (c *Client) createMetricsClientForContext(contextName string) (metricsclien
 
 // GetMetricsClientForContext returns a metrics.k8s.io clientset for the
 // specified context, creating and caching it if it doesn't exist yet — the
-// same lazy-cache shape as GetClientForContext.
+// same lazy-cache shape as GetClientForContext, including the same
+// single-flight dial coordination (see getOrBuild).
 func (c *Client) GetMetricsClientForContext(contextName string) (metricsclientset.Interface, error) {
-	c.mu.RLock()
-	if client, exists := c.metricsClientsByContext[contextName]; exists {
-		c.mu.RUnlock()
-		return client, nil
-	}
-	c.mu.RUnlock()
-
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if client, exists := c.metricsClientsByContext[contextName]; exists {
-		return client, nil
+	if c.metricsBuilding == nil {
+		c.metricsBuilding = make(map[string]*buildResult[metricsclientset.Interface])
 	}
-
-	client, err := c.createMetricsClientForContext(contextName)
-	if err != nil {
-		return nil, err
+	build := c.buildMetricsClient
+	if build == nil {
+		build = c.createMetricsClientForContext
 	}
+	c.mu.Unlock()
 
-	c.metricsClientsByContext[contextName] = client
-	return client, nil
+	return getOrBuild(&c.mu, c.metricsClientsByContext, c.metricsBuilding, contextName, func() (metricsclientset.Interface, error) {
+		return build(contextName)
+	})
 }
 
-// GetClientForContext returns a clientset for the specified context
-// Creates and caches the client if it doesn't exist yet
+// GetClientForContext returns a clientset for the specified context,
+// creating and caching it if it doesn't exist yet. Concurrent requests for
+// the *same* context share one dial and wait on its result together;
+// requests for a *different* context never block on it — see getOrBuild.
+// Previously this held the write lock across the whole network dial
+// (createClientForContext's ServerVersion() round trip has no deadline), so
+// one unreachable cluster froze every other context's lookup, including
+// UI-thread readers like ListContexts/GetCurrentContext/DefaultNamespace.
 func (c *Client) GetClientForContext(contextName string) (kubernetes.Interface, error) {
-	// Try to get existing client with read lock
-	c.mu.RLock()
-	if client, exists := c.clientsByContext[contextName]; exists {
-		c.mu.RUnlock()
-		return client, nil
-	}
-	c.mu.RUnlock()
-
-	// Create new client with write lock
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check after acquiring write lock (another goroutine might have created it)
-	if client, exists := c.clientsByContext[contextName]; exists {
-		return client, nil
+	if c.building == nil {
+		c.building = make(map[string]*buildResult[kubernetes.Interface])
 	}
-
-	// Create the client
-	client, err := c.createClientForContext(contextName)
-	if err != nil {
-		return nil, err
+	build := c.buildClient
+	if build == nil {
+		build = c.createClientForContext
 	}
+	c.mu.Unlock()
 
-	// Cache it
-	c.clientsByContext[contextName] = client
-	return client, nil
+	return getOrBuild(&c.mu, c.clientsByContext, c.building, contextName, func() (kubernetes.Interface, error) {
+		return build(contextName)
+	})
 }
 
 // GetCurrentContext returns the currently active context
