@@ -1409,6 +1409,21 @@ func (m *MainPage) renderView() string {
 	}
 
 	snapshot := m.appState.Snapshot()
+
+	// Overlays replace the frame entirely, so check them before doing any
+	// frame work — building the full frame (left box with
+	// clusterList.Refresh(), table view, status bar) only to immediately
+	// discard it wastes a full render on every message while one is open.
+	if m.showHelp {
+		return m.renderHelpOverlay()
+	}
+	if m.errorMessage != "" {
+		return m.renderErrorOverlay(m.errorMessage)
+	}
+	if len(snapshot.Errors) > 0 {
+		return m.renderErrorSummaryOverlay(snapshot.Errors)
+	}
+
 	r := views.Solve(m.width, m.height)
 	p := styles.CatppuccinMocha()
 
@@ -1473,17 +1488,6 @@ func (m *MainPage) renderView() string {
 		lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox),
 		m.renderStatusBar(snapshot),
 	)
-
-	// Overlays rendered on top of the full view (help > error)
-	if m.showHelp {
-		return m.renderHelpOverlay()
-	}
-	if m.errorMessage != "" {
-		return m.renderErrorOverlay(m.errorMessage)
-	}
-	if len(snapshot.Errors) > 0 {
-		return m.renderErrorSummaryOverlay(snapshot.Errors)
-	}
 
 	return fullView
 }
