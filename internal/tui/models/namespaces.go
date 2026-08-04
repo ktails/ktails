@@ -59,10 +59,7 @@ func (d namespaceDelegate) Render(w io.Writer, m list.Model, index int, item lis
 	}
 
 	p := styles.CatppuccinMocha()
-	paneWidth := m.Width()
-	if paneWidth <= 0 {
-		paneWidth = 30
-	}
+	paneWidth := paneRowWidth(m)
 
 	if row.IsHeader {
 		text := row.Context
@@ -87,28 +84,19 @@ func (d namespaceDelegate) Render(w io.Writer, m list.Model, index int, item lis
 		dotColor = p.Green
 	}
 	name := ansi.TruncateWc(row.Name, max(paneWidth-6, 0), "…")
-
-	if isCursor && d.focused {
-		// One uniform highlight color, matching the resource tables'
-		// selected-row style (styles.CatppuccinBubbleTableStyle().Highlight:
-		// Background(FocusColor), Foreground(Base), Bold) — the dot keeps its
-		// own tint everywhere else, but blending it into the highlight here
-		// keeps the focused row reading as a single solid block instead of a
-		// background color fighting a separately-tinted glyph.
-		content := "    " + dot + " " + name
-		fmt.Fprint(w, lipgloss.NewStyle().Background(styles.FocusColor).Foreground(p.Base).Bold(true).Width(paneWidth).Render(content))
-		return
-	}
-
 	dotStr := lipgloss.NewStyle().Foreground(dotColor).Render(dot)
-	content := "    " + dotStr + " " + name
-	if isCursor {
-		// Cursor parked here, but the pane doesn't have keyboard focus right
-		// now — muted background instead of the bright focus accent.
-		fmt.Fprint(w, lipgloss.NewStyle().Background(p.Surface0).Width(paneWidth).Render(content))
-	} else {
-		fmt.Fprint(w, lipgloss.NewStyle().Width(paneWidth).Render(content))
-	}
+
+	// One uniform highlight color, matching the resource tables' selected-
+	// row style (styles.CatppuccinBubbleTableStyle().Highlight:
+	// Background(FocusColor), Foreground(Base), Bold) — the dot keeps its
+	// own tint everywhere else, but blending it into the highlight here
+	// keeps the focused row reading as a single solid block instead of a
+	// background color fighting a separately-tinted glyph. No description
+	// line — namespace rows are single-line (styledDesc left "").
+	fmt.Fprint(w, renderPaneRow(paneWidth, paneRowContent{
+		plainTitle:  "    " + dot + " " + name,
+		styledTitle: "    " + dotStr + " " + name,
+	}, isCursor, d.focused))
 }
 
 // NamespacesInfo is the left-pane model that lets a user multi-select which
@@ -161,30 +149,21 @@ type NamespacesInfo struct {
 	// stale.
 	preSelectAll map[string]map[string]bool
 
-	// filterQuery/filtering implement a "/" substring filter over namespace
-	// rows (header rows are never hidden, for orientation) — a lightweight,
-	// custom filter like ResourceTable's rowFilter rather than bubbles/
-	// list's own built-in filtering, which is disabled here (see
-	// NewNamespacesInfo) because it can't be escaped cleanly through
-	// MainPage's global Esc handling.
-	filterQuery string
-	filtering   bool
+	// filter is a "/" substring filter over namespace rows (header rows are
+	// never hidden, for orientation) — reuses ResourceTable's rowFilter
+	// type (table.go) for its query/filtering fields and its handleKey's
+	// enter/esc/backspace/typing state machine, rather than duplicating
+	// that switch here. Only query and filtering are used: rebuild()
+	// re-derives which rows are visible from scratch on every query change
+	// (it isn't index-position-based like ResourceTable's rows, so
+	// rowFilter's matches/absolute/len — built for a flat, already-loaded
+	// row slice — don't apply here and are left unused).
+	filter rowFilter
 }
 
 func NewNamespacesInfo() *NamespacesInfo {
-	newList := list.New([]list.Item{}, namespaceDelegate{}, 0, 0)
-	newList.SetShowStatusBar(false)
-	newList.SetShowHelp(false)
-	newList.SetShowPagination(false)
-	// See contexts.go's NewContextInfo for why these must stay off/disabled.
-	newList.SetFilteringEnabled(false)
-	newList.DisableQuitKeybindings()
-	newList.Title = ""
-	// Clearing Title alone isn't enough — bubbles/list still renders its
-	// title bar's background padding as an empty colored box even with no
-	// text (the section header is drawn manually by MainPage instead; see
-	// renderLeftBox).
-	newList.SetShowTitle(false)
+	// See newPaneList's doc comment for why every option it sets is needed.
+	newList := newPaneList(namespaceDelegate{})
 	return &NamespacesInfo{
 		list:                   newList,
 		namespacesByContext:    make(map[string][]string),
@@ -257,6 +236,12 @@ func (n *NamespacesInfo) SyncConfirmed(context string, selected []string, allNS 
 	n.rebuild()
 }
 
+// copyBoolSet duplicates state.AppState's private copyBoolMap helper
+// (internal/state/state.go). Left undeduplicated rather than exporting
+// that one and importing internal/state here: models is a "dumb" UI-widget
+// package with no domain-layer dependency today (pages orchestrates both
+// models and state), and pulling in internal/state for one 6-line map-copy
+// helper isn't worth establishing that coupling.
 func copyBoolSet(src map[string]bool) map[string]bool {
 	dst := make(map[string]bool, len(src))
 	for k, v := range src {
@@ -288,7 +273,7 @@ func (n *NamespacesInfo) rebuild() {
 	}
 	sort.Strings(contexts)
 
-	query := strings.ToLower(n.filterQuery)
+	query := strings.ToLower(n.filter.query)
 
 	var items []list.Item
 	for _, c := range contexts {
@@ -338,7 +323,7 @@ func (n *NamespacesInfo) SetFocused(f bool) {
 // ResourceTable.FilterStatus. ok is false when no filter is active (neither
 // being typed nor already committed).
 func (n *NamespacesInfo) FilterStatus() (query string, matches int, typing bool, ok bool) {
-	if !n.filtering && n.filterQuery == "" {
+	if !n.filter.filtering && n.filter.query == "" {
 		return "", 0, false, false
 	}
 	count := 0
@@ -347,7 +332,7 @@ func (n *NamespacesInfo) FilterStatus() (query string, matches int, typing bool,
 			count++
 		}
 	}
-	return n.filterQuery, count, n.filtering, true
+	return n.filter.query, count, n.filter.filtering, true
 }
 
 func (n *NamespacesInfo) Update(msg tea.Msg) tea.Cmd {
@@ -356,26 +341,15 @@ func (n *NamespacesInfo) Update(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 
-	if n.filtering {
-		switch key.String() {
-		case "enter":
-			n.filtering = false
-		case "esc":
-			n.filtering = false
-			n.filterQuery = ""
-			n.rebuild()
-		case "backspace":
-			if n.filterQuery != "" {
-				r := []rune(n.filterQuery)
-				n.filterQuery = string(r[:len(r)-1])
-				n.rebuild()
-			}
-		default:
-			if key.Text != "" {
-				n.filterQuery += key.Text
-				n.rebuild()
-			}
-		}
+	if n.filter.filtering {
+		// n.rebuild() re-derives the visible row set from n.filter.query
+		// from scratch (it isn't index-position-based, so handleKey's own
+		// recompute — which n.filter.query no-op matchFn feeds — is inert
+		// here; see the filter field's doc comment). Calling it after every
+		// key, including Enter (which doesn't actually change the query),
+		// is a harmless no-op re-render rather than a behavior change.
+		n.filter.handleKey(key, 0, func(int) bool { return false })
+		n.rebuild()
 		return nil
 	}
 
@@ -391,7 +365,7 @@ func (n *NamespacesInfo) Update(msg tea.Msg) tea.Cmd {
 		n.toggleAllNamespaces()
 		return nil
 	case "/":
-		n.filtering = true
+		n.filter.filtering = true
 		return nil
 	case "enter":
 		return n.confirmChanges()

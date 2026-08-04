@@ -276,7 +276,7 @@ func TestNamespaces_FilterHidesNonMatchingRowsWithoutLosingState(t *testing.T) {
 
 	// Check kube-system, then filter it out of view.
 	n.checked["ctx1"]["kube-system"] = true
-	n.filterQuery = "other"
+	n.filter.query = "other"
 	n.rebuild()
 
 	found := false
@@ -307,7 +307,7 @@ func TestNamespaces_FilterHidesNonMatchingRowsWithoutLosingState(t *testing.T) {
 	}
 
 	// Clearing the filter must show it checked again.
-	n.filterQuery = ""
+	n.filter.query = ""
 	n.rebuild()
 	if !namespaceRowSelected(t, n, "ctx1", "kube-system") {
 		t.Fatal("expected kube-system to show checked again once the filter clears")

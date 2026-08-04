@@ -57,11 +57,7 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 
 	p := styles.CatppuccinMocha()
 	isCursor := index == m.Index()
-
-	paneWidth := m.Width()
-	if paneWidth <= 0 {
-		paneWidth = 30
-	}
+	paneWidth := paneRowWidth(m)
 
 	// The identity dot is this context's stable per-session colour (§2.1),
 	// set once it's confirmed (Enter). A checked-but-unconfirmed row shows
@@ -143,40 +139,19 @@ func (d contextDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	nameStr := lipgloss.NewStyle().Foreground(nameColor).Bold(ctx.IsLoaded || ctx.Selected).Render(name)
 	descStr := lipgloss.NewStyle().Foreground(p.Overlay1).Render(descText)
 
-	titleContent := " " + dotStr + " " + nameStr + currentMark + statusStr
-	descContent := "    " + descStr // indent to align under name
-
-	switch {
-	case isCursor && d.focused:
-		// Focus accent bg + Base fg — the one selection/focus colour used
-		// everywhere (sidebar cursor, table row, active tab, pane border).
-		// Only the title line carries the highlight background; the
-		// description line stays plain (no bg block) underneath it.
-		titleLine := lipgloss.NewStyle().
-			Background(styles.FocusColor).
-			Foreground(p.Base).
-			Bold(true).
-			Width(paneWidth).
-			Render(" " + dot + " " + name + currentMark + statusSuffix)
-		descLine := lipgloss.NewStyle().Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
-		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
-	case isCursor:
-		// Cursor parked here, but the pane itself doesn't have keyboard
-		// focus right now — a muted background instead of the bright focus
-		// accent, so it never reads as "this pane is focused" when it isn't.
-		// Only the title line carries it, same as the focused case above.
-		titleLine := lipgloss.NewStyle().
-			Background(p.Surface0).
-			Bold(true).
-			Width(paneWidth).
-			Render(titleContent)
-		descLine := lipgloss.NewStyle().Foreground(p.Overlay1).Width(paneWidth).Render(descContent)
-		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
-	default:
-		titleLine := lipgloss.NewStyle().Width(paneWidth).Render(titleContent)
-		descLine := lipgloss.NewStyle().Foreground(p.Overlay0).Width(paneWidth).Render(descContent)
-		fmt.Fprintf(w, "%s\n%s", titleLine, descLine)
-	}
+	// Focus accent bg + Base fg — the one selection/focus colour used
+	// everywhere (sidebar cursor, table row, active tab, pane border).
+	// Only the title line carries the highlight background; the
+	// description line stays plain (no bg block) underneath it. Bold is
+	// unconditional while the cursor is on this row (focused or not),
+	// unlike clusterDelegate — see renderPaneRow's boldOnCursor doc.
+	fmt.Fprint(w, renderPaneRow(paneWidth, paneRowContent{
+		plainTitle:   " " + dot + " " + name + currentMark + statusSuffix,
+		styledTitle:  " " + dotStr + " " + nameStr + currentMark + statusStr,
+		plainDesc:    "    " + descStr, // indent to align under name; same styled string in both variants
+		styledDesc:   "    " + descStr,
+		boldOnCursor: true,
+	}, isCursor, d.focused))
 }
 
 // ContextsInfo is the left-pane model for selecting Kubernetes contexts.
@@ -198,29 +173,12 @@ func (c *ContextsInfo) setDimensions() {
 }
 
 func NewContextInfo(client *k8s.Client) *ContextsInfo {
-	newList := list.New([]list.Item{}, contextDelegate{}, 0, 0)
-	newList.SetShowStatusBar(false)
-	newList.SetShowHelp(false)
-	// The pagination dot row reads as a stray glyph under the pane title;
-	// the list still pages, it just doesn't draw the indicator.
-	newList.SetShowPagination(false)
-	// This pane has no "/" filter of its own — bubbles/list's built-in
-	// filtering must stay off, or "/" silently drops into its filter-input
-	// mode and Esc can't get back out (MainPage's global Esc handling
-	// intercepts the keypress before it ever reaches this list's Update).
-	newList.SetFilteringEnabled(false)
-	// bubbles/list's default keymap also binds "q" (and "esc") to its own
-	// built-in quit, returning tea.Quit straight from this list's Update —
-	// which MainPage would then dutifully run, killing the whole app. "q" is
-	// deliberately not a quit key here (only Ctrl+C is); disable it at the
-	// source rather than trying to intercept "q" before it reaches the list.
-	newList.DisableQuitKeybindings()
-	// Clearing Title (see below) alone isn't enough — bubbles/list still
-	// renders its title bar's background padding as an empty colored box
-	// even with no text (the section header is drawn manually instead: the
-	// outer box border title for this pane, MainPage's renderLeftBox for
-	// Namespaces/Clusters).
-	newList.SetShowTitle(false)
+	// See newPaneList's doc comment for why every option it sets is needed
+	// — most notably, this pane has no "/" filter of its own, so bubbles/
+	// list's built-in filtering must stay off (MainPage's global Esc
+	// handling intercepts "/" before it ever reaches this list's Update,
+	// so bubbles/list's own filter-input mode could never be escaped).
+	newList := newPaneList(contextDelegate{})
 	return &ContextsInfo{
 		Client:             client,
 		PaneTitle:          "Kubernetes Contexts",
