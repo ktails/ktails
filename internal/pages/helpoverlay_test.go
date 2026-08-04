@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -37,6 +38,33 @@ func TestHelpOverlay_NeverExceedsTerminalWidth(t *testing.T) {
 				t.Errorf("%dx%d: line %d is %d cols wide, exceeds terminal width %d: %q", size.w, size.h, i, w, size.w, line)
 			}
 		}
+	}
+}
+
+// TestOverlaySepWidth_MatchesActualContentWidth guards the separator-width
+// regression: the box is styled Width(maxW).Padding(1, 3).Border(rounded),
+// so its usable content width is maxW minus the border's 2 columns and the
+// padding's 3+3 columns — not maxW-2, which ignored padding entirely and
+// let the separator rule wrap onto the next line. A content string exactly
+// overlaySepWidth(maxW) long must render on one line; one character longer
+// must wrap onto a second — that boundary is what proves the value is
+// exactly right, not just "close enough not to obviously break".
+func TestOverlaySepWidth_MatchesActualContentWidth(t *testing.T) {
+	const maxW = 50
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 3).
+		Width(maxW)
+	got := overlaySepWidth(maxW)
+
+	fitsExactly := box.Render(strings.Repeat("X", got))
+	if n := strings.Count(fitsExactly, "\n") + 1; n != 5 { // border top/bottom + 1 padding row each side + 1 content row
+		t.Fatalf("content of exactly overlaySepWidth=%d chars wrapped unexpectedly: %d lines, want 5", got, n)
+	}
+
+	oneTooLong := box.Render(strings.Repeat("X", got+1))
+	if n := strings.Count(oneTooLong, "\n") + 1; n <= 5 {
+		t.Fatalf("content one char longer than overlaySepWidth=%d did not wrap: %d lines, want > 5 — overlaySepWidth is too small", got, n)
 	}
 }
 

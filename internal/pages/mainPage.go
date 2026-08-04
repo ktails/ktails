@@ -1781,7 +1781,7 @@ func (m *MainPage) renderHelpOverlay() string {
 	content := renderColumn(helpBindings, singleDescWidth)
 	sepWidth := lipgloss.Width(content)
 
-	availH := (m.height - 2) - helpBoxOverheadH - 2 // -2: title line + separator line
+	availH := (m.height - views.FooterHeight) - helpBoxOverheadH - 2 // -2: title line + separator line
 	if lipgloss.Height(content) > availH && m.width >= 100 {
 		colBudget := (boxBudget - 3) / 2 // 3-col gap between the two columns
 		colDescWidth := colBudget - helpKeyColWidth - 1
@@ -1797,7 +1797,7 @@ func (m *MainPage) renderHelpOverlay() string {
 
 	sep := sepStyle.Render(strings.Repeat("─", sepWidth))
 	box := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, titleStyle.Render("Keybindings"), sep, content))
-	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
+	return lipgloss.Place(m.width, m.height-views.FooterHeight, lipgloss.Center, lipgloss.Center, box)
 }
 
 // renderTooSmallOverlay replaces the whole TUI with a plain message when the
@@ -1845,12 +1845,27 @@ func (m *MainPage) renderErrorOverlay(msg string) string {
 		Align(lipgloss.Center)
 
 	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("⚠  Error")
-	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", maxW-2))
+	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", overlaySepWidth(maxW)))
 	body := lipgloss.NewStyle().Foreground(p.Text).Render(msg)
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc to dismiss")
 
 	content := strings.Join([]string{title, sep, body, "", hint}, "\n")
-	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box.Render(content))
+	return lipgloss.Place(m.width, m.height-views.FooterHeight, lipgloss.Center, lipgloss.Center, box.Render(content))
+}
+
+// overlaySepWidth returns the usable content width inside an overlay box
+// styled Width(maxW).Padding(1, 3).Border(lipgloss.RoundedBorder()) — i.e.
+// maxW minus the border's 2 columns and the padding's 3+3 columns, so a
+// separator rule spans exactly the content area instead of wrapping onto
+// the next line (maxW-2, the previous computation, ignored padding
+// entirely).
+func overlaySepWidth(maxW int) int {
+	const overlayHorizontalChrome = 8 // RoundedBorder 1+1, Padding(1,3) 3+3
+	w := maxW - overlayHorizontalChrome
+	if w < 1 {
+		w = 1
+	}
+	return w
 }
 
 func (m *MainPage) renderErrorSummaryOverlay(errors map[string]string) string {
@@ -1869,7 +1884,7 @@ func (m *MainPage) renderErrorSummaryOverlay(errors map[string]string) string {
 		Align(lipgloss.Center)
 
 	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("⚠  Errors encountered")
-	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", maxW-2))
+	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", overlaySepWidth(maxW)))
 	// Map iteration order is randomized per Go's spec — without sorting,
 	// this list would reshuffle every single frame.
 	ctxNames := make([]string, 0, len(errors))
@@ -1885,7 +1900,7 @@ func (m *MainPage) renderErrorSummaryOverlay(errors map[string]string) string {
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc/e to dismiss")
 
 	content := strings.Join([]string{title, sep, body, "", hint}, "\n")
-	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box.Render(content))
+	return lipgloss.Place(m.width, m.height-views.FooterHeight, lipgloss.Center, lipgloss.Center, box.Render(content))
 }
 
 func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
