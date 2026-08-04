@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"image/color"
 	"io"
-	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -176,8 +175,9 @@ func colorizeJSON(s string, p styles.Palette) (string, bool) {
 // number, so lines from different sources can be interleaved back into
 // true chronological order when rendering the merged view.
 type logLine struct {
-	seq  int64
-	text string
+	seq      int64
+	text     string // raw, as received (kept for future re-theming/copy)
+	rendered string // highlightJSONLine(text) — computed once at append, not on every render
 }
 
 // logSource is one pod/container being tailed into the merged pane. It
@@ -191,6 +191,11 @@ type logSource struct {
 	context   string
 	container string
 	color     color.Color
+
+	// renderedPrefix is this source's "pod/container |" label, styled once
+	// in AddSource rather than re-rendered on every line of every render —
+	// it never changes for the lifetime of the source.
+	renderedPrefix string
 
 	lines     []logLine
 	streaming bool
@@ -286,6 +291,7 @@ func (l *LogPage) AddSource(key, podName, namespace, context, container string) 
 		color:     color,
 		streaming: true,
 	}
+	src.renderedPrefix = lipgloss.NewStyle().Foreground(color).Bold(true).Render(src.label() + " |")
 	l.sources[key] = src
 	l.order = append(l.order, key)
 	l.appendTo(src, fmt.Sprintf("Connecting to %s...", src.label()))
@@ -356,7 +362,8 @@ func (l *LogPage) appendTo(src *logSource, text string) {
 	wasAtBottom := l.viewport.AtBottom()
 
 	l.nextSeq++
-	src.lines = append(src.lines, logLine{seq: l.nextSeq, text: text})
+	rendered := highlightJSONLine(text, styles.CatppuccinMocha())
+	src.lines = append(src.lines, logLine{seq: l.nextSeq, text: text, rendered: rendered})
 	if len(src.lines) > maxLogLines {
 		src.lines = src.lines[len(src.lines)-maxLogLines:]
 	}
@@ -391,35 +398,23 @@ func (l *LogPage) SetStreamEnded(key string, err error) {
 }
 
 // refreshContent rebuilds rawLines from either the isolated source or a
-// chronological merge of every source's buffer (interleaved by global
-// arrival sequence — each source's own lines are already seq-ordered, so
-// this is a straightforward merge-and-sort over a bounded number of lines),
-// then hands the result to applyContent to become the viewport's content.
+// chronological merge of every source's buffer, using each line's cached
+// rendered/renderedPrefix text — see appendTo and AddSource — rather than
+// re-running JSON highlighting or prefix styling on every line of every
+// render (previously the dominant cost under log/watch load: every arriving
+// line re-highlighted the full scrollback of every source). Still called on
+// every append rather than incrementally, since maxLineWidth's full rescan
+// here is cheap once highlighting is out of the loop; see appendTo.
 func (l *LogPage) refreshContent() {
-	p := styles.CatppuccinMocha()
-
 	var rendered []string
 	if l.isolatedIdx >= 0 && l.isolatedIdx < len(l.order) {
 		src := l.sources[l.order[l.isolatedIdx]]
 		rendered = make([]string, len(src.lines))
 		for i, ln := range src.lines {
-			rendered[i] = highlightJSONLine(ln.text, p)
+			rendered[i] = ln.rendered
 		}
 	} else {
-		var all []logLine
-		for _, key := range l.order {
-			src := l.sources[key]
-			prefix := lipgloss.NewStyle().Foreground(src.color).Bold(true).Render(src.label() + " |")
-			for _, ln := range src.lines {
-				all = append(all, logLine{seq: ln.seq, text: prefix + " " + highlightJSONLine(ln.text, p)})
-			}
-		}
-		sort.Slice(all, func(i, j int) bool { return all[i].seq < all[j].seq })
-
-		rendered = make([]string, len(all))
-		for i, ln := range all {
-			rendered[i] = ln.text
-		}
+		rendered = l.mergedRenderedLines()
 	}
 
 	l.rawLines = rendered
@@ -430,6 +425,41 @@ func (l *LogPage) refreshContent() {
 		}
 	}
 	l.applyContent()
+}
+
+// mergedRenderedLines interleaves every source's buffer back into
+// chronological order by global arrival sequence. Each source's own lines
+// are already seq-ascending (appendTo only ever appends), so this is a
+// k-way "pick the smallest head" merge over at most len(l.order) sources
+// rather than a sort.Slice over their full concatenation.
+func (l *LogPage) mergedRenderedLines() []string {
+	next := make([]int, len(l.order)) // next unmerged line index, per source
+	total := 0
+	for _, key := range l.order {
+		total += len(l.sources[key].lines)
+	}
+
+	out := make([]string, 0, total)
+	for {
+		best := -1
+		var bestSeq int64
+		for i, key := range l.order {
+			src := l.sources[key]
+			if next[i] >= len(src.lines) {
+				continue
+			}
+			if seq := src.lines[next[i]].seq; best < 0 || seq < bestSeq {
+				best, bestSeq = i, seq
+			}
+		}
+		if best < 0 {
+			return out
+		}
+		src := l.sources[l.order[best]]
+		ln := src.lines[next[best]]
+		out = append(out, src.renderedPrefix+" "+ln.rendered)
+		next[best]++
+	}
 }
 
 // applyContent renders rawLines into the viewport for the current wrap
