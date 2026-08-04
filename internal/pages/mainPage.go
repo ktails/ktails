@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 
 	"github.com/ktails/ktails/internal/k8s"
@@ -1641,11 +1642,91 @@ func (m *MainPage) footerHints() string {
 	}
 }
 
+// helpKeyColWidth is the fixed width of the key-binding column in the help
+// overlay. Every key label in helpBindings must fit within it — a label
+// that doesn't is shortened, with whatever context it lost (which pane,
+// which mode) moved into the description instead, rather than letting it
+// overflow into the description column.
+const helpKeyColWidth = 16
+
+// helpBinding is one row of the help overlay: a key label and its
+// description.
+type helpBinding struct{ key, desc string }
+
+// helpBindings is the full keybinding reference shown by renderHelpOverlay.
+var helpBindings = []helpBinding{
+	{"Tab / Shift+Tab", "Switch pane focus"},
+	{"[ / ]", "Navigate tabs, or cycle sidebar sections when it has focus"},
+	{"Space/Enter", "Namespaces: check to watch; Enter applies"},
+	{"a (Namespaces)", "Toggle all namespaces checked, or restore prior selection"},
+	{"/ (Namespaces)", "Filter namespace rows; Enter to keep, Esc to clear"},
+	{"Space/Enter", "Clusters: bulk (de)select a cluster's contexts; Enter applies"},
+	{"← / →", "Navigate tabs (alias)"},
+	{"↑↓ j/k", "Move up / down"},
+	{"PgUp / PgDn", "Move up/down a page (also Ctrl+U/Ctrl+D)"},
+	{"g/Home G/End", "Jump to first / last row"},
+	{"/", "Filter the active table by name; Enter to keep, Esc to clear"},
+	{"Space", "Toggle context selection / check a Pods row for logs"},
+	{"Enter (Contexts)", "Confirm selection & load"},
+	{"d", "Open/focus detail pane for the row under cursor"},
+	{"l (Pods tab)", "Open/reconcile log pane for checked rows (or cursor row)"},
+	{"Ctrl+X (Pods)", "Clear all checked rows"},
+	{"r", "Refresh the active tab across all selected contexts"},
+	{"c (log focused)", "Isolate one source, or return to the full merge"},
+	{"Ctrl+R", "Jump back into an open detail pane"},
+	{"R", "Toggle auto-refresh on/off"},
+	{"Shift+N/M/A", "Cycle sort by Name / Namespace / Age: asc -> desc -> off"},
+	{"↑↓ jk PgUp/Dn", "Scroll detail/log pane (while focused)"},
+	{"y (detail focus)", "Jump to the YAML section"},
+	{"Home / End", "Jump to top / bottom of detail/log pane"},
+	{"Esc", "Unfocus, then close pane / overlay / dismiss error"},
+	{"?", "Toggle this help"},
+	{"Ctrl+C", "Quit"},
+}
+
+// renderHelpBinding renders one binding row, wrapping its description to
+// descWidth (ansi.Wrap, so it never silently overflows into whatever's
+// beside it) and blank-indenting the key column on any wrapped
+// continuation lines so they stay aligned under the description rather
+// than repeating or truncating the key.
+func renderHelpBinding(b helpBinding, keyStyle, descStyle lipgloss.Style, descWidth int) string {
+	descLines := strings.Split(ansi.Wrap(b.desc, descWidth, ""), "\n")
+
+	indent := strings.Repeat(" ", helpKeyColWidth+1)
+	out := make([]string, len(descLines))
+	for i, dl := range descLines {
+		if i == 0 {
+			out[i] = keyStyle.Render(b.key) + " " + descStyle.Render(dl)
+		} else {
+			out[i] = indent + descStyle.Render(dl)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// helpBoxOverheadW/helpBoxOverheadH are the help box's own border+padding
+// (RoundedBorder — 1 cell each side; Padding(1, 3) — 1 row/3 cols each
+// side), subtracted from the terminal size to get the content budget
+// actually available for text.
+const (
+	helpBoxOverheadW = 8 // 3+3 padding, 1+1 border
+	helpBoxOverheadH = 4 // 1+1 padding, 1+1 border
+)
+
+// renderHelpOverlay renders the full keybinding reference as a centered,
+// bordered box, sized to fit the app's own minimum terminal (80x24) rather
+// than the ~125x33 the original static layout needed. Descriptions wrap to
+// the available width instead of overflowing, and the whole list falls back
+// to two side-by-side columns (half the rows each) if a single column would
+// otherwise exceed the terminal's height — but only when there's genuinely
+// room for two columns; below that width the overflow is accepted rather
+// than crushing either column past readability, matching the "keep it
+// simple and static, no scrolling widget" approach used here.
 func (m *MainPage) renderHelpOverlay() string {
 	p := styles.CatppuccinMocha()
 
 	titleStyle := lipgloss.NewStyle().Foreground(p.Mauve).Bold(true)
-	keyStyle := lipgloss.NewStyle().Foreground(p.Blue).Bold(true).Width(22)
+	keyStyle := lipgloss.NewStyle().Foreground(p.Blue).Bold(true).Width(helpKeyColWidth)
 	descStyle := lipgloss.NewStyle().Foreground(p.Text)
 	sepStyle := lipgloss.NewStyle().Foreground(p.Overlay0)
 	boxStyle := lipgloss.NewStyle().
@@ -1654,48 +1735,42 @@ func (m *MainPage) renderHelpOverlay() string {
 		Background(p.Mantle).
 		Padding(1, 3)
 
-	type binding struct{ key, desc string }
-	bindings := []binding{
-		{"Tab / Shift+Tab", "Switch pane focus"},
-		{"[ / ]", "Navigate resource tabs, or cycle Contexts/Namespaces/Clusters sections when the sidebar has focus"},
-		{"Space / Enter (Namespaces pane)", "Check a namespace to watch it in addition to the default; Enter applies the change"},
-		{"a (Namespaces pane)", "Toggle all namespaces under the cursor's context checked, or back to what was checked before"},
-		{"/ (Namespaces pane)", "Filter namespace rows by name; Enter to keep it, Esc to clear"},
-		{"Space / Enter (Clusters pane)", "Bulk select/deselect every context under one cluster; Enter applies the change"},
-		{"← / →", "Navigate tabs (alias)"},
-		{"↑ / ↓   j / k", "Move up / down"},
-		{"PgUp / PgDn   Ctrl+U / Ctrl+D", "Move up / down a page (any resource tab)"},
-		{"g / Home   G / End", "Jump to first / last row (any resource tab)"},
-		{"/", "Filter the active table by name across all rows, not just the visible ones; Enter to keep it, Esc to clear"},
-		{"Space", "Toggle context selection / check a Pods row for log tailing"},
-		{"Enter (Contexts pane)", "Confirm selection & load"},
-		{"d", "Open + focus the detail pane for the row under the cursor (refocuses instantly if already loaded)"},
-		{"l (Pods tab)", "Open/reconcile the merged log pane for checked rows (or the row under the cursor)"},
-		{"Ctrl+X (Pods tab)", "Clear all checked rows"},
-		{"r", "Refresh the active tab's resource list across all selected contexts"},
-		{"c (log pane focused)", "Isolate one source's view, or return to the full merge"},
-		{"Ctrl+R", "Jump back into an open detail pane without changing its resource"},
-		{"R", "Toggle auto-refresh on/off"},
-		{"Shift+N / Shift+M / Shift+A", "Cycle sorting by Name / Namespace / Age: ascending -> descending -> off"},
-		{"↑/↓ j/k PgUp/PgDn", "Scroll detail/log pane (while it has focus)"},
-		{"y (detail pane focused)", "Jump straight to the YAML section"},
-		{"Home / End", "Jump to top / bottom of detail/log pane"},
-		{"Esc", "Unfocus detail/log pane, then close it / overlay / dismiss error"},
-		{"?", "Toggle this help"},
-		{"Ctrl+C", "Quit"},
+	boxBudget := m.width - 4 - helpBoxOverheadW
+	if boxBudget < helpKeyColWidth+10 {
+		boxBudget = helpKeyColWidth + 10
 	}
 
-	var lines []string
-	lines = append(lines, titleStyle.Render("Keybindings"))
-	lines = append(lines, sepStyle.Render(strings.Repeat("─", 38)))
-	for _, b := range bindings {
-		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top,
-			keyStyle.Render(b.key),
-			descStyle.Render(b.desc),
-		))
+	renderColumn := func(rows []helpBinding, descWidth int) string {
+		lines := make([]string, len(rows))
+		for i, b := range rows {
+			lines[i] = renderHelpBinding(b, keyStyle, descStyle, descWidth)
+		}
+		return strings.Join(lines, "\n")
 	}
 
-	box := boxStyle.Render(strings.Join(lines, "\n"))
+	singleDescWidth := boxBudget - helpKeyColWidth - 1
+	if singleDescWidth > 70 {
+		singleDescWidth = 70 // wide terminals still wrap at a readable prose width
+	}
+	content := renderColumn(helpBindings, singleDescWidth)
+	sepWidth := lipgloss.Width(content)
+
+	availH := (m.height - 2) - helpBoxOverheadH - 2 // -2: title line + separator line
+	if lipgloss.Height(content) > availH && m.width >= 100 {
+		colBudget := (boxBudget - 3) / 2 // 3-col gap between the two columns
+		colDescWidth := colBudget - helpKeyColWidth - 1
+		if colDescWidth < 16 {
+			colDescWidth = 16
+		}
+		mid := (len(helpBindings) + 1) / 2
+		left := renderColumn(helpBindings[:mid], colDescWidth)
+		right := renderColumn(helpBindings[mid:], colDescWidth)
+		content = lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
+		sepWidth = lipgloss.Width(content)
+	}
+
+	sep := sepStyle.Render(strings.Repeat("─", sepWidth))
+	box := boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, titleStyle.Render("Keybindings"), sep, content))
 	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
 }
 
