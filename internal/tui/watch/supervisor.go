@@ -673,6 +673,19 @@ func (s *Supervisor) waitCmd(kind msgs.ResourceKind, kubeContext string, generat
 	}
 }
 
+// Namespace returns the namespace this context's watches/lists are scoped
+// to ("" for cluster-wide — see StartContext and the Cluster interface's
+// doc comment). Callers issuing their own one-off fetches against the same
+// context (endpoints, metrics) must scope to this same namespace rather
+// than going cluster-wide: a ServiceAccount whose RBAC only grants
+// namespaced list/watch has no cluster-scoped verb at all, so a
+// cluster-wide call would be outright Forbidden even though the namespaced
+// one succeeds — exactly the failure mode StartContext's own scoping
+// already avoids for the watches themselves.
+func (s *Supervisor) Namespace(kubeContext string) string {
+	return s.namespaces[kubeContext]
+}
+
 // NeedsEndpoints reports whether svc Endpoint IPs still need fetching for
 // this context — false once fetched (or requested).
 func (s *Supervisor) NeedsEndpoints(kubeContext string) bool {

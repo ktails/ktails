@@ -1244,10 +1244,13 @@ func (m *MainPage) reRenderAgeFromWatchCaches() {
 
 // fetchServiceEndpointsIfNeeded dispatches LoadServiceEndpointsCmd for every
 // selected context that hasn't had its Endpoint IPs fetched yet (see
-// watch.Supervisor.NeedsEndpoints) — one cluster-wide fetch per context,
-// matching the Services watch's own scope (see watch.Supervisor's stateKey
-// doc comment), regardless of which namespaces are currently checked in the
-// Namespaces pane. Called only when svc wide mode turns on — the Ctrl+W
+// watch.Supervisor.NeedsEndpoints) — one fetch per context, scoped to the
+// same namespace the Supervisor resolved for that context's watches (see
+// watch.Supervisor.Namespace), regardless of which namespaces are currently
+// checked in the Namespaces pane. A namespace-scoped ServiceAccount has no
+// cluster-scoped list verb at all, so going cluster-wide here (as this
+// previously always did) would be Forbidden even though the Services watch
+// itself succeeds. Called only when svc wide mode turns on — the Ctrl+W
 // toggle itself already revealed the other new columns synchronously; this
 // just fills in the one column that needs a network round trip, without
 // blocking or repeating that round trip.
@@ -1263,7 +1266,7 @@ func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 			continue
 		}
 		m.watchSup.MarkEndpointsRequested(context)
-		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, ""))
+		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, m.watchSup.Namespace(context)))
 	}
 
 	if len(cmdSequence) == 0 {
@@ -1279,6 +1282,11 @@ func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 // lastMetricsFetch. A context whose fetch has ever failed (see
 // Supervisor.PodMetricsUnavailable/NodeMetricsUnavailable — most commonly:
 // no metrics-server installed) is skipped rather than retried forever.
+// Pod metrics are scoped to watch.Supervisor.Namespace(context), the same
+// namespace the Pods watch itself uses — a cluster-wide fetch would
+// permanently mark metrics unavailable for a namespace-scoped
+// ServiceAccount even though the namespaced call would succeed (Nodes are
+// cluster-scoped regardless, so LoadNodeMetricsCmd takes no namespace).
 func (m *MainPage) fetchMetricsIfNeeded() tea.Cmd {
 	kind := m.activeKind()
 	if kind != msgs.KindPods && kind != msgs.KindNodes {
@@ -1295,7 +1303,7 @@ func (m *MainPage) fetchMetricsIfNeeded() tea.Cmd {
 		switch kind {
 		case msgs.KindPods:
 			if !m.watchSup.PodMetricsUnavailable(context) {
-				cmdSequence = append(cmdSequence, cmds.LoadPodMetricsCmd(m.Client, context, ""))
+				cmdSequence = append(cmdSequence, cmds.LoadPodMetricsCmd(m.Client, context, m.watchSup.Namespace(context)))
 			}
 		case msgs.KindNodes:
 			if !m.watchSup.NodeMetricsUnavailable(context) {

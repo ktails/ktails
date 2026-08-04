@@ -627,6 +627,30 @@ func TestSupervisor_StartContextScopesToNamespace(t *testing.T) {
 	}
 }
 
+// TestSupervisor_NamespaceAccessorReportsScope guards the accessor callers
+// (MainPage's endpoints/metrics fetches) rely on to scope their own one-off
+// fetches to the same namespace StartContext resolved for that context's
+// watches — a mismatch there is exactly the "cluster-wide fetch Forbidden
+// for a namespace-scoped ServiceAccount" bug this exists to prevent.
+func TestSupervisor_NamespaceAccessorReportsScope(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+
+	if got := s.Namespace("ctx1"); got != "" {
+		t.Fatalf("expected empty namespace for a never-started context, got %q", got)
+	}
+
+	s.StartContext("ctx1", "team-a")
+	if got := s.Namespace("ctx1"); got != "team-a" {
+		t.Fatalf("expected Namespace to report the scope passed to StartContext, got %q", got)
+	}
+
+	s.StopContext("ctx1")
+	if got := s.Namespace("ctx1"); got != "" {
+		t.Fatalf("expected Namespace to report empty again after StopContext, got %q", got)
+	}
+}
+
 // nonNodeKinds returns msgs.Kinds() in the same order StartContext iterates
 // it, minus KindNodes, matching the []tea.Cmd StartContext returns index for
 // index.
