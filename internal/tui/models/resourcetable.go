@@ -737,26 +737,35 @@ func (t *ResourceTable) View() string {
 	return view
 }
 
+// SetSize resizes the table. It updates the existing btable.Model via its
+// builder methods (which each return an updated copy, not a rebuild) rather
+// than constructing a brand-new one — the previous version called
+// newBubbleTable (btable.New(cols), a fresh internal state) on every resize,
+// meaning ×13 tables rebuilt from scratch continuously during a terminal
+// drag. Non-size options (Border, NoPagination — set once in
+// NewResourceTable's newBubbleTable call) are left untouched by construction
+// since t.table itself now persists across resizes.
 func (t *ResourceTable) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return
 	}
 	t.tableW, t.tableH = w, h
+	// Resetting wide mode on every resize, rather than re-fitting its
+	// (possibly overflowing) fixed column set to the new width, avoids a
+	// class of bubble-table column-width edge cases that aren't worth the
+	// modest allocation preserving it across resize would save — see
+	// IMPROVEMENT_PLAN.md Phase 2.7.
 	t.wideMode = false
+	t.applyColumns() // narrow-mode columns, WithTargetWidth/WithMaxTotalWidth, wideColCount, scrollable
 
-	compact := t.tier == views.TierCompact
 	st := styles.CatppuccinBubbleTableStyle()
-	t.table = newBubbleTable(t.spec.narrowColumns(compact)).
+	t.table = t.table.
 		WithMinimumHeight(h).
-		WithTargetWidth(w).
-		WithMaxTotalWidth(w).
 		HeaderStyle(st.Header).
 		HighlightStyle(st.Highlight).
 		WithBaseStyle(st.Base).
-		WithHorizontalFreezeColumnCount(t.spec.freezeColumns).
 		Focused(t.focused)
-	t.wideColCount = len(t.spec.narrowColumns(compact))
-	t.scrollable = false
+
 	t.windowSize = rowWindowSizeFor(h)
 	t.windowStart = computeWindowStart(t.windowStart, t.cursorIdx, t.activeLen(), t.windowSize)
 	t.pushDisplayRows()

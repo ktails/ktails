@@ -317,7 +317,7 @@ func recheckStartupSizeCmd() tea.Cmd {
 
 func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	start := time.Now()
-	defer m.logSlowUpdate(start)
+	defer m.logSlowUpdate(start, msg)
 
 	// Watch messages are the Supervisor's to interpret; MainPage only
 	// applies the resulting row/error updates to the UI.
@@ -1036,10 +1036,20 @@ func (m *MainPage) syncContextStates() {
 	}
 }
 
-func (m *MainPage) logSlowUpdate(start time.Time) {
+func (m *MainPage) logSlowUpdate(start time.Time, msg tea.Msg) {
 	elapsed := time.Since(start)
 	if elapsed > 16*time.Millisecond {
-		log.Printf("Slow update: %v", elapsed)
+		log.Printf("Slow update: %v msg=%T", elapsed, msg)
+	}
+}
+
+// logSlowRender is logSlowUpdate's View() counterpart — a render is the
+// other half of what can make a frame miss its budget, and previously had
+// no equivalent instrumentation at all.
+func (m *MainPage) logSlowRender(start time.Time) {
+	elapsed := time.Since(start)
+	if elapsed > 16*time.Millisecond {
+		log.Printf("Slow render: %v", elapsed)
 	}
 }
 
@@ -1419,6 +1429,8 @@ func (m *MainPage) stopLogStream() {
 }
 
 func (m *MainPage) View() tea.View {
+	start := time.Now()
+	defer m.logSlowRender(start)
 	return tea.View{
 		Content:   m.renderView(),
 		AltScreen: true,
