@@ -52,7 +52,10 @@ func (c *Client) GetServiceEndpoints(kubeContextName, namespace string) (map[str
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	sliceList, err := clientset.DiscoveryV1().EndpointSlices(namespace).List(context.Background(), v1.ListOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	sliceList, err := clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, v1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list endpoint slices in namespace %s (context %s): %w",
 			namespace, kubeContextName, err)
@@ -81,7 +84,10 @@ func (c *Client) GetServiceDetail(kubeContextName, namespace, serviceName string
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	svc, err := clientset.CoreV1().Services(namespace).Get(context.Background(), serviceName, v1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	svc, err := clientset.CoreV1().Services(namespace).Get(ctx, serviceName, v1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get service %s in namespace %s (context %s): %w",
 			serviceName, namespace, kubeContextName, err)

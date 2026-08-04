@@ -83,6 +83,9 @@ func (c *Client) WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext,
 // given namespace in one call. See ListPods for why this exists alongside
 // the watch.
 func (c *Client) ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -108,7 +111,10 @@ func (c *Client) GetHorizontalPodAutoscalerDetail(kubeContextName, namespace, na
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	hpa, err := clientset.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(context.Background(), name, v1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	hpa, err := clientset.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, name, v1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get horizontalpodautoscaler %s in namespace %s (context %s): %w",
 			name, namespace, kubeContextName, err)

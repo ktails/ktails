@@ -55,7 +55,10 @@ func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName 
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.Background(), deploymentName, v1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	deployment, err := clientset.AppsV1().Deployments(namespace).Get(ctx, deploymentName, v1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get deployment %s in namespace %s (context %s): %w",
 			deploymentName, namespace, kubeContextName, err)

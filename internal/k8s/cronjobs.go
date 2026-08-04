@@ -61,6 +61,9 @@ func (c *Client) WatchCronJobs(ctx context.Context, kubeContext, namespace strin
 // ListCronJobs fetches every CronJob in the given namespace in one call. See
 // ListPods for why this exists alongside the watch.
 func (c *Client) ListCronJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.CronJob, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -86,7 +89,10 @@ func (c *Client) GetCronJobDetail(kubeContextName, namespace, name string) (Reso
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	cj, err := clientset.BatchV1().CronJobs(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	cj, err := clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get cronjob %s in namespace %s (context %s): %w", name, namespace, kubeContextName, err)
 	}

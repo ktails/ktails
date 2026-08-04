@@ -2,6 +2,9 @@ package k8s
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
@@ -269,6 +273,40 @@ func TestGetClientForContext_SameContextDedupsInFlightDials(t *testing.T) {
 	}
 	if got := atomic.LoadInt64(&buildCalls); got != 1 {
 		t.Fatalf("expected exactly one build call for concurrent requests to the same context, got %d", got)
+	}
+}
+
+// TestListPods_TimesOutAgainstHungServer guards the regression this fix
+// targets: every one-shot call used context.Background() with
+// rest.Config.Timeout == 0, so a hung-but-connected apiserver blocked a
+// List/Get call forever with no error path. requestTimeout is temporarily
+// shrunk (it's a package var for exactly this) so the test doesn't actually
+// wait 15 real seconds — the server sleeps well past that shrunk timeout
+// before responding, so the request is guaranteed to still be outstanding
+// when the client-side deadline fires.
+func TestListPods_TimesOutAgainstHungServer(t *testing.T) {
+	origTimeout := requestTimeout
+	requestTimeout = 30 * time.Millisecond
+	defer func() { requestTimeout = origTimeout }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	clientset, err := kubernetes.NewForConfig(&rest.Config{Host: srv.URL})
+	if err != nil {
+		t.Fatalf("failed to build clientset against test server: %v", err)
+	}
+	c := &Client{clientsByContext: map[string]kubernetes.Interface{"ctx1": clientset}}
+
+	_, err = c.ListPods(context.Background(), "ctx1", "default")
+	if err == nil {
+		t.Fatal("expected an error from a hung server, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a context.DeadlineExceeded-wrapped error, got: %v", err)
 	}
 }
 

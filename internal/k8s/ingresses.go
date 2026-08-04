@@ -88,6 +88,9 @@ func (c *Client) WatchIngresses(ctx context.Context, kubeContext, namespace stri
 // ListIngresses fetches every Ingress in the given namespace in one call.
 // See ListPods for why this exists alongside the watch.
 func (c *Client) ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -113,7 +116,10 @@ func (c *Client) GetIngressDetail(kubeContextName, namespace, name string) (Reso
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ing, err := clientset.NetworkingV1().Ingresses(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	ing, err := clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get ingress %s in namespace %s (context %s): %w", name, namespace, kubeContextName, err)
 	}

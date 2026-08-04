@@ -60,6 +60,9 @@ func (c *Client) WatchConfigMaps(ctx context.Context, kubeContext, namespace str
 // ListConfigMaps fetches every ConfigMap in the given namespace in one call.
 // See ListPods for why this exists alongside the watch.
 func (c *Client) ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -85,7 +88,10 @@ func (c *Client) GetConfigMapDetail(kubeContextName, namespace, name string) (Re
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	cm, err := clientset.CoreV1().ConfigMaps(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	cm, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get configmap %s in namespace %s (context %s): %w", name, namespace, kubeContextName, err)
 	}

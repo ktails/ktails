@@ -24,6 +24,16 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// requestTimeout bounds every one-shot (non-watch, non-log-stream) API call
+// — a hung-but-connected apiserver otherwise blocks a List/Get/metrics call
+// forever, since rest.Config.Timeout is 0 (unset) and none of these calls
+// used to carry a deadline of their own. Watches and log streams must stay
+// un-deadlined — a deadline would kill them mid-stream — so they're
+// deliberately excluded; see WatchPods and StreamLogs. A var, not a const,
+// so tests can shrink it to exercise the timeout path without a real
+// 15-second wait.
+var requestTimeout = 15 * time.Second
+
 // Client wraps Kubernetes client operations with support for multiple contexts
 type Client struct {
 	clientsByContext map[string]kubernetes.Interface
@@ -236,12 +246,14 @@ func (c *Client) createClientForContext(contextName string) (kubernetes.Interfac
 		return nil, fmt.Errorf("failed to create kubernetes client for context %s: %w", contextName, err)
 	}
 
-	// Test the connection
-	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Test the connection. ServerVersion() takes no context (and so cannot
+	// be bounded by one), which is why the previous version of this probe's
+	// context.WithTimeout was silently discarded and did nothing — probe via
+	// the REST client directly instead, which does honor ctx.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err = clientset.Discovery().ServerVersion()
-	if err != nil {
+	if err := clientset.Discovery().RESTClient().Get().AbsPath("/version").Do(ctx).Error(); err != nil {
 		return nil, fmt.Errorf("failed to connect to cluster in context %s: %w", contextName, err)
 	}
 
@@ -361,6 +373,9 @@ func (c *Client) CanWatchNodes(kubeContext string) (bool, error) {
 		return false, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
 	review := &authorizationv1.SelfSubjectAccessReview{
 		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
 			ResourceAttributes: &authorizationv1.ResourceAttributes{
@@ -369,7 +384,7 @@ func (c *Client) CanWatchNodes(kubeContext string) (bool, error) {
 			},
 		},
 	}
-	result, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(context.Background(), review, metav1.CreateOptions{})
+	result, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
 	if err != nil {
 		return false, fmt.Errorf("failed to check node access for context %s: %w", kubeContext, err)
 	}
@@ -387,7 +402,10 @@ func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	list, err := clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	list, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		if apierrors.IsForbidden(err) {
 			return nil, fmt.Errorf("RBAC: not permitted to list namespaces in context '%s'", kubeContext)
@@ -426,6 +444,9 @@ func (c *Client) WatchPods(ctx context.Context, kubeContext, namespace string) (
 // ListPods fetches every pod in the given namespace in one call. See
 // WatchPods for why this exists alongside the watch.
 func (c *Client) ListPods(ctx context.Context, kubeContext, namespace string) ([]*v1.Pod, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -460,6 +481,9 @@ func (c *Client) WatchDeployments(ctx context.Context, kubeContext, namespace st
 // ListDeployments fetches every deployment in the given namespace in one
 // call. See ListPods for why this exists alongside the watch.
 func (c *Client) ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -494,6 +518,9 @@ func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace strin
 // ListServices fetches every service in the given namespace in one call. See
 // ListPods for why this exists alongside the watch.
 func (c *Client) ListServices(ctx context.Context, kubeContext, namespace string) ([]*v1.Service, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -518,7 +545,10 @@ func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceD
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get pod %s in namespace %s (context %s): %w", podName, namespace, kubeContext, err)
 	}

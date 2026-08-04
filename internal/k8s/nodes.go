@@ -106,6 +106,9 @@ func (c *Client) WatchNodes(ctx context.Context, kubeContext, _ string) (watch.I
 // ignored — Nodes are cluster-scoped. See ListPods for why this exists
 // alongside the watch.
 func (c *Client) ListNodes(ctx context.Context, kubeContext, _ string) ([]*corev1.Node, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -131,7 +134,10 @@ func (c *Client) GetNodeDetail(kubeContextName, _, name string) (ResourceDetail,
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	node, err := clientset.CoreV1().Nodes().Get(context.Background(), name, metav1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	node, err := clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get node %s (context %s): %w", name, kubeContextName, err)
 	}

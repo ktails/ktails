@@ -62,6 +62,9 @@ func (c *Client) WatchPodDisruptionBudgets(ctx context.Context, kubeContext, nam
 // namespace in one call. See ListPods for why this exists alongside the
 // watch.
 func (c *Client) ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -87,7 +90,10 @@ func (c *Client) GetPodDisruptionBudgetDetail(kubeContextName, namespace, name s
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	pdb, err := clientset.PolicyV1().PodDisruptionBudgets(namespace).Get(context.Background(), name, v1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	pdb, err := clientset.PolicyV1().PodDisruptionBudgets(namespace).Get(ctx, name, v1.GetOptions{})
 	if err != nil {
 		return d, fmt.Errorf("failed to get poddisruptionbudget %s in namespace %s (context %s): %w",
 			name, namespace, kubeContextName, err)

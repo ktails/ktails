@@ -39,9 +39,12 @@ func (c *Client) getEvents(kubeContextName, namespace, kind, name string) ([]Eve
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
 	fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.namespace=%s,involvedObject.kind=%s",
 		name, namespace, kind)
-	eventList, err := clientset.CoreV1().Events(namespace).List(context.Background(), v1.ListOptions{FieldSelector: fieldSelector})
+	eventList, err := clientset.CoreV1().Events(namespace).List(ctx, v1.ListOptions{FieldSelector: fieldSelector})
 	if err != nil {
 		return nil, err
 	}
