@@ -26,6 +26,24 @@ var (
 	reYAMLNumber = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 )
 
+// YAML highlight styles, built once rather than per line (highlightYAML runs
+// on every SetDetail, over every line of the rendered YAML). p is always
+// styles.CatppuccinMocha() in practice — the p parameters threaded through
+// highlightYAMLLine/highlightYAMLKeyValueOrScalar/highlightYAMLValue stay as
+// documentation of what these are derived from and to keep the functions'
+// signatures stable.
+var (
+	yamlCommentStyle = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Overlay1).Faint(true)
+	yamlDocSepStyle  = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Overlay0)
+	yamlDashStyle    = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Overlay0)
+	yamlKeyStyle     = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Sapphire)
+	yamlColonStyle   = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Overlay0)
+	yamlQuotedStyle  = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Green)
+	yamlBoolStyle    = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Mauve)
+	yamlNumberStyle  = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Peach)
+	yamlPlainStyle   = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Teal)
+)
+
 // highlightYAML colorizes rendered YAML for the Detail Pane: mapping keys,
 // list dashes, comments, and value literals (strings/numbers/booleans) each
 // get their own color, on a best-effort line-by-line basis rather than a
@@ -50,22 +68,22 @@ func highlightYAMLLine(line string) string {
 		return line
 	}
 	if strings.HasPrefix(trimmed, "#") {
-		return lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render(line)
+		return yamlCommentStyle.Render(line)
 	}
 	if trimmed == "---" || trimmed == "..." {
-		return lipgloss.NewStyle().Foreground(p.Overlay0).Render(line)
+		return yamlDocSepStyle.Render(line)
 	}
 
 	if m := reYAMLListItem.FindStringSubmatch(line); m != nil {
 		indent, gap, rest := m[1], m[2], m[3]
-		dash := lipgloss.NewStyle().Foreground(p.Overlay0).Render("-")
+		dash := yamlDashStyle.Render("-")
 		return indent + dash + gap + highlightYAMLKeyValueOrScalar(rest, p)
 	}
 
 	if m := reYAMLKeyValue.FindStringSubmatch(line); m != nil {
 		indent, key, gap, value := m[1], m[2], m[3], m[4]
-		keyStyled := lipgloss.NewStyle().Foreground(p.Sapphire).Render(key)
-		return indent + keyStyled + lipgloss.NewStyle().Foreground(p.Overlay0).Render(":") + gap + highlightYAMLValue(value, p)
+		keyStyled := yamlKeyStyle.Render(key)
+		return indent + keyStyled + yamlColonStyle.Render(":") + gap + highlightYAMLValue(value, p)
 	}
 
 	// Plain continuation line — e.g. a multi-line block scalar's body.
@@ -77,8 +95,8 @@ func highlightYAMLLine(line string) string {
 func highlightYAMLKeyValueOrScalar(rest string, p styles.Palette) string {
 	if m := reYAMLKeyValue.FindStringSubmatch(rest); m != nil {
 		key, gap, value := m[2], m[3], m[4]
-		keyStyled := lipgloss.NewStyle().Foreground(p.Sapphire).Render(key)
-		return keyStyled + lipgloss.NewStyle().Foreground(p.Overlay0).Render(":") + gap + highlightYAMLValue(value, p)
+		keyStyled := yamlKeyStyle.Render(key)
+		return keyStyled + yamlColonStyle.Render(":") + gap + highlightYAMLValue(value, p)
 	}
 	return highlightYAMLValue(rest, p)
 }
@@ -91,12 +109,12 @@ func highlightYAMLValue(value string, p styles.Palette) string {
 	case value == "":
 		return value
 	case reYAMLQuoted.MatchString(value):
-		return lipgloss.NewStyle().Foreground(p.Green).Render(value)
+		return yamlQuotedStyle.Render(value)
 	case reYAMLBool.MatchString(value):
-		return lipgloss.NewStyle().Foreground(p.Mauve).Render(value)
+		return yamlBoolStyle.Render(value)
 	case reYAMLNumber.MatchString(value):
-		return lipgloss.NewStyle().Foreground(p.Peach).Render(value)
+		return yamlNumberStyle.Render(value)
 	default:
-		return lipgloss.NewStyle().Foreground(p.Teal).Render(value)
+		return yamlPlainStyle.Render(value)
 	}
 }

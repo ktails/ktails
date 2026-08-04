@@ -267,51 +267,78 @@ const ansiForegroundReset = "\x1b[39m"
 // row (see the "painful on the eye" report), but a single colored dot next
 // to plain text doesn't compete with it the same way — so there's no need
 // to know whether this particular row happens to be highlighted at all.
+// neutralCellStyle is the zero-value style returned wherever a cell has no
+// color to apply — a package var so callers share one immutable instance
+// instead of each allocating their own equivalent empty lipgloss.Style.
+var neutralCellStyle = lipgloss.NewStyle()
+
+// contextDotStyles maps every color a context identity dot can ever be
+// rendered in — styles.IdentityColors' full rotation, plus Overlay1 for a
+// context with no color assigned yet (state.AppState.AddContext always
+// assigns from one of these) — to its lipgloss.Style, built once rather
+// than per contextCell call: every row of every kind's table calls this on
+// every render.
+var contextDotStyles = func() map[color.Color]lipgloss.Style {
+	m := make(map[color.Color]lipgloss.Style, len(styles.IdentityColors)+1)
+	for _, c := range styles.IdentityColors {
+		m[c] = lipgloss.NewStyle().Foreground(c)
+	}
+	m[styles.CatppuccinMocha().Overlay1] = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Overlay1)
+	return m
+}()
+
 func contextCell(name string, colors map[string]color.Color) btable.StyledCell {
-	p := styles.CatppuccinMocha()
 	col, hasColor := colors[name]
 	dot := "●"
 	if !hasColor {
 		dot = "○"
-		col = p.Overlay1
+		col = styles.CatppuccinMocha().Overlay1
 	}
-	rendered := lipgloss.NewStyle().Foreground(col).Render(dot)
+	style, ok := contextDotStyles[col]
+	if !ok {
+		// Shouldn't happen — every color reaching here comes from
+		// styles.IdentityColors or the Overlay1 fallback above — but fall
+		// back to building the style rather than rendering with no color.
+		style = lipgloss.NewStyle().Foreground(col)
+	}
+	rendered := style.Render(dot)
 	rendered = strings.TrimSuffix(rendered, ansi.ResetStyle) + ansiForegroundReset
 	text := rendered + " " + contextShortCode(name)
-	return btable.NewStyledCell(text, lipgloss.NewStyle())
+	return btable.NewStyledCell(text, neutralCellStyle)
 }
 
-// statusColor maps a pod phase (PodInfo.Status) to its Catppuccin Mocha
-// status color, per the Status Colors spec: Running=Green, Pending=Yellow,
-// Failed/Unknown=Red, Succeeded=Overlay1 (dim). Unrecognized phases are
-// left uncolored.
-func statusColor(status string) (color.Color, bool) {
-	p := styles.CatppuccinMocha()
-	switch status {
-	case "Running":
-		return p.Green, true
-	case "Pending":
-		return p.Yellow, true
-	case "Failed", "Unknown":
-		return p.Red, true
-	case "Succeeded":
-		return p.Overlay1, true
-	default:
-		return nil, false
-	}
+// statusCellStyles maps a pod phase (PodInfo.Status) to its Catppuccin
+// Mocha status color, per the Status Colors spec: Running=Green,
+// Pending=Yellow, Failed/Unknown=Red, Succeeded=Overlay1 (dim).
+// Unrecognized phases fall back to neutralCellStyle. Built once rather than
+// per statusCellStyle call — bubble-table invokes this on every Status cell
+// of every render.
+var statusCellStyles = map[string]lipgloss.Style{
+	"Running":   lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Green),
+	"Pending":   lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Yellow),
+	"Failed":    lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Red),
+	"Unknown":   lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Red),
+	"Succeeded": lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Overlay1),
 }
 
 // statusCellStyle is a btable.StyledCellFunc that colors the Status cell by
-// phase (see statusColor). Cell style is applied by bubble-table at render
-// time, after content-width truncation — the whole reason this migration
-// dropped the old post-render ANSI-recoloring workaround.
+// phase (see statusCellStyles). Cell style is applied by bubble-table at
+// render time, after content-width truncation — the whole reason this
+// migration dropped the old post-render ANSI-recoloring workaround.
 func statusCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {
 	status, _ := input.Data.(string)
-	if col, ok := statusColor(status); ok {
-		return lipgloss.NewStyle().Foreground(col)
+	if style, ok := statusCellStyles[status]; ok {
+		return style
 	}
-	return lipgloss.NewStyle()
+	return neutralCellStyle
 }
+
+// Replica-ratio cell styles, built once — see statusCellStyles.
+var (
+	replicaCellStyleRed    = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Red)
+	replicaCellStyleYellow = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Yellow)
+	replicaCellStyleGreen  = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Green)
+)
 
 // replicaCellStyle is a btable.StyledCellFunc that colors a "ready/desired"
 // replica cell (as produced by the Deployments watch cache's Rows): green when fully
@@ -321,26 +348,25 @@ func replicaCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {
 	cell, _ := input.Data.(string)
 	ready, desired, ok := strings.Cut(cell, "/")
 	if !ok {
-		return lipgloss.NewStyle()
+		return neutralCellStyle
 	}
 	readyN, err := strconv.Atoi(ready)
 	if err != nil {
-		return lipgloss.NewStyle()
+		return neutralCellStyle
 	}
 	desiredN, err := strconv.Atoi(desired)
 	if err != nil {
-		return lipgloss.NewStyle()
+		return neutralCellStyle
 	}
 
-	p := styles.CatppuccinMocha()
-	color := p.Red
 	switch {
 	case readyN == desiredN:
-		color = p.Green
+		return replicaCellStyleGreen
 	case readyN > 0:
-		color = p.Yellow
+		return replicaCellStyleYellow
+	default:
+		return replicaCellStyleRed
 	}
-	return lipgloss.NewStyle().Foreground(color)
 }
 
 // podNarrowColumns and every other *NarrowColumns/*WideColumns function

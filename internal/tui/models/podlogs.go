@@ -23,14 +23,15 @@ const maxLogLines = 500
 // sourceColors is the rotation of Catppuccin Mocha accents used to color
 // each source's line prefix. Red/Mauve/Green/Peach are excluded: they
 // already carry other meaning elsewhere in the UI (errors, focus/selection,
-// loaded state, this pane's own title).
-func sourceColors() []color.Color {
+// loaded state, this pane's own title). Built once — AddSource indexes into
+// it on every call, not worth rebuilding the slice each time.
+var sourceColors = func() []color.Color {
 	p := styles.CatppuccinMocha()
 	return []color.Color{
 		p.Blue, p.Lavender, p.Sapphire, p.Sky, p.Teal,
 		p.Pink, p.Flamingo, p.Rosewater, p.Yellow, p.Maroon,
 	}
-}
+}()
 
 // highlightJSONLine finds the first JSON object or array embedded in a log
 // line (e.g. after a "2026-07-19 INFO " prefix) and, if the text from there
@@ -79,6 +80,19 @@ func splitLeadingGap(raw string, tok interface{}) (gap, content string) {
 	return raw[:cut], raw[cut:]
 }
 
+// JSON token styles for colorizeJSON, built once rather than on every call
+// (previously every JSON-containing log line paid for five fresh
+// lipgloss.NewStyle() allocations). p is always styles.CatppuccinMocha() in
+// practice — colorizeJSON's own p parameter stays as documentation of what
+// these are derived from and to keep the function's signature stable.
+var (
+	jsonPunctStyle = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Overlay1)
+	jsonKeyStyle   = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Blue)
+	jsonStrStyle   = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Green)
+	jsonNumStyle   = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Yellow)
+	jsonLitStyle   = lipgloss.NewStyle().Foreground(styles.CatppuccinMocha().Mauve)
+)
+
 // colorizeJSON walks s (already known to be valid JSON) token by token via
 // json.Decoder, coloring each token's original raw text in place and
 // leaving everything between tokens (whitespace, colons, commas) dimmed as
@@ -94,11 +108,11 @@ func colorizeJSON(s string, p styles.Palette) (string, bool) {
 	}
 	var stack []frame
 
-	punctStyle := lipgloss.NewStyle().Foreground(p.Overlay1)
-	keyStyle := lipgloss.NewStyle().Foreground(p.Blue)
-	strStyle := lipgloss.NewStyle().Foreground(p.Green)
-	numStyle := lipgloss.NewStyle().Foreground(p.Yellow)
-	litStyle := lipgloss.NewStyle().Foreground(p.Mauve)
+	punctStyle := jsonPunctStyle
+	keyStyle := jsonKeyStyle
+	strStyle := jsonStrStyle
+	numStyle := jsonNumStyle
+	litStyle := jsonLitStyle
 
 	var sb strings.Builder
 	var prevEnd int64
@@ -279,8 +293,7 @@ func (l *LogPage) AddSource(key, podName, namespace, context, container string) 
 	if _, exists := l.sources[key]; exists {
 		return
 	}
-	colors := sourceColors()
-	color := colors[len(l.order)%len(colors)]
+	color := sourceColors[len(l.order)%len(sourceColors)]
 
 	src := &logSource{
 		key:       key,
