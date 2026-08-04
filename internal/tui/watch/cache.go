@@ -156,37 +156,13 @@ func (c *resourceCache[T]) rows(kubeContext string) []msgs.RowData {
 }
 
 // newCacheFor builds the cache for one resource kind, wiring in that kind's
-// object→row conversion.
+// object→row conversion, via kindSpecs (kindspec.go) — see its doc comment.
 func newCacheFor(kind msgs.ResourceKind) rowCache {
-	switch kind {
-	case msgs.KindPods:
-		return newResourceCache(podRow)
-	case msgs.KindDeployments:
-		return newResourceCache(deploymentRow)
-	case msgs.KindServices:
-		return newResourceCache(serviceRow)
-	case msgs.KindConfigMaps:
-		return newResourceCache(configMapRow)
-	case msgs.KindSecrets:
-		return newResourceCache(secretRow)
-	case msgs.KindJobs:
-		return newResourceCache(jobRow)
-	case msgs.KindCronJobs:
-		return newResourceCache(cronJobRow)
-	case msgs.KindStatefulSets:
-		return newResourceCache(statefulSetRow)
-	case msgs.KindDaemonSets:
-		return newResourceCache(daemonSetRow)
-	case msgs.KindIngresses:
-		return newResourceCache(ingressRow)
-	case msgs.KindPodDisruptionBudgets:
-		return newResourceCache(pdbRow)
-	case msgs.KindHorizontalPodAutoscalers:
-		return newResourceCache(hpaRow)
-	case msgs.KindNodes:
-		return newResourceCache(nodeRow)
+	spec, ok := kindSpecs[kind]
+	if !ok {
+		return nil
 	}
-	return nil
+	return spec.newCache()
 }
 
 func podRow(pod *corev1.Pod, kubeContext string) msgs.RowData {

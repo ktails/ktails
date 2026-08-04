@@ -480,37 +480,14 @@ func (s *Supervisor) current(kind msgs.ResourceKind, kubeContext string, generat
 	return st, true
 }
 
-// watchFn returns the Cluster method that opens a watch for kind.
+// watchFn returns the Cluster method that opens a watch for kind, via
+// kindSpecs (kindspec.go) — see its doc comment.
 func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	switch kind {
-	case msgs.KindPods:
-		return s.cluster.WatchPods
-	case msgs.KindDeployments:
-		return s.cluster.WatchDeployments
-	case msgs.KindServices:
-		return s.cluster.WatchServices
-	case msgs.KindConfigMaps:
-		return s.cluster.WatchConfigMaps
-	case msgs.KindSecrets:
-		return s.cluster.WatchSecrets
-	case msgs.KindJobs:
-		return s.cluster.WatchJobs
-	case msgs.KindCronJobs:
-		return s.cluster.WatchCronJobs
-	case msgs.KindStatefulSets:
-		return s.cluster.WatchStatefulSets
-	case msgs.KindDaemonSets:
-		return s.cluster.WatchDaemonSets
-	case msgs.KindIngresses:
-		return s.cluster.WatchIngresses
-	case msgs.KindPodDisruptionBudgets:
-		return s.cluster.WatchPodDisruptionBudgets
-	case msgs.KindHorizontalPodAutoscalers:
-		return s.cluster.WatchHorizontalPodAutoscalers
-	case msgs.KindNodes:
-		return s.cluster.WatchNodes
+	spec, ok := kindSpecs[kind]
+	if !ok {
+		return nil
 	}
-	return nil
+	return spec.watch(s.cluster)
 }
 
 // toObjects converts a concrete List() result (e.g. []*corev1.Pod) to the
@@ -524,76 +501,14 @@ func toObjects[T metav1.Object](items []T) []metav1.Object {
 }
 
 // listFn returns the Cluster method that lists kind, already adapted to the
-// kind-erased []metav1.Object shape listCmd needs.
+// kind-erased []metav1.Object shape listCmd needs, via kindSpecs
+// (kindspec.go) — see its doc comment.
 func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-	switch kind {
-	case msgs.KindPods:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListPods(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindDeployments:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListDeployments(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindServices:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListServices(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindConfigMaps:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListConfigMaps(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindSecrets:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListSecrets(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindJobs:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListJobs(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindCronJobs:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListCronJobs(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindStatefulSets:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListStatefulSets(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindDaemonSets:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListDaemonSets(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindIngresses:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListIngresses(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindPodDisruptionBudgets:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListPodDisruptionBudgets(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindHorizontalPodAutoscalers:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListHorizontalPodAutoscalers(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
-	case msgs.KindNodes:
-		return func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
-			items, err := s.cluster.ListNodes(ctx, kubeContext, namespace)
-			return toObjects(items), err
-		}
+	spec, ok := kindSpecs[kind]
+	if !ok {
+		return nil
 	}
-	return nil
+	return spec.list(s.cluster)
 }
 
 // listCmd issues the one-shot List() call for one (kind, context), scoped to
