@@ -243,7 +243,7 @@ func (s *Supervisor) start(kind msgs.ResourceKind, kubeContext string) tea.Cmd {
 	}
 	st.generation++
 	st.failures = 0
-	return s.listCmd(kind, kubeContext, s.namespaces[kubeContext], st.generation)
+	return s.listCmd(kind, kubeContext, s.namespaces[kubeContext], st.generation, 0)
 }
 
 // Restart force-restarts one kind's watches across the given contexts — the
@@ -358,6 +358,14 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 			return nil, nil, true
 		}
 		st.watcher = msg.Watcher
+		// A successfully opened watch proves connectivity is healthy, so the
+		// failure counter must only measure consecutive failed cycles — not
+		// reset here, a kind with no event traffic (e.g. PDBs/HPAs in a quiet
+		// cluster) would accumulate a "failure" on every clean apiserver
+		// close (WatchClosedMsg with Err == nil, which happens every
+		// ~5-10 min) and eventually exceed maxReconnectFailures with nothing
+		// actually wrong.
+		st.failures = 0
 		// Report loaded as soon as the watch is live, not on the first
 		// applied event: a context with zero objects of this kind gets no
 		// synthetic replay at all (Kubernetes only replays what exists), so
@@ -396,7 +404,14 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 				strings.ToLower(msg.Kind.Title()), msg.Context, st.failures, msg.Err)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
 		}
-		return nil, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, backoffDelay(st.failures)), true
+		// Reconnect through the List-first path, not a direct re-open: a
+		// bare re-open replays existing objects as synthetic Added events
+		// (which upsert fine) but never delivers Deleted for objects removed
+		// during the outage, so they'd linger in the cache forever. Going
+		// through List forces a full cache reset (resourceCache.seed) on
+		// reconnect, matching what a fresh watch open already does via
+		// start().
+		return nil, s.listCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, backoffDelay(st.failures)), true
 	}
 	return nil, nil, false
 }
@@ -528,11 +543,16 @@ func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, ku
 }
 
 // listCmd issues the one-shot List() call for one (kind, context), scoped to
-// namespace ("" for cluster-wide), reporting the outcome as a ListLoadedMsg
-// carrying the generation it was issued under.
-func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int) tea.Cmd {
+// namespace ("" for cluster-wide), after an optional backoff delay (0 for the
+// initial start() call; backoffDelay(st.failures) when used as the reconnect
+// path — see the WatchClosedMsg arm in Handle), reporting the outcome as a
+// ListLoadedMsg carrying the generation it was issued under.
+func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, delay time.Duration) tea.Cmd {
 	list := s.listFn(kind)
 	return func() tea.Msg {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		objs, err := list(context.Background(), kubeContext, namespace)
 		return msgs.ListLoadedMsg{Kind: kind, Context: kubeContext, Generation: generation, Objects: objs, Err: err}
 	}

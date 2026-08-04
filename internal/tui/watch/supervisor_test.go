@@ -33,6 +33,12 @@ type fakeCluster struct {
 	// rather than always going cluster-wide.
 	gotListNamespace  string
 	gotWatchNamespace string
+
+	// pods is what ListPods returns — nil (the zero value) by default,
+	// mutated mid-test to simulate the List result changing between an
+	// initial start() and a later reconnect (see
+	// TestSupervisor_ReconnectRelistsAndDropsDeletedObjects).
+	pods []*corev1.Pod
 }
 
 func newFakeCluster() *fakeCluster {
@@ -107,7 +113,7 @@ func (f *fakeCluster) WatchIngresses(context.Context, string, string) (kwatch.In
 // nothing in this test suite exercises the List-first paint's row content,
 // only its ordering ahead of the watch, so an empty list is sufficient.
 func (f *fakeCluster) ListPods(context.Context, string, string) ([]*corev1.Pod, error) {
-	return nil, nil
+	return f.pods, nil
 }
 
 func (f *fakeCluster) ListDeployments(_ context.Context, _ string, namespace string) ([]*appsv1.Deployment, error) {
@@ -607,6 +613,94 @@ func TestStartContext_ExcludesNodes_StartKindAddsIt(t *testing.T) {
 	runCmd(t, s.StartKind(msgs.KindNodes, "ctx1"))
 	if _, ok := s.states[stateKey{kind: msgs.KindNodes, context: "ctx1"}]; !ok {
 		t.Fatal("expected StartKind to open a Nodes watch state")
+	}
+}
+
+// TestSupervisor_CleanCloseDoesNotAccumulateFailures guards the "quiet kind
+// permanently errors after ~30-60 min" regression: a watch that closes
+// cleanly (Err == nil, as the apiserver does every ~5-10 min) and
+// successfully reopens must never accumulate failures across cycles, however
+// many times it happens in one session. Only Handle is exercised (not the
+// reconnect tea.Cmd itself, which sleeps for the backoff delay) — the fix
+// under test is purely in the WatchOpenedMsg arm's bookkeeping.
+func TestSupervisor_CleanCloseDoesNotAccumulateFailures(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+	startPodsWatch(t, s)
+
+	for i := 0; i < maxReconnectFailures+2; i++ {
+		closed := msgs.WatchClosedMsg{Kind: msgs.KindPods, Context: "ctx1", Generation: 1}
+		upd, reconnectCmd, handled := s.Handle(closed)
+		if !handled || upd != nil {
+			t.Fatalf("cycle %d: expected a silent reconnect for a clean close, got update %+v", i+1, upd)
+		}
+		if reconnectCmd == nil {
+			t.Fatalf("cycle %d: expected a reconnect command", i+1)
+		}
+
+		reopened := kwatch.NewFakeWithChanSize(1, false)
+		upd, _, handled = s.Handle(msgs.WatchOpenedMsg{
+			Kind: msgs.KindPods, Context: "ctx1", Generation: 1, Watcher: reopened,
+		})
+		if !handled || upd == nil || upd.GaveUp {
+			t.Fatalf("cycle %d: expected a successful reopen, got %+v", i+1, upd)
+		}
+	}
+}
+
+// TestSupervisor_ReconnectRelistsAndDropsDeletedObjects guards the
+// "ghost rows" regression: a bare re-open after a reconnect replays existing
+// objects as synthetic Added events (which upsert fine) but never delivers
+// Deleted for objects that were removed from the cluster during the outage,
+// so they'd linger in the cache/table forever. Reconnect must go through the
+// List-first path instead, whose List result is a full, authoritative
+// snapshot (resourceCache.seed resets the cache rather than merging).
+func TestSupervisor_ReconnectRelistsAndDropsDeletedObjects(t *testing.T) {
+	cluster := newFakeCluster()
+	cluster.pods = []*corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default", ResourceVersion: "1"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default", ResourceVersion: "1"}},
+	}
+	s := NewSupervisor(cluster)
+	startPodsWatch(t, s)
+
+	rows := s.Rows(msgs.KindPods)
+	if len(rows) != 2 {
+		t.Fatalf("expected both pods seeded before the outage, got %+v", rows)
+	}
+
+	// pod-b is deleted from the cluster while the watch is down — the fake's
+	// List response no longer includes it.
+	cluster.pods = []*corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default", ResourceVersion: "1"}},
+	}
+
+	closed := msgs.WatchClosedMsg{Kind: msgs.KindPods, Context: "ctx1", Generation: 1, Err: errors.New("stream broke")}
+	upd, reconnectCmd, handled := s.Handle(closed)
+	if !handled || upd != nil || reconnectCmd == nil {
+		t.Fatalf("expected a silent reconnect command, got upd=%v reconnectCmd=%v", upd, reconnectCmd)
+	}
+
+	listMsg, ok := runCmd(t, reconnectCmd).(msgs.ListLoadedMsg)
+	if !ok {
+		t.Fatalf("expected reconnect to re-List, got %T", listMsg)
+	}
+	if len(listMsg.Objects) != 1 {
+		t.Fatalf("expected the re-List to reflect pod-b's deletion, got %d objects", len(listMsg.Objects))
+	}
+
+	upd, openCmd, handled := s.Handle(listMsg)
+	if !handled || upd == nil || !upd.RowsChanged || openCmd == nil {
+		t.Fatalf("expected the re-List to seed the cache and hand back an open command, got upd=%v openCmd=%v", upd, openCmd)
+	}
+
+	rows = s.Rows(msgs.KindPods)
+	if len(rows) != 1 || rows[0][msgs.PodKeyName] != "pod-a" {
+		t.Fatalf("expected only pod-a to survive the reconnect, got %+v", rows)
+	}
+
+	if _, ok := runCmd(t, openCmd).(msgs.WatchOpenedMsg); !ok {
+		t.Fatal("expected the reconnect to still open a fresh watch after re-Listing")
 	}
 }
 
