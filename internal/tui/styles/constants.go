@@ -72,9 +72,7 @@ func IdentityColor(n int) color.Color {
 // Status colors (semantic, fixed — never reassigned to identity or focus).
 var (
 	StatusHealthy = CatppuccinMocha().Green
-	StatusWarning = CatppuccinMocha().Yellow
 	StatusError   = CatppuccinMocha().Red
-	StatusNeutral = CatppuccinMocha().Subtext0
 )
 
 // StatusBar is the one-line bar at the bottom of the TUI. The background

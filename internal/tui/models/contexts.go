@@ -197,10 +197,6 @@ func (c *ContextsInfo) setDimensions() {
 	c.list.SetHeight(c.height)
 }
 
-func (c *ContextsInfo) GetDimensions() (w, h int) {
-	return c.width, c.height
-}
-
 func NewContextInfo(client *k8s.Client) *ContextsInfo {
 	newList := list.New([]list.Item{}, contextDelegate{}, 0, 0)
 	newList.SetShowStatusBar(false)
@@ -486,10 +482,6 @@ func (c *ContextsInfo) initContextPane() {
 	c.list.SetItems(itemList)
 	c.list.Title = "" // title rendered manually in View()
 	c.isLoading = false
-}
-
-func (c *ContextsInfo) HelpView() string {
-	return c.list.Help.FullHelpView(c.list.FullHelp())
 }
 
 func (c *ContextsInfo) SetFocused(f bool) {

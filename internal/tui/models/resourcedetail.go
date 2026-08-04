@@ -236,10 +236,6 @@ func (d *ResourceDetailPage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// halfViewportStep is the Shift+Left/Right scroll distance: half the
-// viewport's width, so a couple of presses reach far-right content
-// regardless of terminal size. Minimum 1 to stay useful at very narrow
-// widths.
 func (d *ResourceDetailPage) SetSize(w, h int) {
 	if w < 10 || h < 1 {
 		return

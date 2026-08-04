@@ -274,19 +274,6 @@ func (l *LogPage) HasContent() bool {
 	return len(l.order) > 0
 }
 
-// HasSource reports whether the given source key is currently open.
-func (l *LogPage) HasSource(key string) bool {
-	_, ok := l.sources[key]
-	return ok
-}
-
-// Keys returns the currently open source keys, in insertion order.
-func (l *LogPage) Keys() []string {
-	keys := make([]string, len(l.order))
-	copy(keys, l.order)
-	return keys
-}
-
 // AddSource opens a new source in the pane, idempotently (a no-op if the
 // key is already present). Assigns the next color in the rotation.
 func (l *LogPage) AddSource(key, podName, namespace, context, container string) {
@@ -580,8 +567,6 @@ func (l *LogPage) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// halfViewportStep is the Shift+Left/Shift+Right scroll distance: half the
-// viewport's current width, so it adapts to terminal size.
 // SetSize resizes the viewport. Horizontal scroll resets to the left edge
 // on an actual size change (there's nothing meaningful to preserve once the
 // overflow that produced it has changed shape); wrapped content is re-flowed
