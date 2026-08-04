@@ -471,6 +471,11 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.activeTab = next
 			m.updateFocusStates()
+			// The newly active tab's Age text may be stale — the 5s refresh
+			// tick only re-renders the active kind (see
+			// reRenderAgeFromWatchCaches), so catch this one up now rather
+			// than waiting up to 5s for the next tick.
+			m.tables[m.activeKind()].SetRows(m.filteredRows(m.activeKind()))
 			return m, nil
 		case "left", "[":
 			prev := m.activeTab - 1
@@ -483,6 +488,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.activeTab = prev
 			m.updateFocusStates()
+			m.tables[m.activeKind()].SetRows(m.filteredRows(m.activeKind()))
 			return m, nil
 		}
 
@@ -797,9 +803,16 @@ func (m *MainPage) applyWatchUpdate(upd *watch.Update) {
 // KindNodes is cluster-scoped and carries no namespace column, so it's
 // exempt.
 func (m *MainPage) filteredRows(kind msgs.ResourceKind) []msgs.RowData {
+	return m.filteredRowsWithSnapshot(kind, m.appState.Snapshot())
+}
+
+// filteredRowsWithSnapshot is filteredRows with the snapshot passed in
+// rather than freshly taken — for callers looping over every kind
+// (applyContextsState, applyNamespacesState, cycleSort), so they take one
+// snapshot and reuse it instead of one Snapshot() call per kind.
+func (m *MainPage) filteredRowsWithSnapshot(kind msgs.ResourceKind, snapshot state.Snapshot) []msgs.RowData {
 	rows := m.watchSup.Rows(kind)
 	if kind != msgs.KindNodes {
-		snapshot := m.appState.Snapshot()
 		rows = filterRowsByNamespace(rows, snapshot.SelectedContexts, snapshot.AllNamespaces)
 	}
 	return sortRows(rows, m.sortField, m.sortDir)
@@ -885,8 +898,12 @@ func (m *MainPage) cycleSort(f sortField) {
 		m.sortField = sortNone
 		m.sortDir = sortAsc
 	}
+	if len(m.tabs) == 0 {
+		return
+	}
+	snapshot := m.appState.Snapshot()
 	for _, kind := range m.tabs {
-		m.tables[kind].SetRows(m.filteredRows(kind))
+		m.tables[kind].SetRows(m.filteredRowsWithSnapshot(kind, snapshot))
 	}
 }
 
@@ -920,12 +937,13 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 		cmdSequence = append(cmdSequence, cmds.CheckNodesAccessCmd(m.Client, added.ContextName))
 	}
 
+	ctxSnapshot := m.appState.Snapshot()
 	for _, kind := range m.tabs {
-		m.tables[kind].SetRows(m.filteredRows(kind))
+		m.tables[kind].SetRows(m.filteredRowsWithSnapshot(kind, ctxSnapshot))
 	}
 	m.syncContextStates()
 
-	if len(m.appState.Snapshot().SelectedContexts) == 0 {
+	if len(ctxSnapshot.SelectedContexts) == 0 {
 		m.appStateLoaded = false
 		for _, kind := range m.tabs {
 			m.tables[kind].SetRows([]msgs.RowData{})
@@ -999,7 +1017,7 @@ func (m *MainPage) applyNamespacesState(msg msgs.NamespacesStateMsg) tea.Cmd {
 	}
 
 	for _, kind := range m.tabs {
-		m.tables[kind].SetRows(m.filteredRows(kind))
+		m.tables[kind].SetRows(m.filteredRowsWithSnapshot(kind, snapshot))
 	}
 	m.namespacesPane.SyncConfirmed(msg.Context, snapshot.SelectedContexts[msg.Context], snapshot.AllNamespaces[msg.Context])
 	m.syncContextStates()
@@ -1184,17 +1202,21 @@ func (m *MainPage) restartActiveTabWatch() tea.Cmd {
 	return tea.Batch(cmdSequence...)
 }
 
-// reRenderAgeFromWatchCaches recomputes every kind's rows from the local
+// reRenderAgeFromWatchCaches recomputes the active tab's rows from the local
 // watch caches (re-running the converter/formatDuration against time.Now(),
 // refreshing the Age column text) and reapplies them — purely local, zero
-// API calls. Driven by RefreshTickMsg.
+// API calls. Driven by RefreshTickMsg. Scoped to the active kind only: every
+// kind's actual data (adds/deletes/modifies) already stays live via
+// applyWatchUpdate's per-event SetRows regardless of which tab is active —
+// this tick's only job is the Age column text, which is only visible on the
+// active tab; a background tab's Age catches up on tab switch (see the
+// "right"/"]" and "left"/"[" tab-navigation handlers).
 func (m *MainPage) reRenderAgeFromWatchCaches() {
 	if !m.watchSup.Watching() {
 		return
 	}
-	for _, kind := range m.tabs {
-		m.tables[kind].SetRows(m.filteredRows(kind))
-	}
+	kind := m.activeKind()
+	m.tables[kind].SetRows(m.filteredRows(kind))
 	m.syncContextStates()
 }
 
