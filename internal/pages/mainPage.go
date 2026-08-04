@@ -1769,9 +1769,16 @@ func (m *MainPage) renderErrorSummaryOverlay(errors map[string]string) string {
 
 	title := lipgloss.NewStyle().Foreground(p.Red).Bold(true).Render("⚠  Errors encountered")
 	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(strings.Repeat("─", maxW-2))
+	// Map iteration order is randomized per Go's spec — without sorting,
+	// this list would reshuffle every single frame.
+	ctxNames := make([]string, 0, len(errors))
+	for ctx := range errors {
+		ctxNames = append(ctxNames, ctx)
+	}
+	sort.Strings(ctxNames)
 	var bodyLines []string
-	for ctx, err := range errors {
-		bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s", ctx, err))
+	for _, ctx := range ctxNames {
+		bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s", ctx, errors[ctx]))
 	}
 	body := lipgloss.NewStyle().Foreground(p.Text).Render(strings.Join(bodyLines, "\n"))
 	hint := lipgloss.NewStyle().Foreground(p.Overlay1).Faint(true).Render("Esc to dismiss")
@@ -1793,6 +1800,9 @@ func (m *MainPage) renderLoadingIndicator(loading map[string]bool) string {
 			loadingContexts = append(loadingContexts, ctx)
 		}
 	}
+	// Map iteration order is randomized per Go's spec — without sorting,
+	// this list would reshuffle every single frame.
+	sort.Strings(loadingContexts)
 
 	if len(loadingContexts) == 0 {
 		return ""
