@@ -8,7 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/kubernetes"
 )
 
 // StatefulSetInfo contains StatefulSet metadata.
@@ -38,41 +38,25 @@ func StatefulSetToStatefulSetInfo(sts *appsv1.StatefulSet) StatefulSetInfo {
 	}
 }
 
+// statefulSetsLW binds a StatefulSetInterface's List/Watch to namespace, for
+// watchResource/listResource — see generic.go.
+func statefulSetsLW(namespace string) func(kubernetes.Interface) listerWatcher[*appsv1.StatefulSetList] {
+	return func(cs kubernetes.Interface) listerWatcher[*appsv1.StatefulSetList] {
+		return cs.AppsV1().StatefulSets(namespace)
+	}
+}
+
 // WatchStatefulSets opens a watch on StatefulSets in the given namespace.
 // See WatchPods for the implicit list-then-watch behavior.
 func (c *Client) WatchStatefulSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.AppsV1().StatefulSets(namespace).Watch(ctx, v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch statefulsets in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "statefulsets in namespace "+namespace, statefulSetsLW(namespace))
 }
 
 // ListStatefulSets fetches every StatefulSet in the given namespace in one
 // call. See ListPods for why this exists alongside the watch.
 func (c *Client) ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.AppsV1().StatefulSets(namespace).List(ctx, v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list statefulsets in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*appsv1.StatefulSet, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "statefulsets in namespace "+namespace, statefulSetsLW(namespace),
+		func(l *appsv1.StatefulSetList) []*appsv1.StatefulSet { return pointers(l.Items) })
 }
 
 // GetStatefulSetDetail fetches a single StatefulSet's status, rendered
@@ -101,14 +85,7 @@ func (c *Client) GetStatefulSetDetail(kubeContextName, namespace, name string) (
 	for _, cond := range sts.Status.Conditions {
 		d.Status = append(d.Status, formatCondition(string(cond.Type), string(cond.Status), cond.Reason, cond.Message))
 	}
-
-	sts.ManagedFields = nil
-	sts.TypeMeta = v1.TypeMeta{APIVersion: "apps/v1", Kind: "StatefulSet"}
-	if yamlBytes, yamlErr := yaml.Marshal(sts); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(sts, "apps/v1", "StatefulSet")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "StatefulSet", name); err == nil {
 		d.Events = events

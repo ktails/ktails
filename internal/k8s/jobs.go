@@ -8,7 +8,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/kubernetes"
 )
 
 // JobInfo contains Job metadata.
@@ -59,41 +59,25 @@ func JobToJobInfo(job *batchv1.Job) JobInfo {
 	}
 }
 
+// jobsLW binds a JobInterface's List/Watch to namespace, for
+// watchResource/listResource — see generic.go.
+func jobsLW(namespace string) func(kubernetes.Interface) listerWatcher[*batchv1.JobList] {
+	return func(cs kubernetes.Interface) listerWatcher[*batchv1.JobList] {
+		return cs.BatchV1().Jobs(namespace)
+	}
+}
+
 // WatchJobs opens a watch on Jobs in the given namespace. See WatchPods for
 // the implicit list-then-watch behavior.
 func (c *Client) WatchJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.BatchV1().Jobs(namespace).Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch jobs in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "jobs in namespace "+namespace, jobsLW(namespace))
 }
 
 // ListJobs fetches every Job in the given namespace in one call. See
 // ListPods for why this exists alongside the watch.
 func (c *Client) ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list jobs in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*batchv1.Job, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "jobs in namespace "+namespace, jobsLW(namespace),
+		func(l *batchv1.JobList) []*batchv1.Job { return pointers(l.Items) })
 }
 
 // GetJobDetail fetches a single Job's status, rendered YAML, and recent events.
@@ -120,14 +104,7 @@ func (c *Client) GetJobDetail(kubeContextName, namespace, name string) (Resource
 	for _, cond := range job.Status.Conditions {
 		d.Status = append(d.Status, formatCondition(string(cond.Type), string(cond.Status), cond.Reason, cond.Message))
 	}
-
-	job.ManagedFields = nil
-	job.TypeMeta = metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"}
-	if yamlBytes, yamlErr := yaml.Marshal(job); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(job, "batch/v1", "Job")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "Job", name); err == nil {
 		d.Events = events

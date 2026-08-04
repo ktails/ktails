@@ -10,7 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/kubernetes"
 )
 
 // nodeRolePrefix labels a Node's role, e.g.
@@ -87,42 +87,25 @@ func NodeToNodeInfo(node *corev1.Node) NodeInfo {
 	}
 }
 
+// nodesLW binds a NodeInterface's List/Watch, for watchResource/
+// listResource — see generic.go. Nodes are cluster-scoped, so unlike every
+// other kind's *LW helper this takes no namespace.
+func nodesLW(cs kubernetes.Interface) listerWatcher[*corev1.NodeList] {
+	return cs.CoreV1().Nodes()
+}
+
 // WatchNodes opens a watch on every Node in the cluster. namespace is
 // ignored — Nodes are cluster-scoped, unlike every other watched kind.
 func (c *Client) WatchNodes(ctx context.Context, kubeContext, _ string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.CoreV1().Nodes().Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch nodes (context %s): %w", kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "nodes", nodesLW)
 }
 
 // ListNodes fetches every Node in the cluster in one call. namespace is
 // ignored — Nodes are cluster-scoped. See ListPods for why this exists
 // alongside the watch.
 func (c *Client) ListNodes(ctx context.Context, kubeContext, _ string) ([]*corev1.Node, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list nodes (context %s): %w", kubeContext, err)
-	}
-	out := make([]*corev1.Node, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "nodes", nodesLW,
+		func(l *corev1.NodeList) []*corev1.Node { return pointers(l.Items) })
 }
 
 // GetNodeDetail fetches a single Node's status, rendered YAML, and recent
@@ -149,14 +132,7 @@ func (c *Client) GetNodeDetail(kubeContextName, _, name string) (ResourceDetail,
 	for _, condition := range node.Status.Conditions {
 		d.Status = append(d.Status, formatCondition(string(condition.Type), string(condition.Status), condition.Reason, condition.Message))
 	}
-
-	node.ManagedFields = nil
-	node.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Node"}
-	if yamlBytes, yamlErr := yaml.Marshal(node); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(node, "v1", "Node")
 
 	if events, err := c.getEvents(kubeContextName, "", "Node", name); err == nil {
 		d.Events = events

@@ -11,7 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 )
 
 // ServiceInfo contains service metadata
@@ -105,13 +104,7 @@ func (c *Client) GetServiceDetail(kubeContextName, namespace, serviceName string
 		d.Status = append(d.Status, fmt.Sprintf("LoadBalancer Ingress: %s", externalIP))
 	}
 
-	svc.ManagedFields = nil
-	svc.TypeMeta = v1.TypeMeta{APIVersion: "v1", Kind: "Service"}
-	if yamlBytes, yamlErr := yaml.Marshal(svc); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(svc, "v1", "Service")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "Service", serviceName); err == nil {
 		d.Events = events

@@ -8,7 +8,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/kubernetes"
 )
 
 // PodDisruptionBudgetInfo contains PodDisruptionBudget metadata.
@@ -43,42 +43,26 @@ func PodDisruptionBudgetToPodDisruptionBudgetInfo(pdb *policyv1.PodDisruptionBud
 	}
 }
 
+// podDisruptionBudgetsLW binds a PodDisruptionBudgetInterface's List/Watch
+// to namespace, for watchResource/listResource — see generic.go.
+func podDisruptionBudgetsLW(namespace string) func(kubernetes.Interface) listerWatcher[*policyv1.PodDisruptionBudgetList] {
+	return func(cs kubernetes.Interface) listerWatcher[*policyv1.PodDisruptionBudgetList] {
+		return cs.PolicyV1().PodDisruptionBudgets(namespace)
+	}
+}
+
 // WatchPodDisruptionBudgets opens a watch on PodDisruptionBudgets in the
 // given namespace. See WatchPods for the implicit list-then-watch behavior.
 func (c *Client) WatchPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.PolicyV1().PodDisruptionBudgets(namespace).Watch(ctx, v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch poddisruptionbudgets in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "poddisruptionbudgets in namespace "+namespace, podDisruptionBudgetsLW(namespace))
 }
 
 // ListPodDisruptionBudgets fetches every PodDisruptionBudget in the given
 // namespace in one call. See ListPods for why this exists alongside the
 // watch.
 func (c *Client) ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list poddisruptionbudgets in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*policyv1.PodDisruptionBudget, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "poddisruptionbudgets in namespace "+namespace, podDisruptionBudgetsLW(namespace),
+		func(l *policyv1.PodDisruptionBudgetList) []*policyv1.PodDisruptionBudget { return pointers(l.Items) })
 }
 
 // GetPodDisruptionBudgetDetail fetches a single PodDisruptionBudget's
@@ -107,14 +91,7 @@ func (c *Client) GetPodDisruptionBudgetDetail(kubeContextName, namespace, name s
 	for _, cond := range pdb.Status.Conditions {
 		d.Status = append(d.Status, formatCondition(cond.Type, string(cond.Status), cond.Reason, cond.Message))
 	}
-
-	pdb.ManagedFields = nil
-	pdb.TypeMeta = v1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudget"}
-	if yamlBytes, yamlErr := yaml.Marshal(pdb); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(pdb, "policy/v1", "PodDisruptionBudget")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "PodDisruptionBudget", name); err == nil {
 		d.Events = events

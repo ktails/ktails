@@ -10,7 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/kubernetes"
 )
 
 // ConfigMapInfo contains ConfigMap metadata.
@@ -42,41 +42,25 @@ func ConfigMapToConfigMapInfo(cm *corev1.ConfigMap) ConfigMapInfo {
 	}
 }
 
+// configMapsLW binds a ConfigMapInterface's List/Watch to namespace, for
+// watchResource/listResource — see generic.go.
+func configMapsLW(namespace string) func(kubernetes.Interface) listerWatcher[*corev1.ConfigMapList] {
+	return func(cs kubernetes.Interface) listerWatcher[*corev1.ConfigMapList] {
+		return cs.CoreV1().ConfigMaps(namespace)
+	}
+}
+
 // WatchConfigMaps opens a watch on ConfigMaps in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
 func (c *Client) WatchConfigMaps(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.CoreV1().ConfigMaps(namespace).Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch configmaps in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "configmaps in namespace "+namespace, configMapsLW(namespace))
 }
 
 // ListConfigMaps fetches every ConfigMap in the given namespace in one call.
 // See ListPods for why this exists alongside the watch.
 func (c *Client) ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list configmaps in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*corev1.ConfigMap, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "configmaps in namespace "+namespace, configMapsLW(namespace),
+		func(l *corev1.ConfigMapList) []*corev1.ConfigMap { return pointers(l.Items) })
 }
 
 // GetConfigMapDetail fetches a single ConfigMap's data keys, rendered YAML,
@@ -101,14 +85,7 @@ func (c *Client) GetConfigMapDetail(kubeContextName, namespace, name string) (Re
 	d.Namespace = info.Namespace
 	d.Age = info.Age
 	d.Summary = fmt.Sprintf("Keys: %s", strings.Join(info.Keys, ", "))
-
-	cm.ManagedFields = nil
-	cm.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}
-	if yamlBytes, yamlErr := yaml.Marshal(cm); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(cm, "v1", "ConfigMap")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "ConfigMap", name); err == nil {
 		d.Events = events

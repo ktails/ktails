@@ -10,7 +10,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/kubernetes"
 )
 
 // HorizontalPodAutoscalerInfo contains HorizontalPodAutoscaler metadata.
@@ -63,43 +63,29 @@ func HorizontalPodAutoscalerToHorizontalPodAutoscalerInfo(hpa *autoscalingv2.Hor
 	}
 }
 
+// horizontalPodAutoscalersLW binds a HorizontalPodAutoscalerInterface's
+// List/Watch to namespace, for watchResource/listResource — see generic.go.
+func horizontalPodAutoscalersLW(namespace string) func(kubernetes.Interface) listerWatcher[*autoscalingv2.HorizontalPodAutoscalerList] {
+	return func(cs kubernetes.Interface) listerWatcher[*autoscalingv2.HorizontalPodAutoscalerList] {
+		return cs.AutoscalingV2().HorizontalPodAutoscalers(namespace)
+	}
+}
+
 // WatchHorizontalPodAutoscalers opens a watch on HorizontalPodAutoscalers in
 // the given namespace. See WatchPods for the implicit list-then-watch
 // behavior.
 func (c *Client) WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.AutoscalingV2().HorizontalPodAutoscalers(namespace).Watch(ctx, v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch horizontalpodautoscalers in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "horizontalpodautoscalers in namespace "+namespace, horizontalPodAutoscalersLW(namespace))
 }
 
 // ListHorizontalPodAutoscalers fetches every HorizontalPodAutoscaler in the
 // given namespace in one call. See ListPods for why this exists alongside
 // the watch.
 func (c *Client) ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, v1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list horizontalpodautoscalers in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*autoscalingv2.HorizontalPodAutoscaler, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "horizontalpodautoscalers in namespace "+namespace, horizontalPodAutoscalersLW(namespace),
+		func(l *autoscalingv2.HorizontalPodAutoscalerList) []*autoscalingv2.HorizontalPodAutoscaler {
+			return pointers(l.Items)
+		})
 }
 
 // GetHorizontalPodAutoscalerDetail fetches a single HorizontalPodAutoscaler's
@@ -129,14 +115,7 @@ func (c *Client) GetHorizontalPodAutoscalerDetail(kubeContextName, namespace, na
 	for _, cond := range hpa.Status.Conditions {
 		d.Status = append(d.Status, formatCondition(string(cond.Type), string(cond.Status), cond.Reason, cond.Message))
 	}
-
-	hpa.ManagedFields = nil
-	hpa.TypeMeta = v1.TypeMeta{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler"}
-	if yamlBytes, yamlErr := yaml.Marshal(hpa); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(hpa, "autoscaling/v2", "HorizontalPodAutoscaler")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "HorizontalPodAutoscaler", name); err == nil {
 		d.Events = events

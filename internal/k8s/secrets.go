@@ -10,7 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sigs.k8s.io/yaml"
+	"k8s.io/client-go/kubernetes"
 )
 
 // redactedValue replaces every Secret value shown to the user — table rows
@@ -50,41 +50,25 @@ func SecretToSecretInfo(secret *corev1.Secret) SecretInfo {
 	}
 }
 
+// secretsLW binds a SecretInterface's List/Watch to namespace, for
+// watchResource/listResource — see generic.go.
+func secretsLW(namespace string) func(kubernetes.Interface) listerWatcher[*corev1.SecretList] {
+	return func(cs kubernetes.Interface) listerWatcher[*corev1.SecretList] {
+		return cs.CoreV1().Secrets(namespace)
+	}
+}
+
 // WatchSecrets opens a watch on Secrets in the given namespace. See WatchPods
 // for the implicit list-then-watch behavior.
 func (c *Client) WatchSecrets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.CoreV1().Secrets(namespace).Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch secrets in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "secrets in namespace "+namespace, secretsLW(namespace))
 }
 
 // ListSecrets fetches every Secret in the given namespace in one call. See
 // ListPods for why this exists alongside the watch.
 func (c *Client) ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list secrets in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*corev1.Secret, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "secrets in namespace "+namespace, secretsLW(namespace),
+		func(l *corev1.SecretList) []*corev1.Secret { return pointers(l.Items) })
 }
 
 // GetSecretDetail fetches a single Secret's key names, redacted YAML, and
@@ -117,13 +101,7 @@ func (c *Client) GetSecretDetail(kubeContextName, namespace, name string) (Resou
 	for k := range secret.StringData {
 		secret.StringData[k] = redactedValue
 	}
-	secret.ManagedFields = nil
-	secret.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}
-	if yamlBytes, yamlErr := yaml.Marshal(secret); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(secret, "v1", "Secret")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "Secret", name); err == nil {
 		d.Events = events

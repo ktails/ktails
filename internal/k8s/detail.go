@@ -7,6 +7,9 @@ import (
 	"time"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
 )
 
 // EventInfo is a condensed view of a Kubernetes event relevant to a resource.
@@ -30,6 +33,42 @@ type ResourceDetail struct {
 	Status    []string
 	Events    []EventInfo
 	YAML      string
+}
+
+// detailObject is any k8s API object Get*Detail renders — every concrete
+// type this package calls renderDetailYAML on (*corev1.Pod,
+// *appsv1.Deployment, ...) already implements both halves via their
+// generated ObjectMeta/TypeMeta embedding, with no extra work needed at
+// the call site.
+type detailObject interface {
+	runtime.Object
+	metav1Object
+}
+
+// metav1Object avoids importing metav1 under two different names in this
+// file (it's already aliased v1 here, unlike every other file in this
+// package) — SetManagedFields is metav1.Object's only method
+// renderDetailYAML needs.
+type metav1Object interface {
+	SetManagedFields(managedFields []v1.ManagedFieldsEntry)
+}
+
+// renderDetailYAML clears ManagedFields (pure noise for a human reader),
+// sets TypeMeta (List/Get results omit it — client-go's decoder doesn't
+// need it, but yaml.Marshal has no other way to know apiVersion/kind), and
+// renders obj as YAML the way `kubectl get -o yaml` would. Shared by every
+// Get*Detail function's YAML tail, which was otherwise byte-identical
+// across all 13 kinds. Never returns an error — a Marshal failure renders
+// as an inline message instead, matching every call site's own existing
+// fallback.
+func renderDetailYAML(obj detailObject, apiVersion, kind string) string {
+	obj.SetManagedFields(nil)
+	obj.GetObjectKind().SetGroupVersionKind(schema.FromAPIVersionAndKind(apiVersion, kind))
+	yamlBytes, err := yaml.Marshal(obj)
+	if err != nil {
+		return fmt.Sprintf("failed to render YAML: %v", err)
+	}
+	return string(yamlBytes)
 }
 
 // getEvents fetches events for a specific object, newest first.

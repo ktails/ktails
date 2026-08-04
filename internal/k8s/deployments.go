@@ -7,7 +7,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 )
 
 type DeploymentInfo struct {
@@ -72,14 +71,7 @@ func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName 
 		d.Status = append(d.Status, formatCondition(string(condition.Type), string(condition.Status), condition.Reason, condition.Message))
 	}
 
-	// Render clean YAML the way `kubectl get -o yaml` would, minus noisy managed fields.
-	deployment.ManagedFields = nil
-	deployment.TypeMeta = v1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"}
-	if yamlBytes, yamlErr := yaml.Marshal(deployment); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(deployment, "apps/v1", "Deployment")
 
 	if events, err := c.getEvents(kubeContextName, namespace, "Deployment", deploymentName); err == nil {
 		d.Events = events

@@ -21,7 +21,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
-	"sigs.k8s.io/yaml"
 )
 
 // requestTimeout bounds every one-shot (non-watch, non-log-stream) API call
@@ -421,6 +420,14 @@ func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
 	return names, nil
 }
 
+// podsLW binds a PodInterface's List/Watch to namespace, for
+// watchResource/listResource — see generic.go.
+func podsLW(namespace string) func(kubernetes.Interface) listerWatcher[*v1.PodList] {
+	return func(cs kubernetes.Interface) listerWatcher[*v1.PodList] {
+		return cs.CoreV1().Pods(namespace)
+	}
+}
+
 // WatchPods opens a watch on pods in the given namespace. A bare Watch with
 // no ResourceVersion set has the server replay every currently-existing
 // object as a synthetic Added event before continuing with live changes, so
@@ -429,112 +436,56 @@ func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
 // initial table instead of watching that replay trickle in one event at a
 // time (see watch.Supervisor.start).
 func (c *Client) WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.CoreV1().Pods(namespace).Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch pods in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "pods in namespace "+namespace, podsLW(namespace))
 }
 
 // ListPods fetches every pod in the given namespace in one call. See
 // WatchPods for why this exists alongside the watch.
 func (c *Client) ListPods(ctx context.Context, kubeContext, namespace string) ([]*v1.Pod, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
+	return listResource(ctx, c, kubeContext, "pods in namespace "+namespace, podsLW(namespace),
+		func(l *v1.PodList) []*v1.Pod { return pointers(l.Items) })
+}
 
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+// deploymentsLW binds a DeploymentInterface's List/Watch to namespace, for
+// watchResource/listResource — see generic.go.
+func deploymentsLW(namespace string) func(kubernetes.Interface) listerWatcher[*appsv1.DeploymentList] {
+	return func(cs kubernetes.Interface) listerWatcher[*appsv1.DeploymentList] {
+		return cs.AppsV1().Deployments(namespace)
 	}
-
-	list, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pods in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*v1.Pod, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
 }
 
 // WatchDeployments opens a watch on deployments in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
 func (c *Client) WatchDeployments(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.AppsV1().Deployments(namespace).Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch deployments in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "deployments in namespace "+namespace, deploymentsLW(namespace))
 }
 
 // ListDeployments fetches every deployment in the given namespace in one
 // call. See ListPods for why this exists alongside the watch.
 func (c *Client) ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
+	return listResource(ctx, c, kubeContext, "deployments in namespace "+namespace, deploymentsLW(namespace),
+		func(l *appsv1.DeploymentList) []*appsv1.Deployment { return pointers(l.Items) })
+}
 
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+// servicesLW binds a ServiceInterface's List/Watch to namespace, for
+// watchResource/listResource — see generic.go.
+func servicesLW(namespace string) func(kubernetes.Interface) listerWatcher[*v1.ServiceList] {
+	return func(cs kubernetes.Interface) listerWatcher[*v1.ServiceList] {
+		return cs.CoreV1().Services(namespace)
 	}
-
-	list, err := clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*appsv1.Deployment, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
 }
 
 // WatchServices opens a watch on services in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
 func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	w, err := clientset.CoreV1().Services(namespace).Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to watch services in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	return w, nil
+	return watchResource(ctx, c, kubeContext, "services in namespace "+namespace, servicesLW(namespace))
 }
 
 // ListServices fetches every service in the given namespace in one call. See
 // ListPods for why this exists alongside the watch.
 func (c *Client) ListServices(ctx context.Context, kubeContext, namespace string) ([]*v1.Service, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-
-	clientset, err := c.GetClientForContext(kubeContext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
-	}
-
-	list, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list services in namespace %s (context %s): %w", namespace, kubeContext, err)
-	}
-	out := make([]*v1.Service, len(list.Items))
-	for i := range list.Items {
-		out[i] = &list.Items[i]
-	}
-	return out, nil
+	return listResource(ctx, c, kubeContext, "services in namespace "+namespace, servicesLW(namespace),
+		func(l *v1.ServiceList) []*v1.Service { return pointers(l.Items) })
 }
 
 // GetPodDetail fetches a single pod's status, rendered YAML, and recent events.
@@ -574,13 +525,7 @@ func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceD
 		}
 	}
 
-	pod.ManagedFields = nil
-	pod.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}
-	if yamlBytes, yamlErr := yaml.Marshal(pod); yamlErr == nil {
-		d.YAML = string(yamlBytes)
-	} else {
-		d.YAML = fmt.Sprintf("failed to render YAML: %v", yamlErr)
-	}
+	d.YAML = renderDetailYAML(pod, "v1", "Pod")
 
 	if events, err := c.getEvents(kubeContext, namespace, "Pod", podName); err == nil {
 		d.Events = events
