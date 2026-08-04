@@ -369,335 +369,424 @@ func replicaCellStyle(input btable.StyledCellFuncInput) lipgloss.Style {
 	}
 }
 
-// podNarrowColumns and every other *NarrowColumns/*WideColumns function
-// below share one column order (§3.4): Context (fixed, never truncated),
-// Namespace, Name, then resource-specific columns — Nodes excepted, since
-// it's cluster-scoped and carries no Namespace at all. Each *NarrowColumns
-// function also follows the column-priority order in §8.3: Context and the
-// resource's status-ish column never drop; Age is the lowest-priority fixed
-// column and the first (here, only) one dropped when compact is true
-// (TierCompact — see views.WidthTier).
-func appendAge(cols []btable.Column, compact bool, ageCol btable.Column) []btable.Column {
-	if compact {
-		return cols
+// colKind selects which of the four column constructors a colEntry builds:
+// colCheck (Pods' checkbox glyph, fixed checkColWidth in both modes),
+// colContext (the shared Context column, fixed contextColWidth), or colData
+// (every other column — flex-sized in narrow mode via flex, auto-fit to
+// loaded data in wide mode via widestValue).
+type colKind int
+
+const (
+	colData colKind = iota
+	colCheck
+	colContext
+)
+
+// colEntry is one column's declarative spec, in the exact order it should
+// appear. flex and dropWhenCompact are narrow-mode-only (ignored by
+// buildWideColumns): flex is the narrow-mode flex factor for a colData
+// entry; dropWhenCompact marks the one column — always Age, by convention
+// across every kind below — that TierCompact drops (§8.3; see
+// buildNarrowColumns).
+type colEntry struct {
+	kind            colKind
+	key             string
+	title           string
+	flex            int
+	dropWhenCompact bool
+}
+
+// buildNarrowColumns and every *NarrowColumns function below share one
+// column order (§3.4): Context (fixed, never truncated), Namespace, Name,
+// then resource-specific columns — Nodes excepted, since it's
+// cluster-scoped and carries no Namespace at all. dropWhenCompact
+// implements the column-priority order in §8.3: Context and the resource's
+// status-ish column never drop; Age is the lowest-priority fixed column and
+// the only one dropped when compact is true (TierCompact — see
+// views.WidthTier). Age's position in the entry list varies per kind (it's
+// not always last — several kinds append one more column after it), which
+// this preserves simply by each kind's entries being listed in the actual
+// desired output order.
+func buildNarrowColumns(entries []colEntry, compact bool) []btable.Column {
+	cols := make([]btable.Column, 0, len(entries))
+	for _, e := range entries {
+		if e.dropWhenCompact && compact {
+			continue
+		}
+		switch e.kind {
+		case colCheck:
+			cols = append(cols, paddedColumn(e.key, e.title, checkColWidth))
+		case colContext:
+			cols = append(cols, contextColumn(e.key))
+		default:
+			cols = append(cols, paddedFlexColumn(e.key, e.title, e.flex))
+		}
 	}
-	return append(cols, ageCol)
+	return cols
+}
+
+// buildWideColumns is buildNarrowColumns' wide-mode counterpart: every
+// colData entry auto-fits to whatever's currently loaded (widestValue)
+// instead of flexing, and nothing is ever dropped (there's no compact
+// concept in wide mode).
+func buildWideColumns(entries []colEntry, rows []msgs.RowData) []btable.Column {
+	cols := make([]btable.Column, 0, len(entries))
+	for _, e := range entries {
+		switch e.kind {
+		case colCheck:
+			cols = append(cols, paddedColumn(e.key, e.title, checkColWidth))
+		case colContext:
+			cols = append(cols, contextColumn(e.key))
+		default:
+			cols = append(cols, paddedColumn(e.key, e.title, widestValue(rows, e.key, e.title)))
+		}
+	}
+	return cols
+}
+
+var podNarrowSpec = []colEntry{
+	{kind: colCheck, key: msgs.PodKeyCheck, title: "✓"},
+	{kind: colContext, key: msgs.PodKeyContext},
+	{key: msgs.PodKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.PodKeyName, title: "Name", flex: 10},
+	{key: msgs.PodKeyStatus, title: "Status", flex: 4},
+	{key: msgs.PodKeyRestarts, title: "Restarts", flex: 3},
+	{key: msgs.PodKeyCPU, title: "CPU", flex: 3},
+	{key: msgs.PodKeyMemory, title: "Memory", flex: 3},
+	{key: msgs.PodKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+}
+
+var podWideSpec = []colEntry{
+	{kind: colCheck, key: msgs.PodKeyCheck, title: "✓"},
+	{kind: colContext, key: msgs.PodKeyContext},
+	{key: msgs.PodKeyNamespace, title: "Namespace"},
+	{key: msgs.PodKeyName, title: "Name"},
+	{key: msgs.PodKeyStatus, title: "Status"},
+	{key: msgs.PodKeyReady, title: "Ready"},
+	{key: msgs.PodKeyRestarts, title: "Restarts"},
+	{key: msgs.PodKeyAge, title: "Age"},
+	{key: msgs.PodKeyNode, title: "Node"},
+	{key: msgs.PodKeyNodeIP, title: "Node IP"},
+	{key: msgs.PodKeyPodIP, title: "Pod IP"},
+	{key: msgs.PodKeyCPU, title: "CPU"},
+	{key: msgs.PodKeyMemory, title: "Memory"},
 }
 
 func podNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
-		contextColumn(msgs.PodKeyContext),
-		paddedFlexColumn(msgs.PodKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.PodKeyName, "Name", 10),
-		paddedFlexColumn(msgs.PodKeyStatus, "Status", 4),
-		paddedFlexColumn(msgs.PodKeyRestarts, "Restarts", 3),
-		paddedFlexColumn(msgs.PodKeyCPU, "CPU", 3),
-		paddedFlexColumn(msgs.PodKeyMemory, "Memory", 3),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.PodKeyAge, "Age", 3))
+	return buildNarrowColumns(podNarrowSpec, compact)
+}
+func podWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(podWideSpec, rows) }
+
+var deploymentNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.DeployKeyContext},
+	{key: msgs.DeployKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.DeployKeyName, title: "Name", flex: 8},
+	{key: msgs.DeployKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+	{key: msgs.DeployKeyReplicas, title: "ReadyReplicas", flex: 4},
 }
 
-func podWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		paddedColumn(msgs.PodKeyCheck, "✓", checkColWidth),
-		contextColumn(msgs.PodKeyContext),
-		paddedColumn(msgs.PodKeyNamespace, "Namespace", widestValue(rows, msgs.PodKeyNamespace, "Namespace")),
-		paddedColumn(msgs.PodKeyName, "Name", widestValue(rows, msgs.PodKeyName, "Name")),
-		paddedColumn(msgs.PodKeyStatus, "Status", widestValue(rows, msgs.PodKeyStatus, "Status")),
-		paddedColumn(msgs.PodKeyReady, "Ready", widestValue(rows, msgs.PodKeyReady, "Ready")),
-		paddedColumn(msgs.PodKeyRestarts, "Restarts", widestValue(rows, msgs.PodKeyRestarts, "Restarts")),
-		paddedColumn(msgs.PodKeyAge, "Age", widestValue(rows, msgs.PodKeyAge, "Age")),
-		paddedColumn(msgs.PodKeyNode, "Node", widestValue(rows, msgs.PodKeyNode, "Node")),
-		paddedColumn(msgs.PodKeyNodeIP, "Node IP", widestValue(rows, msgs.PodKeyNodeIP, "Node IP")),
-		paddedColumn(msgs.PodKeyPodIP, "Pod IP", widestValue(rows, msgs.PodKeyPodIP, "Pod IP")),
-		paddedColumn(msgs.PodKeyCPU, "CPU", widestValue(rows, msgs.PodKeyCPU, "CPU")),
-		paddedColumn(msgs.PodKeyMemory, "Memory", widestValue(rows, msgs.PodKeyMemory, "Memory")),
-	}
+var deploymentWideSpec = []colEntry{
+	{kind: colContext, key: msgs.DeployKeyContext},
+	{key: msgs.DeployKeyNamespace, title: "Namespace"},
+	{key: msgs.DeployKeyName, title: "Name"},
+	{key: msgs.DeployKeyAge, title: "Age"},
+	{key: msgs.DeployKeyReplicas, title: "ReadyReplicas"},
+	{key: msgs.DeployKeyAvailable, title: "Available"},
+	{key: msgs.DeployKeyUpdated, title: "Updated"},
+	{key: msgs.DeployKeyStrategy, title: "Strategy"},
+	{key: msgs.DeployKeySelector, title: "Selector"},
 }
 
 func deploymentNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.DeployKeyContext),
-		paddedFlexColumn(msgs.DeployKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.DeployKeyName, "Name", 8),
-	}
-	cols = appendAge(cols, compact, paddedFlexColumn(msgs.DeployKeyAge, "Age", 3))
-	return append(cols, paddedFlexColumn(msgs.DeployKeyReplicas, "ReadyReplicas", 4))
+	return buildNarrowColumns(deploymentNarrowSpec, compact)
+}
+func deploymentWideColumns(rows []msgs.RowData) []btable.Column {
+	return buildWideColumns(deploymentWideSpec, rows)
 }
 
-func deploymentWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.DeployKeyContext),
-		paddedColumn(msgs.DeployKeyNamespace, "Namespace", widestValue(rows, msgs.DeployKeyNamespace, "Namespace")),
-		paddedColumn(msgs.DeployKeyName, "Name", widestValue(rows, msgs.DeployKeyName, "Name")),
-		paddedColumn(msgs.DeployKeyAge, "Age", widestValue(rows, msgs.DeployKeyAge, "Age")),
-		paddedColumn(msgs.DeployKeyReplicas, "ReadyReplicas", widestValue(rows, msgs.DeployKeyReplicas, "ReadyReplicas")),
-		paddedColumn(msgs.DeployKeyAvailable, "Available", widestValue(rows, msgs.DeployKeyAvailable, "Available")),
-		paddedColumn(msgs.DeployKeyUpdated, "Updated", widestValue(rows, msgs.DeployKeyUpdated, "Updated")),
-		paddedColumn(msgs.DeployKeyStrategy, "Strategy", widestValue(rows, msgs.DeployKeyStrategy, "Strategy")),
-		paddedColumn(msgs.DeployKeySelector, "Selector", widestValue(rows, msgs.DeployKeySelector, "Selector")),
-	}
+var svcNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.SvcKeyContext},
+	{key: msgs.SvcKeyNamespace, title: "Namespace", flex: 18},
+	{key: msgs.SvcKeyName, title: "Name", flex: 28},
+	{key: msgs.SvcKeyType, title: "Type", flex: 14},
+	{key: msgs.SvcKeyClusterIP, title: "ClusterIP", flex: 18},
+	{key: msgs.SvcKeyPorts, title: "Ports", flex: 12},
+	{key: msgs.SvcKeyAge, title: "Age", flex: 10, dropWhenCompact: true},
+}
+
+var svcWideSpec = []colEntry{
+	{kind: colContext, key: msgs.SvcKeyContext},
+	{key: msgs.SvcKeyNamespace, title: "Namespace"},
+	{key: msgs.SvcKeyName, title: "Name"},
+	{key: msgs.SvcKeyType, title: "Type"},
+	{key: msgs.SvcKeyClusterIP, title: "ClusterIP"},
+	{key: msgs.SvcKeyPorts, title: "Ports"},
+	{key: msgs.SvcKeyAge, title: "Age"},
+	{key: msgs.SvcKeySelector, title: "Selector"},
+	{key: msgs.SvcKeyExternalIP, title: "ExternalIP"},
+	{key: msgs.SvcKeyEndpointIPs, title: "EndpointIPs"},
 }
 
 func svcNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.SvcKeyContext),
-		paddedFlexColumn(msgs.SvcKeyNamespace, "Namespace", 18),
-		paddedFlexColumn(msgs.SvcKeyName, "Name", 28),
-		paddedFlexColumn(msgs.SvcKeyType, "Type", 14),
-		paddedFlexColumn(msgs.SvcKeyClusterIP, "ClusterIP", 18),
-		paddedFlexColumn(msgs.SvcKeyPorts, "Ports", 12),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.SvcKeyAge, "Age", 10))
+	return buildNarrowColumns(svcNarrowSpec, compact)
+}
+func svcWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(svcWideSpec, rows) }
+
+var configMapNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.ConfigMapKeyContext},
+	{key: msgs.ConfigMapKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.ConfigMapKeyName, title: "Name", flex: 10},
+	{key: msgs.ConfigMapKeyKeys, title: "Keys", flex: 2},
+	{key: msgs.ConfigMapKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
 }
 
-func svcWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.SvcKeyContext),
-		paddedColumn(msgs.SvcKeyNamespace, "Namespace", widestValue(rows, msgs.SvcKeyNamespace, "Namespace")),
-		paddedColumn(msgs.SvcKeyName, "Name", widestValue(rows, msgs.SvcKeyName, "Name")),
-		paddedColumn(msgs.SvcKeyType, "Type", widestValue(rows, msgs.SvcKeyType, "Type")),
-		paddedColumn(msgs.SvcKeyClusterIP, "ClusterIP", widestValue(rows, msgs.SvcKeyClusterIP, "ClusterIP")),
-		paddedColumn(msgs.SvcKeyPorts, "Ports", widestValue(rows, msgs.SvcKeyPorts, "Ports")),
-		paddedColumn(msgs.SvcKeyAge, "Age", widestValue(rows, msgs.SvcKeyAge, "Age")),
-		paddedColumn(msgs.SvcKeySelector, "Selector", widestValue(rows, msgs.SvcKeySelector, "Selector")),
-		paddedColumn(msgs.SvcKeyExternalIP, "ExternalIP", widestValue(rows, msgs.SvcKeyExternalIP, "ExternalIP")),
-		paddedColumn(msgs.SvcKeyEndpointIPs, "EndpointIPs", widestValue(rows, msgs.SvcKeyEndpointIPs, "EndpointIPs")),
-	}
+var configMapWideSpec = []colEntry{
+	{kind: colContext, key: msgs.ConfigMapKeyContext},
+	{key: msgs.ConfigMapKeyNamespace, title: "Namespace"},
+	{key: msgs.ConfigMapKeyName, title: "Name"},
+	{key: msgs.ConfigMapKeyKeys, title: "Keys"},
+	{key: msgs.ConfigMapKeyAge, title: "Age"},
+	{key: msgs.ConfigMapKeyKeyNames, title: "Data Keys"},
 }
 
 func configMapNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.ConfigMapKeyContext),
-		paddedFlexColumn(msgs.ConfigMapKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.ConfigMapKeyName, "Name", 10),
-		paddedFlexColumn(msgs.ConfigMapKeyKeys, "Keys", 2),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.ConfigMapKeyAge, "Age", 3))
+	return buildNarrowColumns(configMapNarrowSpec, compact)
+}
+func configMapWideColumns(rows []msgs.RowData) []btable.Column {
+	return buildWideColumns(configMapWideSpec, rows)
 }
 
-func configMapWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.ConfigMapKeyContext),
-		paddedColumn(msgs.ConfigMapKeyNamespace, "Namespace", widestValue(rows, msgs.ConfigMapKeyNamespace, "Namespace")),
-		paddedColumn(msgs.ConfigMapKeyName, "Name", widestValue(rows, msgs.ConfigMapKeyName, "Name")),
-		paddedColumn(msgs.ConfigMapKeyKeys, "Keys", widestValue(rows, msgs.ConfigMapKeyKeys, "Keys")),
-		paddedColumn(msgs.ConfigMapKeyAge, "Age", widestValue(rows, msgs.ConfigMapKeyAge, "Age")),
-		paddedColumn(msgs.ConfigMapKeyKeyNames, "Data Keys", widestValue(rows, msgs.ConfigMapKeyKeyNames, "Data Keys")),
-	}
+var secretNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.SecretKeyContext},
+	{key: msgs.SecretKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.SecretKeyName, title: "Name", flex: 10},
+	{key: msgs.SecretKeyType, title: "Type", flex: 6},
+	{key: msgs.SecretKeyKeys, title: "Keys", flex: 2},
+	{key: msgs.SecretKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+}
+
+var secretWideSpec = []colEntry{
+	{kind: colContext, key: msgs.SecretKeyContext},
+	{key: msgs.SecretKeyNamespace, title: "Namespace"},
+	{key: msgs.SecretKeyName, title: "Name"},
+	{key: msgs.SecretKeyType, title: "Type"},
+	{key: msgs.SecretKeyKeys, title: "Keys"},
+	{key: msgs.SecretKeyAge, title: "Age"},
 }
 
 func secretNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.SecretKeyContext),
-		paddedFlexColumn(msgs.SecretKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.SecretKeyName, "Name", 10),
-		paddedFlexColumn(msgs.SecretKeyType, "Type", 6),
-		paddedFlexColumn(msgs.SecretKeyKeys, "Keys", 2),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.SecretKeyAge, "Age", 3))
+	return buildNarrowColumns(secretNarrowSpec, compact)
+}
+func secretWideColumns(rows []msgs.RowData) []btable.Column {
+	return buildWideColumns(secretWideSpec, rows)
 }
 
-func secretWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.SecretKeyContext),
-		paddedColumn(msgs.SecretKeyNamespace, "Namespace", widestValue(rows, msgs.SecretKeyNamespace, "Namespace")),
-		paddedColumn(msgs.SecretKeyName, "Name", widestValue(rows, msgs.SecretKeyName, "Name")),
-		paddedColumn(msgs.SecretKeyType, "Type", widestValue(rows, msgs.SecretKeyType, "Type")),
-		paddedColumn(msgs.SecretKeyKeys, "Keys", widestValue(rows, msgs.SecretKeyKeys, "Keys")),
-		paddedColumn(msgs.SecretKeyAge, "Age", widestValue(rows, msgs.SecretKeyAge, "Age")),
-	}
+var jobNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.JobKeyContext},
+	{key: msgs.JobKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.JobKeyName, title: "Name", flex: 10},
+	{key: msgs.JobKeyCompletions, title: "Completions", flex: 3},
+	{key: msgs.JobKeyStatus, title: "Status", flex: 4},
+	{key: msgs.JobKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+}
+
+var jobWideSpec = []colEntry{
+	{kind: colContext, key: msgs.JobKeyContext},
+	{key: msgs.JobKeyNamespace, title: "Namespace"},
+	{key: msgs.JobKeyName, title: "Name"},
+	{key: msgs.JobKeyCompletions, title: "Completions"},
+	{key: msgs.JobKeyStatus, title: "Status"},
+	{key: msgs.JobKeyDuration, title: "Duration"},
+	{key: msgs.JobKeyAge, title: "Age"},
 }
 
 func jobNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.JobKeyContext),
-		paddedFlexColumn(msgs.JobKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.JobKeyName, "Name", 10),
-		paddedFlexColumn(msgs.JobKeyCompletions, "Completions", 3),
-		paddedFlexColumn(msgs.JobKeyStatus, "Status", 4),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.JobKeyAge, "Age", 3))
+	return buildNarrowColumns(jobNarrowSpec, compact)
+}
+func jobWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(jobWideSpec, rows) }
+
+var cronJobNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.CronJobKeyContext},
+	{key: msgs.CronJobKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.CronJobKeyName, title: "Name", flex: 10},
+	{key: msgs.CronJobKeySchedule, title: "Schedule", flex: 5},
+	{key: msgs.CronJobKeySuspend, title: "Suspend", flex: 3},
+	{key: msgs.CronJobKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
 }
 
-func jobWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.JobKeyContext),
-		paddedColumn(msgs.JobKeyNamespace, "Namespace", widestValue(rows, msgs.JobKeyNamespace, "Namespace")),
-		paddedColumn(msgs.JobKeyName, "Name", widestValue(rows, msgs.JobKeyName, "Name")),
-		paddedColumn(msgs.JobKeyCompletions, "Completions", widestValue(rows, msgs.JobKeyCompletions, "Completions")),
-		paddedColumn(msgs.JobKeyStatus, "Status", widestValue(rows, msgs.JobKeyStatus, "Status")),
-		paddedColumn(msgs.JobKeyDuration, "Duration", widestValue(rows, msgs.JobKeyDuration, "Duration")),
-		paddedColumn(msgs.JobKeyAge, "Age", widestValue(rows, msgs.JobKeyAge, "Age")),
-	}
+var cronJobWideSpec = []colEntry{
+	{kind: colContext, key: msgs.CronJobKeyContext},
+	{key: msgs.CronJobKeyNamespace, title: "Namespace"},
+	{key: msgs.CronJobKeyName, title: "Name"},
+	{key: msgs.CronJobKeySchedule, title: "Schedule"},
+	{key: msgs.CronJobKeySuspend, title: "Suspend"},
+	{key: msgs.CronJobKeyLastScheduled, title: "Last Scheduled"},
+	{key: msgs.CronJobKeyAge, title: "Age"},
 }
 
 func cronJobNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.CronJobKeyContext),
-		paddedFlexColumn(msgs.CronJobKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.CronJobKeyName, "Name", 10),
-		paddedFlexColumn(msgs.CronJobKeySchedule, "Schedule", 5),
-		paddedFlexColumn(msgs.CronJobKeySuspend, "Suspend", 3),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.CronJobKeyAge, "Age", 3))
+	return buildNarrowColumns(cronJobNarrowSpec, compact)
+}
+func cronJobWideColumns(rows []msgs.RowData) []btable.Column {
+	return buildWideColumns(cronJobWideSpec, rows)
 }
 
-func cronJobWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.CronJobKeyContext),
-		paddedColumn(msgs.CronJobKeyNamespace, "Namespace", widestValue(rows, msgs.CronJobKeyNamespace, "Namespace")),
-		paddedColumn(msgs.CronJobKeyName, "Name", widestValue(rows, msgs.CronJobKeyName, "Name")),
-		paddedColumn(msgs.CronJobKeySchedule, "Schedule", widestValue(rows, msgs.CronJobKeySchedule, "Schedule")),
-		paddedColumn(msgs.CronJobKeySuspend, "Suspend", widestValue(rows, msgs.CronJobKeySuspend, "Suspend")),
-		paddedColumn(msgs.CronJobKeyLastScheduled, "Last Scheduled", widestValue(rows, msgs.CronJobKeyLastScheduled, "Last Scheduled")),
-		paddedColumn(msgs.CronJobKeyAge, "Age", widestValue(rows, msgs.CronJobKeyAge, "Age")),
-	}
+var statefulSetNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.StatefulSetKeyContext},
+	{key: msgs.StatefulSetKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.StatefulSetKeyName, title: "Name", flex: 8},
+	{key: msgs.StatefulSetKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+	{key: msgs.StatefulSetKeyReady, title: "Ready", flex: 4},
+}
+
+var statefulSetWideSpec = []colEntry{
+	{kind: colContext, key: msgs.StatefulSetKeyContext},
+	{key: msgs.StatefulSetKeyNamespace, title: "Namespace"},
+	{key: msgs.StatefulSetKeyName, title: "Name"},
+	{key: msgs.StatefulSetKeyAge, title: "Age"},
+	{key: msgs.StatefulSetKeyReady, title: "Ready"},
+	{key: msgs.StatefulSetKeySelector, title: "Selector"},
 }
 
 func statefulSetNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.StatefulSetKeyContext),
-		paddedFlexColumn(msgs.StatefulSetKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.StatefulSetKeyName, "Name", 8),
-	}
-	cols = appendAge(cols, compact, paddedFlexColumn(msgs.StatefulSetKeyAge, "Age", 3))
-	return append(cols, paddedFlexColumn(msgs.StatefulSetKeyReady, "Ready", 4))
+	return buildNarrowColumns(statefulSetNarrowSpec, compact)
+}
+func statefulSetWideColumns(rows []msgs.RowData) []btable.Column {
+	return buildWideColumns(statefulSetWideSpec, rows)
 }
 
-func statefulSetWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.StatefulSetKeyContext),
-		paddedColumn(msgs.StatefulSetKeyNamespace, "Namespace", widestValue(rows, msgs.StatefulSetKeyNamespace, "Namespace")),
-		paddedColumn(msgs.StatefulSetKeyName, "Name", widestValue(rows, msgs.StatefulSetKeyName, "Name")),
-		paddedColumn(msgs.StatefulSetKeyAge, "Age", widestValue(rows, msgs.StatefulSetKeyAge, "Age")),
-		paddedColumn(msgs.StatefulSetKeyReady, "Ready", widestValue(rows, msgs.StatefulSetKeyReady, "Ready")),
-		paddedColumn(msgs.StatefulSetKeySelector, "Selector", widestValue(rows, msgs.StatefulSetKeySelector, "Selector")),
-	}
+var daemonSetNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.DaemonSetKeyContext},
+	{key: msgs.DaemonSetKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.DaemonSetKeyName, title: "Name", flex: 8},
+	{key: msgs.DaemonSetKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+	{key: msgs.DaemonSetKeyReady, title: "Ready", flex: 4},
+}
+
+var daemonSetWideSpec = []colEntry{
+	{kind: colContext, key: msgs.DaemonSetKeyContext},
+	{key: msgs.DaemonSetKeyNamespace, title: "Namespace"},
+	{key: msgs.DaemonSetKeyName, title: "Name"},
+	{key: msgs.DaemonSetKeyAge, title: "Age"},
+	{key: msgs.DaemonSetKeyReady, title: "Ready"},
+	{key: msgs.DaemonSetKeySelector, title: "Selector"},
 }
 
 func daemonSetNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.DaemonSetKeyContext),
-		paddedFlexColumn(msgs.DaemonSetKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.DaemonSetKeyName, "Name", 8),
-	}
-	cols = appendAge(cols, compact, paddedFlexColumn(msgs.DaemonSetKeyAge, "Age", 3))
-	return append(cols, paddedFlexColumn(msgs.DaemonSetKeyReady, "Ready", 4))
+	return buildNarrowColumns(daemonSetNarrowSpec, compact)
+}
+func daemonSetWideColumns(rows []msgs.RowData) []btable.Column {
+	return buildWideColumns(daemonSetWideSpec, rows)
 }
 
-func daemonSetWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.DaemonSetKeyContext),
-		paddedColumn(msgs.DaemonSetKeyNamespace, "Namespace", widestValue(rows, msgs.DaemonSetKeyNamespace, "Namespace")),
-		paddedColumn(msgs.DaemonSetKeyName, "Name", widestValue(rows, msgs.DaemonSetKeyName, "Name")),
-		paddedColumn(msgs.DaemonSetKeyAge, "Age", widestValue(rows, msgs.DaemonSetKeyAge, "Age")),
-		paddedColumn(msgs.DaemonSetKeyReady, "Ready", widestValue(rows, msgs.DaemonSetKeyReady, "Ready")),
-		paddedColumn(msgs.DaemonSetKeySelector, "Selector", widestValue(rows, msgs.DaemonSetKeySelector, "Selector")),
-	}
+var ingressNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.IngressKeyContext},
+	{key: msgs.IngressKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.IngressKeyName, title: "Name", flex: 10},
+	{key: msgs.IngressKeyHosts, title: "Hosts", flex: 10},
+	{key: msgs.IngressKeyClass, title: "Class", flex: 4},
+	{key: msgs.IngressKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+}
+
+var ingressWideSpec = []colEntry{
+	{kind: colContext, key: msgs.IngressKeyContext},
+	{key: msgs.IngressKeyNamespace, title: "Namespace"},
+	{key: msgs.IngressKeyName, title: "Name"},
+	{key: msgs.IngressKeyHosts, title: "Hosts"},
+	{key: msgs.IngressKeyClass, title: "Class"},
+	{key: msgs.IngressKeyAge, title: "Age"},
+	{key: msgs.IngressKeyBackends, title: "Backends"},
 }
 
 func ingressNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.IngressKeyContext),
-		paddedFlexColumn(msgs.IngressKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.IngressKeyName, "Name", 10),
-		paddedFlexColumn(msgs.IngressKeyHosts, "Hosts", 10),
-		paddedFlexColumn(msgs.IngressKeyClass, "Class", 4),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.IngressKeyAge, "Age", 3))
+	return buildNarrowColumns(ingressNarrowSpec, compact)
+}
+func ingressWideColumns(rows []msgs.RowData) []btable.Column {
+	return buildWideColumns(ingressWideSpec, rows)
 }
 
-func ingressWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.IngressKeyContext),
-		paddedColumn(msgs.IngressKeyNamespace, "Namespace", widestValue(rows, msgs.IngressKeyNamespace, "Namespace")),
-		paddedColumn(msgs.IngressKeyName, "Name", widestValue(rows, msgs.IngressKeyName, "Name")),
-		paddedColumn(msgs.IngressKeyHosts, "Hosts", widestValue(rows, msgs.IngressKeyHosts, "Hosts")),
-		paddedColumn(msgs.IngressKeyClass, "Class", widestValue(rows, msgs.IngressKeyClass, "Class")),
-		paddedColumn(msgs.IngressKeyAge, "Age", widestValue(rows, msgs.IngressKeyAge, "Age")),
-		paddedColumn(msgs.IngressKeyBackends, "Backends", widestValue(rows, msgs.IngressKeyBackends, "Backends")),
-	}
+var pdbNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.PDBKeyContext},
+	{key: msgs.PDBKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.PDBKeyName, title: "Name", flex: 10},
+	{key: msgs.PDBKeyMinMaxAvailable, title: "Min/Max Available", flex: 6},
+	{key: msgs.PDBKeyAllowedDisruptions, title: "Allowed Disruptions", flex: 4},
+	{key: msgs.PDBKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+}
+
+var pdbWideSpec = []colEntry{
+	{kind: colContext, key: msgs.PDBKeyContext},
+	{key: msgs.PDBKeyNamespace, title: "Namespace"},
+	{key: msgs.PDBKeyName, title: "Name"},
+	{key: msgs.PDBKeyMinMaxAvailable, title: "Min/Max Available"},
+	{key: msgs.PDBKeyAllowedDisruptions, title: "Allowed Disruptions"},
+	{key: msgs.PDBKeyAge, title: "Age"},
+	{key: msgs.PDBKeyCurrentHealthy, title: "Current Healthy"},
+	{key: msgs.PDBKeyDesiredHealthy, title: "Desired Healthy"},
 }
 
 func pdbNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.PDBKeyContext),
-		paddedFlexColumn(msgs.PDBKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.PDBKeyName, "Name", 10),
-		paddedFlexColumn(msgs.PDBKeyMinMaxAvailable, "Min/Max Available", 6),
-		paddedFlexColumn(msgs.PDBKeyAllowedDisruptions, "Allowed Disruptions", 4),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.PDBKeyAge, "Age", 3))
+	return buildNarrowColumns(pdbNarrowSpec, compact)
+}
+func pdbWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(pdbWideSpec, rows) }
+
+var hpaNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.HPAKeyContext},
+	{key: msgs.HPAKeyNamespace, title: "Namespace", flex: 5},
+	{key: msgs.HPAKeyName, title: "Name", flex: 10},
+	{key: msgs.HPAKeyReference, title: "Reference", flex: 8},
+	{key: msgs.HPAKeyMinMax, title: "Min-Max", flex: 3},
+	{key: msgs.HPAKeyReplicas, title: "Replicas", flex: 3},
+	{key: msgs.HPAKeyTargets, title: "Targets", flex: 6},
+	{key: msgs.HPAKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
 }
 
-func pdbWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.PDBKeyContext),
-		paddedColumn(msgs.PDBKeyNamespace, "Namespace", widestValue(rows, msgs.PDBKeyNamespace, "Namespace")),
-		paddedColumn(msgs.PDBKeyName, "Name", widestValue(rows, msgs.PDBKeyName, "Name")),
-		paddedColumn(msgs.PDBKeyMinMaxAvailable, "Min/Max Available", widestValue(rows, msgs.PDBKeyMinMaxAvailable, "Min/Max Available")),
-		paddedColumn(msgs.PDBKeyAllowedDisruptions, "Allowed Disruptions", widestValue(rows, msgs.PDBKeyAllowedDisruptions, "Allowed Disruptions")),
-		paddedColumn(msgs.PDBKeyAge, "Age", widestValue(rows, msgs.PDBKeyAge, "Age")),
-		paddedColumn(msgs.PDBKeyCurrentHealthy, "Current Healthy", widestValue(rows, msgs.PDBKeyCurrentHealthy, "Current Healthy")),
-		paddedColumn(msgs.PDBKeyDesiredHealthy, "Desired Healthy", widestValue(rows, msgs.PDBKeyDesiredHealthy, "Desired Healthy")),
-	}
+var hpaWideSpec = []colEntry{
+	{kind: colContext, key: msgs.HPAKeyContext},
+	{key: msgs.HPAKeyNamespace, title: "Namespace"},
+	{key: msgs.HPAKeyName, title: "Name"},
+	{key: msgs.HPAKeyReference, title: "Reference"},
+	{key: msgs.HPAKeyMinMax, title: "Min-Max"},
+	{key: msgs.HPAKeyReplicas, title: "Replicas"},
+	{key: msgs.HPAKeyTargets, title: "Targets"},
+	{key: msgs.HPAKeyAge, title: "Age"},
 }
 
 func hpaNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.HPAKeyContext),
-		paddedFlexColumn(msgs.HPAKeyNamespace, "Namespace", 5),
-		paddedFlexColumn(msgs.HPAKeyName, "Name", 10),
-		paddedFlexColumn(msgs.HPAKeyReference, "Reference", 8),
-		paddedFlexColumn(msgs.HPAKeyMinMax, "Min-Max", 3),
-		paddedFlexColumn(msgs.HPAKeyReplicas, "Replicas", 3),
-		paddedFlexColumn(msgs.HPAKeyTargets, "Targets", 6),
-	}
-	return appendAge(cols, compact, paddedFlexColumn(msgs.HPAKeyAge, "Age", 3))
+	return buildNarrowColumns(hpaNarrowSpec, compact)
+}
+func hpaWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(hpaWideSpec, rows) }
+
+// nodeNarrowSpec/nodeWideSpec omit Namespace: Nodes are cluster-scoped (see
+// msgs.NodeKeyName's doc comment), so Context is followed directly by Name
+// rather than a Namespace column that would always read empty.
+var nodeNarrowSpec = []colEntry{
+	{kind: colContext, key: msgs.NodeKeyContext},
+	{key: msgs.NodeKeyName, title: "Name", flex: 12},
+	{key: msgs.NodeKeyStatus, title: "Status", flex: 4},
+	{key: msgs.NodeKeyRoles, title: "Roles", flex: 5},
+	{key: msgs.NodeKeyCPU, title: "CPU", flex: 3},
+	{key: msgs.NodeKeyMemory, title: "Memory", flex: 3},
+	{key: msgs.NodeKeyAge, title: "Age", flex: 3, dropWhenCompact: true},
+	{key: msgs.NodeKeyVersion, title: "Version", flex: 4},
 }
 
-func hpaWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.HPAKeyContext),
-		paddedColumn(msgs.HPAKeyNamespace, "Namespace", widestValue(rows, msgs.HPAKeyNamespace, "Namespace")),
-		paddedColumn(msgs.HPAKeyName, "Name", widestValue(rows, msgs.HPAKeyName, "Name")),
-		paddedColumn(msgs.HPAKeyReference, "Reference", widestValue(rows, msgs.HPAKeyReference, "Reference")),
-		paddedColumn(msgs.HPAKeyMinMax, "Min-Max", widestValue(rows, msgs.HPAKeyMinMax, "Min-Max")),
-		paddedColumn(msgs.HPAKeyReplicas, "Replicas", widestValue(rows, msgs.HPAKeyReplicas, "Replicas")),
-		paddedColumn(msgs.HPAKeyTargets, "Targets", widestValue(rows, msgs.HPAKeyTargets, "Targets")),
-		paddedColumn(msgs.HPAKeyAge, "Age", widestValue(rows, msgs.HPAKeyAge, "Age")),
-	}
+var nodeWideSpec = []colEntry{
+	{kind: colContext, key: msgs.NodeKeyContext},
+	{key: msgs.NodeKeyName, title: "Name"},
+	{key: msgs.NodeKeyStatus, title: "Status"},
+	{key: msgs.NodeKeyRoles, title: "Roles"},
+	{key: msgs.NodeKeyAge, title: "Age"},
+	{key: msgs.NodeKeyVersion, title: "Version"},
+	{key: msgs.NodeKeyInternalIP, title: "InternalIP"},
+	{key: msgs.NodeKeyOS, title: "OS/Arch"},
+	{key: msgs.NodeKeyCPU, title: "CPU"},
+	{key: msgs.NodeKeyMemory, title: "Memory"},
 }
 
-// nodeNarrowColumns/nodeWideColumns omit Namespace: Nodes are cluster-scoped
-// (see msgs.NodeKeyName's doc comment), so Context is followed directly by
-// Name rather than a Namespace column that would always read empty.
 func nodeNarrowColumns(compact bool) []btable.Column {
-	cols := []btable.Column{
-		contextColumn(msgs.NodeKeyContext),
-		paddedFlexColumn(msgs.NodeKeyName, "Name", 12),
-		paddedFlexColumn(msgs.NodeKeyStatus, "Status", 4),
-		paddedFlexColumn(msgs.NodeKeyRoles, "Roles", 5),
-		paddedFlexColumn(msgs.NodeKeyCPU, "CPU", 3),
-		paddedFlexColumn(msgs.NodeKeyMemory, "Memory", 3),
-	}
-	cols = appendAge(cols, compact, paddedFlexColumn(msgs.NodeKeyAge, "Age", 3))
-	return append(cols, paddedFlexColumn(msgs.NodeKeyVersion, "Version", 4))
+	return buildNarrowColumns(nodeNarrowSpec, compact)
 }
-
 func nodeWideColumns(rows []msgs.RowData) []btable.Column {
-	return []btable.Column{
-		contextColumn(msgs.NodeKeyContext),
-		paddedColumn(msgs.NodeKeyName, "Name", widestValue(rows, msgs.NodeKeyName, "Name")),
-		paddedColumn(msgs.NodeKeyStatus, "Status", widestValue(rows, msgs.NodeKeyStatus, "Status")),
-		paddedColumn(msgs.NodeKeyRoles, "Roles", widestValue(rows, msgs.NodeKeyRoles, "Roles")),
-		paddedColumn(msgs.NodeKeyAge, "Age", widestValue(rows, msgs.NodeKeyAge, "Age")),
-		paddedColumn(msgs.NodeKeyVersion, "Version", widestValue(rows, msgs.NodeKeyVersion, "Version")),
-		paddedColumn(msgs.NodeKeyInternalIP, "InternalIP", widestValue(rows, msgs.NodeKeyInternalIP, "InternalIP")),
-		paddedColumn(msgs.NodeKeyOS, "OS/Arch", widestValue(rows, msgs.NodeKeyOS, "OS/Arch")),
-		paddedColumn(msgs.NodeKeyCPU, "CPU", widestValue(rows, msgs.NodeKeyCPU, "CPU")),
-		paddedColumn(msgs.NodeKeyMemory, "Memory", widestValue(rows, msgs.NodeKeyMemory, "Memory")),
-	}
+	return buildWideColumns(nodeWideSpec, rows)
 }
