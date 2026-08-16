@@ -3,6 +3,7 @@ package cmds
 
 import (
 	"bufio"
+	"context"
 	"io"
 
 	tea "charm.land/bubbletea/v2"
@@ -252,14 +253,14 @@ func LoadNodeDetailCmd(client *k8s.Client, kubeContext, namespace, name string) 
 // tell whether this stream is still the one it's waiting for — that
 // specific source may have been restarted or closed before this resolves,
 // independent of any other open source.
-func OpenPodLogStreamCmd(client *k8s.Client, kubeContext, namespace, podName, container, sourceKey string, generation int) tea.Cmd {
+func OpenPodLogStreamCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, podName, container, sourceKey string, generation int) tea.Cmd {
 	return func() tea.Msg {
 		opts := &v1.PodLogOptions{
 			Follow:    true,
 			TailLines: int64Ptr(logTailLines),
 			Container: container,
 		}
-		stream, err := client.StreamLogs(kubeContext, namespace, podName, opts)
+		stream, err := client.StreamLogs(ctx, kubeContext, namespace, podName, opts)
 		if err != nil {
 			return msgs.LogStreamClosedMsg{SourceKey: sourceKey, Generation: generation, Err: err}
 		}

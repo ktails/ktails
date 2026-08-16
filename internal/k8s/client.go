@@ -629,8 +629,12 @@ func containerStateString(state v1.ContainerState) string {
 	}
 }
 
-// StreamLogs streams logs from a pod
-func (c *Client) StreamLogs(kubeContext, namespace, podName string, opts *v1.PodLogOptions) (io.ReadCloser, error) {
+// StreamLogs streams logs from a pod. ctx governs both the initial open
+// (req.Stream) and the returned stream's lifetime — callers cancel it to
+// abort a hung open or to end a live follow; StreamLogs deliberately puts no
+// deadline on it, since a follow stream must be able to stay open
+// indefinitely.
+func (c *Client) StreamLogs(ctx context.Context, kubeContext, namespace, podName string, opts *v1.PodLogOptions) (io.ReadCloser, error) {
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
@@ -642,7 +646,6 @@ func (c *Client) StreamLogs(kubeContext, namespace, podName string, opts *v1.Pod
 		}
 	}
 
-	ctx := context.Background()
 	req := clientset.CoreV1().Pods(namespace).GetLogs(podName, opts)
 	stream, err := req.Stream(ctx)
 	if err != nil {

@@ -3,6 +3,7 @@ package pages
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -175,6 +176,8 @@ type logStreamState struct {
 	stream     io.ReadCloser
 	scanner    *bufio.Scanner
 	generation int
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // NewMainPageModel builds the top-level page model. refreshIntervalSeconds is
@@ -1393,8 +1396,10 @@ func (m *MainPage) openPodLogs() tea.Cmd {
 			continue
 		}
 		m.podLogs.AddSource(key, t.pod, t.namespace, t.context, t.cntnr)
-		m.logStreams[key] = &logStreamState{generation: 1}
-		openCmds = append(openCmds, cmds.OpenPodLogStreamCmd(m.Client, t.context, t.namespace, t.pod, t.cntnr, key, 1))
+		st := &logStreamState{generation: 1}
+		st.ctx, st.cancel = context.WithCancel(context.Background())
+		m.logStreams[key] = st
+		openCmds = append(openCmds, cmds.OpenPodLogStreamCmd(st.ctx, m.Client, t.context, t.namespace, t.pod, t.cntnr, key, 1))
 	}
 
 	m.closeDetail()
@@ -1413,6 +1418,9 @@ func (m *MainPage) openPodLogs() tea.Cmd {
 // both the stream registry and the render model.
 func (m *MainPage) closeLogSource(key string) {
 	if st, ok := m.logStreams[key]; ok {
+		if st.cancel != nil {
+			st.cancel()
+		}
 		if st.stream != nil {
 			st.stream.Close()
 		}
@@ -1441,6 +1449,9 @@ func (m *MainPage) closeLogs() {
 // call when nothing is streaming.
 func (m *MainPage) stopLogStream() {
 	for key, st := range m.logStreams {
+		if st.cancel != nil {
+			st.cancel()
+		}
 		if st.stream != nil {
 			st.stream.Close()
 		}
