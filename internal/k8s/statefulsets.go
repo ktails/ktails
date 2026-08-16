@@ -48,13 +48,14 @@ func statefulSetsLW(namespace string) func(kubernetes.Interface) listerWatcher[*
 
 // WatchStatefulSets opens a watch on StatefulSets in the given namespace.
 // See WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchStatefulSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "statefulsets in namespace "+namespace, statefulSetsLW(namespace))
+func (c *Client) WatchStatefulSets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "statefulsets in namespace "+namespace, resourceVersion, statefulSetsLW(namespace))
 }
 
 // ListStatefulSets fetches every StatefulSet in the given namespace in one
-// call. See ListPods for why this exists alongside the watch.
-func (c *Client) ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, error) {
+// call, along with the list's resourceVersion for a subsequent
+// WatchStatefulSets call. See ListPods for why this exists alongside the watch.
+func (c *Client) ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, string, error) {
 	return listResource(ctx, c, kubeContext, "statefulsets in namespace "+namespace, statefulSetsLW(namespace),
 		func(l *appsv1.StatefulSetList) []*appsv1.StatefulSet { return pointers(l.Items) })
 }

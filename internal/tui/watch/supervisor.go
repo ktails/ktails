@@ -29,33 +29,33 @@ import (
 // with the context's kubeconfig default namespace, or "" (cluster-wide) for
 // a context with none pinned — see stateKey and StartContext.
 type Cluster interface {
-	WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListPods(ctx context.Context, kubeContext, namespace string) ([]*corev1.Pod, error)
-	WatchDeployments(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, error)
-	WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListServices(ctx context.Context, kubeContext, namespace string) ([]*corev1.Service, error)
-	WatchConfigMaps(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, error)
-	WatchSecrets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, error)
-	WatchJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, error)
-	WatchCronJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListCronJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.CronJob, error)
-	WatchStatefulSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, error)
-	WatchDaemonSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, error)
-	WatchIngresses(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, error)
-	WatchPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, error)
-	WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, error)
+	WatchPods(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListPods(ctx context.Context, kubeContext, namespace string) ([]*corev1.Pod, string, error)
+	WatchDeployments(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, string, error)
+	WatchServices(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListServices(ctx context.Context, kubeContext, namespace string) ([]*corev1.Service, string, error)
+	WatchConfigMaps(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, string, error)
+	WatchSecrets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, string, error)
+	WatchJobs(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, string, error)
+	WatchCronJobs(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListCronJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.CronJob, string, error)
+	WatchStatefulSets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, string, error)
+	WatchDaemonSets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, string, error)
+	WatchIngresses(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, string, error)
+	WatchPodDisruptionBudgets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, string, error)
+	WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, string, error)
 	// WatchNodes/ListNodes ignore namespace — Nodes are cluster-scoped.
-	WatchNodes(ctx context.Context, kubeContext, namespace string) (watch.Interface, error)
-	ListNodes(ctx context.Context, kubeContext, namespace string) ([]*corev1.Node, error)
+	WatchNodes(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	ListNodes(ctx context.Context, kubeContext, namespace string) ([]*corev1.Node, string, error)
 }
 
 // maxReconnectFailures is how many consecutive reconnect failures a
@@ -93,6 +93,10 @@ type watchState struct {
 	watcher    watch.Interface
 	cache      rowCache
 	failures   int
+	// listRV is the most recent List() call's collection resourceVersion,
+	// threaded into the next Watch() open for RV continuity — see
+	// ListLoadedMsg's doc comment.
+	listRV string
 }
 
 // stateKey identifies one watch stream: one per (kind, context), scoped to
@@ -374,15 +378,17 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 		}
 		if msg.Err != nil {
 			// The List failed (e.g. an RBAC denial) — don't surface a
-			// separate error here. The watch is opened anyway and will hit
+			// separate error here. The watch is opened anyway (with no RV,
+			// since there's no List result to take one from) and will hit
 			// the same failure, reported through the existing
 			// WatchClosedMsg path (immediate give-up on Forbidden, backoff
 			// otherwise) rather than duplicating that logic here.
-			return nil, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, 0), true
+			return nil, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], "", msg.Generation, 0), true
 		}
 		st.cache.seed(msg.Objects)
+		st.listRV = msg.ResourceVersion
 		upd := &Update{Kind: msg.Kind, Context: msg.Context, RowsChanged: true}
-		return upd, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, 0), true
+		return upd, s.openCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.ResourceVersion, msg.Generation, 0), true
 
 	case msgs.WatchOpenedMsg:
 		st, ok := s.current(msg.Kind, msg.Context, msg.Generation)
@@ -452,6 +458,26 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 				strings.ToLower(msg.Kind.Title()), msg.Context)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err, Forbidden: true}, nil, true
 		}
+		// 410 Gone: the watch's resourceVersion fell out of etcd's
+		// compaction window. Unlike a generic close, the fix is always an
+		// immediate relist to obtain a fresh RV, not a backoff wait — but a
+		// pathologically expiring watch must still eventually give up
+		// rather than relisting in a tight loop forever, so this still
+		// counts against the same failure budget; only the first 410 in a
+		// run gets a zero delay.
+		if apierrors.IsResourceExpired(msg.Err) {
+			st.failures++
+			if st.failures > maxReconnectFailures {
+				err := fmt.Errorf("failed to watch %s for context '%s' after %d attempts: %w",
+					strings.ToLower(msg.Kind.Title()), msg.Context, st.failures, msg.Err)
+				return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
+			}
+			delay := time.Duration(0)
+			if st.failures > 1 {
+				delay = backoffDelay(st.failures)
+			}
+			return nil, s.listCmd(msg.Kind, msg.Context, s.namespaces[msg.Context], msg.Generation, delay), true
+		}
 		st.failures++
 		if st.failures > maxReconnectFailures {
 			err := fmt.Errorf("failed to watch %s for context '%s' after %d attempts: %w",
@@ -482,7 +508,7 @@ func (s *Supervisor) current(kind msgs.ResourceKind, kubeContext string, generat
 
 // watchFn returns the Cluster method that opens a watch for kind, via
 // kindSpecs (kindspec.go) — see its doc comment.
-func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
+func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
 	spec, ok := kindSpecs[kind]
 	if !ok {
 		return nil
@@ -503,7 +529,7 @@ func toObjects[T metav1.Object](items []T) []metav1.Object {
 // listFn returns the Cluster method that lists kind, already adapted to the
 // kind-erased []metav1.Object shape listCmd needs, via kindSpecs
 // (kindspec.go) — see its doc comment.
-func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, error) {
+func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, string, error) {
 	spec, ok := kindSpecs[kind]
 	if !ok {
 		return nil
@@ -515,7 +541,8 @@ func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, ku
 // namespace ("" for cluster-wide), after an optional backoff delay (0 for the
 // initial start() call; backoffDelay(st.failures) when used as the reconnect
 // path — see the WatchClosedMsg arm in Handle), reporting the outcome as a
-// ListLoadedMsg carrying the generation it was issued under.
+// ListLoadedMsg carrying the generation it was issued under and the list's
+// resourceVersion for the subsequent watch open.
 func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, delay time.Duration) tea.Cmd {
 	list := s.listFn(kind)
 	return func() tea.Msg {
@@ -526,16 +553,17 @@ func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 				return nil // swallowed; generation guard makes any late msg harmless anyway
 			}
 		}
-		objs, err := list(context.Background(), kubeContext, namespace)
-		return msgs.ListLoadedMsg{Kind: kind, Context: kubeContext, Generation: generation, Objects: objs, Err: err}
+		objs, rv, err := list(context.Background(), kubeContext, namespace)
+		return msgs.ListLoadedMsg{Kind: kind, Context: kubeContext, Generation: generation, Objects: objs, ResourceVersion: rv, Err: err}
 	}
 }
 
 // openCmd opens (after an optional backoff delay) a watch for one (kind,
-// context), scoped to namespace ("" for cluster-wide), reporting the outcome
-// as a WatchOpenedMsg or WatchClosedMsg carrying the generation it was
-// issued under.
-func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, delay time.Duration) tea.Cmd {
+// context), scoped to namespace ("" for cluster-wide) and resourceVersion
+// (the preceding List() call's RV, or "" for a bare open — see
+// ListLoadedMsg's doc comment), reporting the outcome as a WatchOpenedMsg or
+// WatchClosedMsg carrying the generation it was issued under.
+func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace, resourceVersion string, generation int, delay time.Duration) tea.Cmd {
 	open := s.watchFn(kind)
 	return func() tea.Msg {
 		if delay > 0 {
@@ -545,7 +573,7 @@ func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 				return nil // swallowed; generation guard makes any late msg harmless anyway
 			}
 		}
-		w, err := open(context.Background(), kubeContext, namespace)
+		w, err := open(context.Background(), kubeContext, namespace, resourceVersion)
 		if err != nil {
 			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
 		}

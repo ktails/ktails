@@ -60,13 +60,14 @@ func secretsLW(namespace string) func(kubernetes.Interface) listerWatcher[*corev
 
 // WatchSecrets opens a watch on Secrets in the given namespace. See WatchPods
 // for the implicit list-then-watch behavior.
-func (c *Client) WatchSecrets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "secrets in namespace "+namespace, secretsLW(namespace))
+func (c *Client) WatchSecrets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "secrets in namespace "+namespace, resourceVersion, secretsLW(namespace))
 }
 
-// ListSecrets fetches every Secret in the given namespace in one call. See
-// ListPods for why this exists alongside the watch.
-func (c *Client) ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, error) {
+// ListSecrets fetches every Secret in the given namespace in one call,
+// along with the list's resourceVersion for a subsequent WatchSecrets call.
+// See ListPods for why this exists alongside the watch.
+func (c *Client) ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, string, error) {
 	return listResource(ctx, c, kubeContext, "secrets in namespace "+namespace, secretsLW(namespace),
 		func(l *corev1.SecretList) []*corev1.Secret { return pointers(l.Items) })
 }

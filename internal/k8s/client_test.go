@@ -45,7 +45,7 @@ func TestWatchPods_ReplaysExistingThenLiveEvents(t *testing.T) {
 	}
 	c, clientset := newTestClient("ctx1", existingPod)
 
-	w, err := c.WatchPods(context.Background(), "ctx1", "default")
+	w, err := c.WatchPods(context.Background(), "ctx1", "default", "")
 	if err != nil {
 		t.Fatalf("WatchPods returned error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestWatchDeployments_ReplaysExisting(t *testing.T) {
 	}
 	c, _ := newTestClient("ctx1", existing)
 
-	w, err := c.WatchDeployments(context.Background(), "ctx1", "default")
+	w, err := c.WatchDeployments(context.Background(), "ctx1", "default", "")
 	if err != nil {
 		t.Fatalf("WatchDeployments returned error: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestWatchServices_ReplaysExisting(t *testing.T) {
 	}
 	c, _ := newTestClient("ctx1", existing)
 
-	w, err := c.WatchServices(context.Background(), "ctx1", "default")
+	w, err := c.WatchServices(context.Background(), "ctx1", "default", "")
 	if err != nil {
 		t.Fatalf("WatchServices returned error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestWatchPods_UnknownContext(t *testing.T) {
 		clientsByContext: map[string]kubernetes.Interface{},
 		rawConfig:        &api.Config{Contexts: map[string]*api.Context{}},
 	}
-	if _, err := c.WatchPods(context.Background(), "missing", "default"); err == nil {
+	if _, err := c.WatchPods(context.Background(), "missing", "default", ""); err == nil {
 		t.Fatal("expected error for unknown context, got nil")
 	}
 }
@@ -304,7 +304,7 @@ func TestListPods_TimesOutAgainstHungServer(t *testing.T) {
 	}
 	c := &Client{clientsByContext: map[string]kubernetes.Interface{"ctx1": clientset}}
 
-	_, err = c.ListPods(context.Background(), "ctx1", "default")
+	_, _, err = c.ListPods(context.Background(), "ctx1", "default")
 	if err == nil {
 		t.Fatal("expected an error from a hung server, got nil")
 	}

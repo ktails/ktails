@@ -38,15 +38,20 @@ func pointers[T any](items []T) []*T {
 // the error message's kind phrase — "configmaps in namespace foo" for a
 // namespaced kind, or just "nodes" for a cluster-scoped one — kept as a
 // caller-supplied string rather than assembled here so every kind's error
-// text stays byte-identical to what it was before this extraction. No
-// timeout — watches must stay un-deadlined, a deadline would kill them
-// mid-stream; see requestTimeout's doc comment.
-func watchResource[L any](ctx context.Context, c *Client, kubeContext, subject string, getLW func(kubernetes.Interface) listerWatcher[L]) (watch.Interface, error) {
+// text stays byte-identical to what it was before this extraction.
+// resourceVersion, when non-empty, is normally the collection RV a prior
+// List() call returned (see listResource): starting the watch there instead
+// of at "" (unset) skips the server replaying every existing object as a
+// synthetic Added event, since the Supervisor's own listCmd already seeded
+// the cache with those objects. No timeout — watches must stay
+// un-deadlined, a deadline would kill them mid-stream; see requestTimeout's
+// doc comment.
+func watchResource[L any](ctx context.Context, c *Client, kubeContext, subject, resourceVersion string, getLW func(kubernetes.Interface) listerWatcher[L]) (watch.Interface, error) {
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
-	w, err := getLW(clientset).Watch(ctx, metav1.ListOptions{})
+	w, err := getLW(clientset).Watch(ctx, metav1.ListOptions{ResourceVersion: resourceVersion})
 	if err != nil {
 		return nil, fmt.Errorf("failed to watch %s (context %s): %w", subject, kubeContext, err)
 	}
@@ -55,20 +60,23 @@ func watchResource[L any](ctx context.Context, c *Client, kubeContext, subject s
 
 // listResource is the shared body behind every List<Kind> function:
 // timeout-bounded client fetch + List() call, converting the typed list's
-// Items via toItems (typically pointers(l.Items)) into a pointer slice. See
-// watchResource's doc comment for what subject is and why it's a
-// caller-supplied string rather than assembled here.
-func listResource[T any, L any](ctx context.Context, c *Client, kubeContext, subject string, getLW func(kubernetes.Interface) listerWatcher[L], toItems func(L) []T) ([]T, error) {
+// Items via toItems (typically pointers(l.Items)) into a pointer slice, and
+// returning the list's own resourceVersion (its ListMeta, satisfied by
+// metav1.ListInterface) so the caller can hand it to the subsequent
+// watchResource call for RV continuity. See watchResource's doc comment for
+// what subject is and why it's a caller-supplied string rather than
+// assembled here.
+func listResource[T any, L metav1.ListInterface](ctx context.Context, c *Client, kubeContext, subject string, getLW func(kubernetes.Interface) listerWatcher[L], toItems func(L) []T) ([]T, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
+		return nil, "", fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 	list, err := getLW(clientset).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list %s (context %s): %w", subject, kubeContext, err)
+		return nil, "", fmt.Errorf("failed to list %s (context %s): %w", subject, kubeContext, err)
 	}
-	return toItems(list), nil
+	return toItems(list), list.GetResourceVersion(), nil
 }

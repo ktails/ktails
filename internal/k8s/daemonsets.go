@@ -43,13 +43,14 @@ func daemonSetsLW(namespace string) func(kubernetes.Interface) listerWatcher[*ap
 
 // WatchDaemonSets opens a watch on DaemonSets in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchDaemonSets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "daemonsets in namespace "+namespace, daemonSetsLW(namespace))
+func (c *Client) WatchDaemonSets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "daemonsets in namespace "+namespace, resourceVersion, daemonSetsLW(namespace))
 }
 
-// ListDaemonSets fetches every DaemonSet in the given namespace in one call.
-// See ListPods for why this exists alongside the watch.
-func (c *Client) ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, error) {
+// ListDaemonSets fetches every DaemonSet in the given namespace in one call,
+// along with the list's resourceVersion for a subsequent WatchDaemonSets
+// call. See ListPods for why this exists alongside the watch.
+func (c *Client) ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, string, error) {
 	return listResource(ctx, c, kubeContext, "daemonsets in namespace "+namespace, daemonSetsLW(namespace),
 		func(l *appsv1.DaemonSetList) []*appsv1.DaemonSet { return pointers(l.Items) })
 }

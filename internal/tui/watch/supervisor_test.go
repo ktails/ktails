@@ -39,6 +39,14 @@ type fakeCluster struct {
 	// initial start() and a later reconnect (see
 	// TestSupervisor_ReconnectRelistsAndDropsDeletedObjects).
 	pods []*corev1.Pod
+
+	// listResourceVersion is the RV every List<Kind> fake returns —
+	// TestSupervisor_ListRVThreadsIntoWatch sets it to assert Supervisor
+	// passes it through to the subsequent Watch<Kind> call.
+	listResourceVersion string
+	// gotWatchResourceVersion records the resourceVersion argument the
+	// KindPods Watch call was actually made with.
+	gotWatchResourceVersion string
 }
 
 func newFakeCluster() *fakeCluster {
@@ -56,113 +64,114 @@ func (f *fakeCluster) watch(kind msgs.ResourceKind) (kwatch.Interface, error) {
 	return f.watchers[kind], nil
 }
 
-func (f *fakeCluster) WatchPods(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchPods(_ context.Context, _, _, resourceVersion string) (kwatch.Interface, error) {
+	f.gotWatchResourceVersion = resourceVersion
 	return f.watch(msgs.KindPods)
 }
 
-func (f *fakeCluster) WatchDeployments(_ context.Context, _ string, namespace string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchDeployments(_ context.Context, _ string, namespace, _ string) (kwatch.Interface, error) {
 	f.gotWatchNamespace = namespace
 	return f.watch(msgs.KindDeployments)
 }
 
-func (f *fakeCluster) WatchServices(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchServices(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindServices)
 }
 
-func (f *fakeCluster) WatchConfigMaps(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchConfigMaps(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindConfigMaps)
 }
 
-func (f *fakeCluster) WatchSecrets(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchSecrets(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindSecrets)
 }
 
-func (f *fakeCluster) WatchNodes(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchNodes(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindNodes)
 }
 
-func (f *fakeCluster) WatchJobs(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchJobs(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindJobs)
 }
 
-func (f *fakeCluster) WatchCronJobs(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchCronJobs(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindCronJobs)
 }
 
-func (f *fakeCluster) WatchStatefulSets(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchStatefulSets(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindStatefulSets)
 }
 
-func (f *fakeCluster) WatchDaemonSets(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchDaemonSets(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindDaemonSets)
 }
 
-func (f *fakeCluster) WatchPodDisruptionBudgets(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchPodDisruptionBudgets(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindPodDisruptionBudgets)
 }
 
-func (f *fakeCluster) WatchHorizontalPodAutoscalers(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchHorizontalPodAutoscalers(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindHorizontalPodAutoscalers)
 }
 
-func (f *fakeCluster) WatchIngresses(context.Context, string, string) (kwatch.Interface, error) {
+func (f *fakeCluster) WatchIngresses(context.Context, string, string, string) (kwatch.Interface, error) {
 	return f.watch(msgs.KindIngresses)
 }
 
 // List<Kind> fakes: every kind lists as empty (no error) by default —
 // nothing in this test suite exercises the List-first paint's row content,
 // only its ordering ahead of the watch, so an empty list is sufficient.
-func (f *fakeCluster) ListPods(context.Context, string, string) ([]*corev1.Pod, error) {
-	return f.pods, nil
+func (f *fakeCluster) ListPods(context.Context, string, string) ([]*corev1.Pod, string, error) {
+	return f.pods, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListDeployments(_ context.Context, _ string, namespace string) ([]*appsv1.Deployment, error) {
+func (f *fakeCluster) ListDeployments(_ context.Context, _ string, namespace string) ([]*appsv1.Deployment, string, error) {
 	f.gotListNamespace = namespace
-	return nil, nil
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListServices(context.Context, string, string) ([]*corev1.Service, error) {
-	return nil, nil
+func (f *fakeCluster) ListServices(context.Context, string, string) ([]*corev1.Service, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListConfigMaps(context.Context, string, string) ([]*corev1.ConfigMap, error) {
-	return nil, nil
+func (f *fakeCluster) ListConfigMaps(context.Context, string, string) ([]*corev1.ConfigMap, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListSecrets(context.Context, string, string) ([]*corev1.Secret, error) {
-	return nil, nil
+func (f *fakeCluster) ListSecrets(context.Context, string, string) ([]*corev1.Secret, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListJobs(context.Context, string, string) ([]*batchv1.Job, error) {
-	return nil, nil
+func (f *fakeCluster) ListJobs(context.Context, string, string) ([]*batchv1.Job, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListCronJobs(context.Context, string, string) ([]*batchv1.CronJob, error) {
-	return nil, nil
+func (f *fakeCluster) ListCronJobs(context.Context, string, string) ([]*batchv1.CronJob, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListStatefulSets(context.Context, string, string) ([]*appsv1.StatefulSet, error) {
-	return nil, nil
+func (f *fakeCluster) ListStatefulSets(context.Context, string, string) ([]*appsv1.StatefulSet, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListDaemonSets(context.Context, string, string) ([]*appsv1.DaemonSet, error) {
-	return nil, nil
+func (f *fakeCluster) ListDaemonSets(context.Context, string, string) ([]*appsv1.DaemonSet, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListIngresses(context.Context, string, string) ([]*networkingv1.Ingress, error) {
-	return nil, nil
+func (f *fakeCluster) ListIngresses(context.Context, string, string) ([]*networkingv1.Ingress, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListPodDisruptionBudgets(context.Context, string, string) ([]*policyv1.PodDisruptionBudget, error) {
-	return nil, nil
+func (f *fakeCluster) ListPodDisruptionBudgets(context.Context, string, string) ([]*policyv1.PodDisruptionBudget, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListHorizontalPodAutoscalers(context.Context, string, string) ([]*autoscalingv2.HorizontalPodAutoscaler, error) {
-	return nil, nil
+func (f *fakeCluster) ListHorizontalPodAutoscalers(context.Context, string, string) ([]*autoscalingv2.HorizontalPodAutoscaler, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
-func (f *fakeCluster) ListNodes(context.Context, string, string) ([]*corev1.Node, error) {
-	return nil, nil
+func (f *fakeCluster) ListNodes(context.Context, string, string) ([]*corev1.Node, string, error) {
+	return nil, f.listResourceVersion, nil
 }
 
 // runCmd executes a tea.Cmd synchronously and returns its message.
@@ -479,6 +488,52 @@ func TestSupervisor_ForbiddenGivesUpImmediatelyAndMarksForbidden(t *testing.T) {
 	}
 }
 
+// TestSupervisor_ListRVThreadsIntoWatch guards Step 4's resourceVersion
+// continuity: the List call's own collection RV must be threaded into the
+// subsequent Watch call, so the server starts streaming from there instead
+// of replaying every listed object again as a synthetic Added event.
+func TestSupervisor_ListRVThreadsIntoWatch(t *testing.T) {
+	cluster := newFakeCluster()
+	cluster.listResourceVersion = "100"
+	s := NewSupervisor(cluster)
+
+	startPodsWatch(t, s)
+
+	if cluster.gotWatchResourceVersion != "100" {
+		t.Fatalf("expected WatchPods to be called with ResourceVersion %q, got %q", "100", cluster.gotWatchResourceVersion)
+	}
+}
+
+// TestSupervisor_ResourceExpiredRelistsImmediatelyWithoutGivingUp guards
+// Step 4's 410 fast-path: a 410 Gone close (the watch's RV fell out of
+// etcd's compaction window) must relist right away — no backoff wait, and
+// crucially it must not itself count as an exhausted-reconnect give-up on
+// its first occurrence, unlike a generic close.
+func TestSupervisor_ResourceExpiredRelistsImmediatelyWithoutGivingUp(t *testing.T) {
+	cluster := newFakeCluster()
+	s := NewSupervisor(cluster)
+	startPodsWatch(t, s)
+
+	expired := apierrors.NewResourceExpired("watch closed: too old resource version")
+	closed := msgs.WatchClosedMsg{Kind: msgs.KindPods, Context: "ctx1", Generation: 1, Err: expired}
+
+	upd, next, handled := s.Handle(closed)
+	if !handled {
+		t.Fatal("expected WatchClosedMsg to be handled")
+	}
+	if upd != nil {
+		t.Fatalf("expected a silent relist, not a GaveUp update, got %+v", upd)
+	}
+	if next == nil {
+		t.Fatal("expected a relist command")
+	}
+
+	msg := runCmd(t, next)
+	if _, ok := msg.(msgs.ListLoadedMsg); !ok {
+		t.Fatalf("expected the 410 to produce a relist (ListLoadedMsg), got %T", msg)
+	}
+}
+
 func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 	cluster := newFakeCluster()
 	s := NewSupervisor(cluster)
@@ -621,7 +676,7 @@ func TestSupervisor_StartContextScopesToNamespace(t *testing.T) {
 		t.Fatalf("expected ListDeployments to be scoped to 'team-a', got %q", cluster.gotListNamespace)
 	}
 
-	runCmd(t, s.openCmd(msgs.KindDeployments, "ctx1", s.namespaces["ctx1"], s.states[stateKey{kind: msgs.KindDeployments, context: "ctx1"}].generation, 0))
+	runCmd(t, s.openCmd(msgs.KindDeployments, "ctx1", s.namespaces["ctx1"], "", s.states[stateKey{kind: msgs.KindDeployments, context: "ctx1"}].generation, 0))
 	if cluster.gotWatchNamespace != "team-a" {
 		t.Fatalf("expected WatchDeployments to be scoped to 'team-a', got %q", cluster.gotWatchNamespace)
 	}

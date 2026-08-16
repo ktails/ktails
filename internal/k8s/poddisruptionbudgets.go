@@ -53,14 +53,15 @@ func podDisruptionBudgetsLW(namespace string) func(kubernetes.Interface) listerW
 
 // WatchPodDisruptionBudgets opens a watch on PodDisruptionBudgets in the
 // given namespace. See WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "poddisruptionbudgets in namespace "+namespace, podDisruptionBudgetsLW(namespace))
+func (c *Client) WatchPodDisruptionBudgets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "poddisruptionbudgets in namespace "+namespace, resourceVersion, podDisruptionBudgetsLW(namespace))
 }
 
 // ListPodDisruptionBudgets fetches every PodDisruptionBudget in the given
-// namespace in one call. See ListPods for why this exists alongside the
-// watch.
-func (c *Client) ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, error) {
+// namespace in one call, along with the list's resourceVersion for a
+// subsequent WatchPodDisruptionBudgets call. See ListPods for why this
+// exists alongside the watch.
+func (c *Client) ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, string, error) {
 	return listResource(ctx, c, kubeContext, "poddisruptionbudgets in namespace "+namespace, podDisruptionBudgetsLW(namespace),
 		func(l *policyv1.PodDisruptionBudgetList) []*policyv1.PodDisruptionBudget { return pointers(l.Items) })
 }

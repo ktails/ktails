@@ -52,13 +52,14 @@ func configMapsLW(namespace string) func(kubernetes.Interface) listerWatcher[*co
 
 // WatchConfigMaps opens a watch on ConfigMaps in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchConfigMaps(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "configmaps in namespace "+namespace, configMapsLW(namespace))
+func (c *Client) WatchConfigMaps(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "configmaps in namespace "+namespace, resourceVersion, configMapsLW(namespace))
 }
 
-// ListConfigMaps fetches every ConfigMap in the given namespace in one call.
-// See ListPods for why this exists alongside the watch.
-func (c *Client) ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, error) {
+// ListConfigMaps fetches every ConfigMap in the given namespace in one call,
+// along with the list's resourceVersion for a subsequent WatchConfigMaps
+// call. See ListPods for why this exists alongside the watch.
+func (c *Client) ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, string, error) {
 	return listResource(ctx, c, kubeContext, "configmaps in namespace "+namespace, configMapsLW(namespace),
 		func(l *corev1.ConfigMapList) []*corev1.ConfigMap { return pointers(l.Items) })
 }

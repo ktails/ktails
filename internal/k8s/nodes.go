@@ -96,14 +96,15 @@ func nodesLW(cs kubernetes.Interface) listerWatcher[*corev1.NodeList] {
 
 // WatchNodes opens a watch on every Node in the cluster. namespace is
 // ignored — Nodes are cluster-scoped, unlike every other watched kind.
-func (c *Client) WatchNodes(ctx context.Context, kubeContext, _ string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "nodes", nodesLW)
+func (c *Client) WatchNodes(ctx context.Context, kubeContext, _, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "nodes", resourceVersion, nodesLW)
 }
 
-// ListNodes fetches every Node in the cluster in one call. namespace is
+// ListNodes fetches every Node in the cluster in one call, along with the
+// list's resourceVersion for a subsequent WatchNodes call. namespace is
 // ignored — Nodes are cluster-scoped. See ListPods for why this exists
 // alongside the watch.
-func (c *Client) ListNodes(ctx context.Context, kubeContext, _ string) ([]*corev1.Node, error) {
+func (c *Client) ListNodes(ctx context.Context, kubeContext, _ string) ([]*corev1.Node, string, error) {
 	return listResource(ctx, c, kubeContext, "nodes", nodesLW,
 		func(l *corev1.NodeList) []*corev1.Node { return pointers(l.Items) })
 }

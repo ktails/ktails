@@ -80,13 +80,14 @@ func ingressesLW(namespace string) func(kubernetes.Interface) listerWatcher[*net
 
 // WatchIngresses opens a watch on Ingresses in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchIngresses(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "ingresses in namespace "+namespace, ingressesLW(namespace))
+func (c *Client) WatchIngresses(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "ingresses in namespace "+namespace, resourceVersion, ingressesLW(namespace))
 }
 
-// ListIngresses fetches every Ingress in the given namespace in one call.
-// See ListPods for why this exists alongside the watch.
-func (c *Client) ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, error) {
+// ListIngresses fetches every Ingress in the given namespace in one call,
+// along with the list's resourceVersion for a subsequent WatchIngresses
+// call. See ListPods for why this exists alongside the watch.
+func (c *Client) ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, string, error) {
 	return listResource(ctx, c, kubeContext, "ingresses in namespace "+namespace, ingressesLW(namespace),
 		func(l *networkingv1.IngressList) []*networkingv1.Ingress { return pointers(l.Items) })
 }

@@ -53,13 +53,14 @@ func cronJobsLW(namespace string) func(kubernetes.Interface) listerWatcher[*batc
 
 // WatchCronJobs opens a watch on CronJobs in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchCronJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "cronjobs in namespace "+namespace, cronJobsLW(namespace))
+func (c *Client) WatchCronJobs(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "cronjobs in namespace "+namespace, resourceVersion, cronJobsLW(namespace))
 }
 
-// ListCronJobs fetches every CronJob in the given namespace in one call. See
-// ListPods for why this exists alongside the watch.
-func (c *Client) ListCronJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.CronJob, error) {
+// ListCronJobs fetches every CronJob in the given namespace in one call,
+// along with the list's resourceVersion for a subsequent WatchCronJobs call.
+// See ListPods for why this exists alongside the watch.
+func (c *Client) ListCronJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.CronJob, string, error) {
 	return listResource(ctx, c, kubeContext, "cronjobs in namespace "+namespace, cronJobsLW(namespace),
 		func(l *batchv1.CronJobList) []*batchv1.CronJob { return pointers(l.Items) })
 }

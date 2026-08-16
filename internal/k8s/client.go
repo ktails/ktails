@@ -442,13 +442,14 @@ func podsLW(namespace string) func(kubernetes.Interface) listerWatcher[*v1.PodLi
 // correct — ListPods exists purely so callers can paint a fast, atomic
 // initial table instead of watching that replay trickle in one event at a
 // time (see watch.Supervisor.start).
-func (c *Client) WatchPods(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "pods in namespace "+namespace, podsLW(namespace))
+func (c *Client) WatchPods(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "pods in namespace "+namespace, resourceVersion, podsLW(namespace))
 }
 
-// ListPods fetches every pod in the given namespace in one call. See
-// WatchPods for why this exists alongside the watch.
-func (c *Client) ListPods(ctx context.Context, kubeContext, namespace string) ([]*v1.Pod, error) {
+// ListPods fetches every pod in the given namespace in one call, along with
+// the list's resourceVersion for a subsequent WatchPods call. See WatchPods
+// for why this exists alongside the watch.
+func (c *Client) ListPods(ctx context.Context, kubeContext, namespace string) ([]*v1.Pod, string, error) {
 	return listResource(ctx, c, kubeContext, "pods in namespace "+namespace, podsLW(namespace),
 		func(l *v1.PodList) []*v1.Pod { return pointers(l.Items) })
 }
@@ -463,13 +464,14 @@ func deploymentsLW(namespace string) func(kubernetes.Interface) listerWatcher[*a
 
 // WatchDeployments opens a watch on deployments in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchDeployments(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "deployments in namespace "+namespace, deploymentsLW(namespace))
+func (c *Client) WatchDeployments(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "deployments in namespace "+namespace, resourceVersion, deploymentsLW(namespace))
 }
 
 // ListDeployments fetches every deployment in the given namespace in one
-// call. See ListPods for why this exists alongside the watch.
-func (c *Client) ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, error) {
+// call, along with the list's resourceVersion for a subsequent
+// WatchDeployments call. See ListPods for why this exists alongside the watch.
+func (c *Client) ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, string, error) {
 	return listResource(ctx, c, kubeContext, "deployments in namespace "+namespace, deploymentsLW(namespace),
 		func(l *appsv1.DeploymentList) []*appsv1.Deployment { return pointers(l.Items) })
 }
@@ -484,13 +486,14 @@ func servicesLW(namespace string) func(kubernetes.Interface) listerWatcher[*v1.S
 
 // WatchServices opens a watch on services in the given namespace. See
 // WatchPods for the implicit list-then-watch behavior.
-func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "services in namespace "+namespace, servicesLW(namespace))
+func (c *Client) WatchServices(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "services in namespace "+namespace, resourceVersion, servicesLW(namespace))
 }
 
-// ListServices fetches every service in the given namespace in one call. See
-// ListPods for why this exists alongside the watch.
-func (c *Client) ListServices(ctx context.Context, kubeContext, namespace string) ([]*v1.Service, error) {
+// ListServices fetches every service in the given namespace in one call,
+// along with the list's resourceVersion for a subsequent WatchServices call.
+// See ListPods for why this exists alongside the watch.
+func (c *Client) ListServices(ctx context.Context, kubeContext, namespace string) ([]*v1.Service, string, error) {
 	return listResource(ctx, c, kubeContext, "services in namespace "+namespace, servicesLW(namespace),
 		func(l *v1.ServiceList) []*v1.Service { return pointers(l.Items) })
 }

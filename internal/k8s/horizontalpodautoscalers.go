@@ -74,14 +74,15 @@ func horizontalPodAutoscalersLW(namespace string) func(kubernetes.Interface) lis
 // WatchHorizontalPodAutoscalers opens a watch on HorizontalPodAutoscalers in
 // the given namespace. See WatchPods for the implicit list-then-watch
 // behavior.
-func (c *Client) WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "horizontalpodautoscalers in namespace "+namespace, horizontalPodAutoscalersLW(namespace))
+func (c *Client) WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "horizontalpodautoscalers in namespace "+namespace, resourceVersion, horizontalPodAutoscalersLW(namespace))
 }
 
 // ListHorizontalPodAutoscalers fetches every HorizontalPodAutoscaler in the
-// given namespace in one call. See ListPods for why this exists alongside
-// the watch.
-func (c *Client) ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, error) {
+// given namespace in one call, along with the list's resourceVersion for a
+// subsequent WatchHorizontalPodAutoscalers call. See ListPods for why this
+// exists alongside the watch.
+func (c *Client) ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, string, error) {
 	return listResource(ctx, c, kubeContext, "horizontalpodautoscalers in namespace "+namespace, horizontalPodAutoscalersLW(namespace),
 		func(l *autoscalingv2.HorizontalPodAutoscalerList) []*autoscalingv2.HorizontalPodAutoscaler {
 			return pointers(l.Items)

@@ -429,13 +429,17 @@ type RefreshTickMsg struct{}
 // opened anyway and reports/handles the failure through its own path (see
 // Supervisor.Handle). Objects is kind-erased (metav1.Object) since this
 // message is kind-agnostic; the Supervisor's per-kind cache asserts it back
-// to its concrete type when seeding.
+// to its concrete type when seeding. ResourceVersion is the list's own
+// collection RV, threaded into the subsequent Watch() call so the server
+// starts streaming from there instead of replaying every listed object as a
+// synthetic Added event.
 type ListLoadedMsg struct {
-	Kind       ResourceKind
-	Context    string
-	Generation int
-	Objects    []metav1.Object
-	Err        error
+	Kind            ResourceKind
+	Context         string
+	Generation      int
+	Objects         []metav1.Object
+	ResourceVersion string
+	Err             error
 }
 
 // WatchOpenedMsg carries a freshly opened, cluster-wide watch for one

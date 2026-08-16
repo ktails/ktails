@@ -69,13 +69,14 @@ func jobsLW(namespace string) func(kubernetes.Interface) listerWatcher[*batchv1.
 
 // WatchJobs opens a watch on Jobs in the given namespace. See WatchPods for
 // the implicit list-then-watch behavior.
-func (c *Client) WatchJobs(ctx context.Context, kubeContext, namespace string) (watch.Interface, error) {
-	return watchResource(ctx, c, kubeContext, "jobs in namespace "+namespace, jobsLW(namespace))
+func (c *Client) WatchJobs(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
+	return watchResource(ctx, c, kubeContext, "jobs in namespace "+namespace, resourceVersion, jobsLW(namespace))
 }
 
-// ListJobs fetches every Job in the given namespace in one call. See
-// ListPods for why this exists alongside the watch.
-func (c *Client) ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, error) {
+// ListJobs fetches every Job in the given namespace in one call, along with
+// the list's resourceVersion for a subsequent WatchJobs call. See ListPods
+// for why this exists alongside the watch.
+func (c *Client) ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, string, error) {
 	return listResource(ctx, c, kubeContext, "jobs in namespace "+namespace, jobsLW(namespace),
 		func(l *batchv1.JobList) []*batchv1.Job { return pointers(l.Items) })
 }
