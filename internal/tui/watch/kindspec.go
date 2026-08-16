@@ -68,7 +68,7 @@ var kindSpecs = map[msgs.ResourceKind]kindSpec{
 				return toObjects(items), err
 			}
 		},
-		newCache: func() rowCache { return newResourceCache(configMapRow) },
+		newCache: func() rowCache { return newTrimmedCache(configMapRow, trimConfigMap) },
 	},
 	msgs.KindSecrets: {
 		watch: func(c Cluster) func(context.Context, string, string) (watch.Interface, error) { return c.WatchSecrets },
@@ -78,7 +78,7 @@ var kindSpecs = map[msgs.ResourceKind]kindSpec{
 				return toObjects(items), err
 			}
 		},
-		newCache: func() rowCache { return newResourceCache(secretRow) },
+		newCache: func() rowCache { return newTrimmedCache(secretRow, trimSecret) },
 	},
 	msgs.KindJobs: {
 		watch: func(c Cluster) func(context.Context, string, string) (watch.Interface, error) { return c.WatchJobs },

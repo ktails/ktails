@@ -221,6 +221,92 @@ func TestSecretCache_NeverCarriesValues(t *testing.T) {
 	}
 }
 
+// TestPodCache_StripsManagedFieldsOnStore guards Step 3's default trim:
+// every cached kind should drop managedFields (often ~half of an object's
+// encoded size) before storing, regardless of kind-specific trimming.
+func TestPodCache_StripsManagedFieldsOnStore(t *testing.T) {
+	c := newCacheFor(msgs.KindPods).(*resourceCache[*corev1.Pod])
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "a", Namespace: "default", ResourceVersion: "1",
+			ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl"}},
+		},
+	}
+	if err := c.apply(kwatch.Event{Type: kwatch.Added, Object: pod}); err != nil {
+		t.Fatalf("apply Added: %v", err)
+	}
+
+	stored := c.byKey["default/a"].obj
+	if stored.GetManagedFields() != nil {
+		t.Fatalf("expected managedFields to be stripped from stored object, got %+v", stored.GetManagedFields())
+	}
+}
+
+// TestSecretCache_StripsDataValuesOnStore guards Step 3's Secret-specific
+// trim: cached Secret objects must never retain Data/StringData values —
+// only key names, matching k8s.SecretToSecretInfo (see
+// TestSecretCache_NeverCarriesValues for the row-level check) — while
+// row output (which only reads key names/counts) stays unchanged.
+func TestSecretCache_StripsDataValuesOnStore(t *testing.T) {
+	c := newCacheFor(msgs.KindSecrets).(*resourceCache[*corev1.Secret])
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sec-a", Namespace: "default", ResourceVersion: "1",
+			ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl"}},
+		},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{"password": []byte("hunter2")},
+		StringData: map[string]string{"plain": "hunter3"},
+	}
+	if err := c.apply(kwatch.Event{Type: kwatch.Added, Object: secret}); err != nil {
+		t.Fatalf("apply Added: %v", err)
+	}
+
+	stored := c.byKey["default/sec-a"].obj
+	if stored.GetManagedFields() != nil {
+		t.Fatalf("expected managedFields to be stripped, got %+v", stored.GetManagedFields())
+	}
+	if v, ok := stored.Data["password"]; !ok || v != nil {
+		t.Fatalf("expected key name kept with nil value, got present=%v value=%v", ok, v)
+	}
+	if stored.StringData != nil {
+		t.Fatalf("expected StringData to be dropped entirely, got %+v", stored.StringData)
+	}
+
+	rows := c.rows("ctx1")
+	if len(rows) != 1 || rows[0][msgs.SecretKeyKeys] != "1" {
+		t.Fatalf("expected row output unchanged (1 key), got %+v", rows)
+	}
+}
+
+// TestConfigMapCache_StripsDataValuesOnStore mirrors the Secret case:
+// configMapRow / k8s.ConfigMapToConfigMapInfo only read key names, so
+// values can be dropped from the cached object without changing row output.
+func TestConfigMapCache_StripsDataValuesOnStore(t *testing.T) {
+	c := newCacheFor(msgs.KindConfigMaps).(*resourceCache[*corev1.ConfigMap])
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "cm-a", Namespace: "default", ResourceVersion: "1"},
+		Data:       map[string]string{"a.yaml": "big-payload"},
+		BinaryData: map[string][]byte{"b.bin": {0x1, 0x2}},
+	}
+	if err := c.apply(kwatch.Event{Type: kwatch.Added, Object: cm}); err != nil {
+		t.Fatalf("apply Added: %v", err)
+	}
+
+	stored := c.byKey["default/cm-a"].obj
+	if v, ok := stored.Data["a.yaml"]; !ok || v != "" {
+		t.Fatalf("expected key name kept with empty value, got present=%v value=%q", ok, v)
+	}
+	if stored.BinaryData != nil {
+		t.Fatalf("expected BinaryData to be dropped entirely, got %+v", stored.BinaryData)
+	}
+
+	rows := c.rows("ctx1")
+	if len(rows) != 1 || rows[0][msgs.ConfigMapKeyKeys] != "1" {
+		t.Fatalf("expected row output unchanged (1 key), got %+v", rows)
+	}
+}
+
 func TestNodeCache_StatusAndRoles(t *testing.T) {
 	c := newCacheFor(msgs.KindNodes)
 	node := &corev1.Node{

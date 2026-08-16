@@ -67,6 +67,7 @@ type resourceCache[T metav1.Object] struct {
 	mu    sync.Mutex
 	byKey map[string]cacheEntry[T]
 	toRow func(obj T, kubeContext string) msgs.RowData
+	trim  func(T) T // applied to every object before storing; nil = store as-is
 }
 
 type cacheEntry[T metav1.Object] struct {
@@ -74,10 +75,27 @@ type cacheEntry[T metav1.Object] struct {
 	resourceVersion string
 }
 
+// trimManagedFields drops managedFields — often ~half of an object's
+// encoded size, and never read from the cache (only from the separate
+// detail-view fetch, which strips it independently) — from every cached
+// kind, mirroring client-go informers' default TransformFunc use.
+func trimManagedFields[T metav1.Object](obj T) T {
+	obj.SetManagedFields(nil)
+	return obj
+}
+
+// newResourceCache builds a cache with only the default managedFields trim.
 func newResourceCache[T metav1.Object](toRow func(T, string) msgs.RowData) *resourceCache[T] {
+	return newTrimmedCache(toRow, trimManagedFields[T])
+}
+
+// newTrimmedCache builds a cache whose trim composes the default
+// managedFields strip with a kind-specific reduction (e.g. trimSecret).
+func newTrimmedCache[T metav1.Object](toRow func(T, string) msgs.RowData, trim func(T) T) *resourceCache[T] {
 	return &resourceCache[T]{
 		byKey: make(map[string]cacheEntry[T]),
 		toRow: toRow,
+		trim:  trim,
 	}
 }
 
@@ -107,7 +125,11 @@ func (c *resourceCache[T]) apply(event watch.Event) error {
 		if existing, ok := c.byKey[key]; ok && !resourceVersionLess(existing.resourceVersion, obj.GetResourceVersion()) {
 			return nil
 		}
-		c.byKey[key] = cacheEntry[T]{obj: obj, resourceVersion: obj.GetResourceVersion()}
+		rv := obj.GetResourceVersion()
+		if c.trim != nil {
+			obj = c.trim(obj)
+		}
+		c.byKey[key] = cacheEntry[T]{obj: obj, resourceVersion: rv}
 	case watch.Deleted:
 		obj, ok := event.Object.(T)
 		if !ok {
@@ -137,7 +159,11 @@ func (c *resourceCache[T]) seed(objs []metav1.Object) {
 			continue
 		}
 		key := obj.GetNamespace() + "/" + obj.GetName()
-		byKey[key] = cacheEntry[T]{obj: obj, resourceVersion: obj.GetResourceVersion()}
+		rv := obj.GetResourceVersion()
+		if c.trim != nil {
+			obj = c.trim(obj)
+		}
+		byKey[key] = cacheEntry[T]{obj: obj, resourceVersion: rv}
 	}
 	c.byKey = byKey
 }
@@ -224,6 +250,18 @@ func serviceRow(svc *corev1.Service, kubeContext string) msgs.RowData {
 	}
 }
 
+// trimConfigMap composes with trimManagedFields to drop cached ConfigMap
+// values while keeping key names, since configMapRow / ConfigMapToConfigMapInfo
+// only ever read key names and counts.
+func trimConfigMap(cm *corev1.ConfigMap) *corev1.ConfigMap {
+	cm = trimManagedFields(cm)
+	for k := range cm.Data {
+		cm.Data[k] = ""
+	}
+	cm.BinaryData = nil
+	return cm
+}
+
 func configMapRow(cm *corev1.ConfigMap, kubeContext string) msgs.RowData {
 	info := k8s.ConfigMapToConfigMapInfo(cm)
 	return msgs.RowData{
@@ -235,6 +273,19 @@ func configMapRow(cm *corev1.ConfigMap, kubeContext string) msgs.RowData {
 		msgs.ConfigMapKeyKeyNames:  strings.Join(info.Keys, ","),
 		msgs.KeyCreatedAt:          cm.GetCreationTimestamp().Time,
 	}
+}
+
+// trimSecret composes with trimManagedFields to drop cached Secret values —
+// entire clusters' worth of secret material otherwise sits in memory for
+// every watched context — while keeping key names, since secretRow /
+// k8s.SecretToSecretInfo only ever read key names and counts.
+func trimSecret(s *corev1.Secret) *corev1.Secret {
+	s = trimManagedFields(s)
+	for k := range s.Data {
+		s.Data[k] = nil
+	}
+	s.StringData = nil
+	return s
 }
 
 // secretRow never carries values — only key names and the count, matching
