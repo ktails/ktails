@@ -12,7 +12,6 @@ import (
 	"github.com/ktails/ktails/internal/config"
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/pages"
-	"github.com/ktails/ktails/utils"
 )
 
 // Set via -ldflags "-X main.version=... -X main.commit=... -X main.date=..." by goreleaser.
@@ -106,8 +105,8 @@ func main() {
 	mp := pages.NewMainPageModel(client, cfg.Preferences.RefreshInterval)
 
 	p := tea.NewProgram(mp)
-	if r, err := p.Run(); err != nil {
-		utils.PrintJSON(r)
-		panic(err)
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "ktails: %v\n", err)
+		os.Exit(1)
 	}
 }

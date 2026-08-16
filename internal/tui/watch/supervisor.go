@@ -454,7 +454,7 @@ func (s *Supervisor) Handle(msg tea.Msg) (*Update, tea.Cmd, bool) {
 		}
 		st.failures++
 		if st.failures > maxReconnectFailures {
-			err := fmt.Errorf("failed to watch %s for context '%s' after %d attempts: %v",
+			err := fmt.Errorf("failed to watch %s for context '%s' after %d attempts: %w",
 				strings.ToLower(msg.Kind.Title()), msg.Context, st.failures, msg.Err)
 			return &Update{Kind: msg.Kind, Context: msg.Context, GaveUp: true, Err: err}, nil, true
 		}

@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
@@ -91,6 +92,11 @@ func (c *resourceCache[T]) apply(event watch.Event) error {
 
 	switch event.Type {
 	case watch.Error:
+		if status, ok := event.Object.(*metav1.Status); ok {
+			// Preserve the typed API status so apierrors.IsForbidden /
+			// IsResourceExpired checks upstream (Supervisor.Handle) still work.
+			return &apierrors.StatusError{ErrStatus: *status}
+		}
 		return fmt.Errorf("watch error: %v", event.Object)
 	case watch.Added, watch.Modified:
 		obj, ok := event.Object.(T)

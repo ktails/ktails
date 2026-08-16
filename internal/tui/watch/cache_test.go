@@ -6,6 +6,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kwatch "k8s.io/apimachinery/pkg/watch"
 
@@ -80,6 +81,18 @@ func TestPodCache_ErrorEvent(t *testing.T) {
 	status := &metav1.Status{Message: "boom"}
 	if err := c.apply(kwatch.Event{Type: kwatch.Error, Object: status}); err == nil {
 		t.Fatal("expected error from watch.Error event")
+	}
+}
+
+func TestPodCache_ErrorEventPreservesForbiddenStatus(t *testing.T) {
+	c := newCacheFor(msgs.KindPods)
+	status := &metav1.Status{Reason: metav1.StatusReasonForbidden, Code: 403}
+	err := c.apply(kwatch.Event{Type: kwatch.Error, Object: status})
+	if err == nil {
+		t.Fatal("expected error from watch.Error event")
+	}
+	if !apierrors.IsForbidden(err) {
+		t.Fatalf("expected apierrors.IsForbidden(err) to be true, got %v (%T)", err, err)
 	}
 }
 
