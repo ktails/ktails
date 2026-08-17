@@ -10,7 +10,7 @@ import (
 )
 
 func newTestLogPage(w, h int) *LogPage {
-	l := NewLogPage()
+	l := NewLogPage(defaultMaxLogLines)
 	l.SetSize(w, h)
 	l.AddSource("k", "pod-a", "ns", "ctx", "app")
 	return l
@@ -115,7 +115,7 @@ func TestLogPage_AppendCachesRenderedTextSeparatelyFromRaw(t *testing.T) {
 // lines from two sources must come back in true chronological (arrival)
 // order regardless of which source they belong to.
 func TestLogPage_MergedViewInterleavesBySequence(t *testing.T) {
-	l := NewLogPage()
+	l := NewLogPage(defaultMaxLogLines)
 	l.SetSize(80, 10)
 	l.AddSource("a", "pod-a", "ns", "ctx", "app") // "Connecting..." banner: seq 1
 	l.AddSource("b", "pod-b", "ns", "ctx", "app") // "Connecting..." banner: seq 2
@@ -149,26 +149,26 @@ func TestLogPage_MergedViewInterleavesBySequence(t *testing.T) {
 	}
 }
 
-// TestLogPage_BufferTrimKeepsMostRecentLines guards maxLogLines eviction:
+// TestLogPage_BufferTrimKeepsMostRecentLines guards defaultMaxLogLines eviction:
 // after exceeding the per-source cap, the oldest lines are dropped and the
-// merged view's first surviving line is the (n-maxLogLines+1)th appended.
+// merged view's first surviving line is the (n-defaultMaxLogLines+1)th appended.
 func TestLogPage_BufferTrimKeepsMostRecentLines(t *testing.T) {
 	l := newTestLogPage(80, 10)
-	const appended = maxLogLines + 100
+	const appended = defaultMaxLogLines + 100
 	for i := 0; i < appended; i++ {
 		l.AppendLine("k", fmt.Sprintf("line-%d", i))
 	}
 
 	src := l.sources["k"]
-	if len(src.lines) != maxLogLines {
-		t.Fatalf("expected buffer trimmed to %d lines, got %d", maxLogLines, len(src.lines))
+	if len(src.lines) != defaultMaxLogLines {
+		t.Fatalf("expected buffer trimmed to %d lines, got %d", defaultMaxLogLines, len(src.lines))
 	}
 
 	// AddSource's "Connecting to..." banner (appended before the loop) is
 	// evicted along with the oldest numbered lines — the surviving window is
-	// exactly the last maxLogLines of everything ever appended.
+	// exactly the last defaultMaxLogLines of everything ever appended.
 	firstSurviving := ansi.Strip(l.rawLines[0])
-	wantMinIndex := appended - maxLogLines
+	wantMinIndex := appended - defaultMaxLogLines
 	wantLine := fmt.Sprintf("line-%d", wantMinIndex)
 	if !strings.Contains(firstSurviving, wantLine) {
 		t.Fatalf("expected the first surviving line to be %s, got %q", wantLine, firstSurviving)
@@ -183,12 +183,12 @@ func TestLogPage_BufferTrimKeepsMostRecentLines(t *testing.T) {
 // source is at capacity — the hot path under sustained log/watch load.
 // Asserts nothing; run with -bench to see the highlight-once caching's win.
 func BenchmarkAppendTo(b *testing.B) {
-	l := NewLogPage()
+	l := NewLogPage(defaultMaxLogLines)
 	l.SetSize(120, 40)
 	for s := 0; s < 4; s++ {
 		key := fmt.Sprintf("src-%d", s)
 		l.AddSource(key, fmt.Sprintf("pod-%d", s), "ns", "ctx", "app")
-		for i := 0; i < maxLogLines; i++ {
+		for i := 0; i < defaultMaxLogLines; i++ {
 			l.AppendLine(key, fmt.Sprintf(`%d INFO {"i":%d,"src":%d}`, i, i, s))
 		}
 	}

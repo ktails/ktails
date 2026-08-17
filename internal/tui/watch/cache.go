@@ -1,4 +1,4 @@
-// Package watch owns the full watch lifecycle for the three resource kinds:
+// Package watch owns the full watch lifecycle for every resource kind:
 // opening Watch() streams per selected context, applying events to local
 // caches, reconnecting with exponential backoff, and rebuilding table rows.
 // The Supervisor is the module's interface; everything else is

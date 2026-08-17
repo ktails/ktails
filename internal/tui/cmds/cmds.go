@@ -1,4 +1,5 @@
-// Package cmds implement interface to k8s client
+// Package cmds builds the tea.Cmds that bridge k8s.Client calls into
+// bubbletea's async update loop.
 package cmds
 
 import (
@@ -8,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 
 	"github.com/ktails/ktails/internal/k8s"
 	"github.com/ktails/ktails/internal/tui/msgs"
@@ -21,10 +23,6 @@ const logTailLines = 200
 // abnormally long log line (e.g. a huge JSON blob) can't abort the scan
 // with bufio.ErrTooLong.
 const maxLogLineBytes = 1024 * 1024
-
-func int64Ptr(v int64) *int64 {
-	return &v
-}
 
 // LoadServiceEndpointsCmd fetches Endpoint IPs for every service in one
 // context+namespace via a single EndpointSlices list call. It's triggered
@@ -257,7 +255,7 @@ func OpenPodLogStreamCmd(ctx context.Context, client *k8s.Client, kubeContext, n
 	return func() tea.Msg {
 		opts := &v1.PodLogOptions{
 			Follow:    true,
-			TailLines: int64Ptr(logTailLines),
+			TailLines: ptr.To(int64(logTailLines)),
 			Container: container,
 		}
 		stream, err := client.StreamLogs(ctx, kubeContext, namespace, podName, opts)

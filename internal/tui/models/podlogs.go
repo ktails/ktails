@@ -15,10 +15,10 @@ import (
 	"github.com/ktails/ktails/internal/tui/styles"
 )
 
-// maxLogLines bounds the in-memory scrollback per source, dropping each
-// source's own oldest lines once exceeded — a noisy container can't evict a
-// quiet one's history.
-const maxLogLines = 500
+// defaultMaxLogLines is the maxLines fallback NewLogPage uses for a value
+// below config.Preferences' validated floor (100), matching the fallback
+// mainPage.go applies to an unset/invalid config.
+const defaultMaxLogLines = 500
 
 // sourceColors is the rotation of Catppuccin Mocha accents used to color
 // each source's line prefix. Red/Mauve/Green/Peach are excluded: they
@@ -255,13 +255,26 @@ type LogPage struct {
 	// horizontal-scroll status indicator doesn't rescan every render.
 	rawLines     []string
 	maxLineWidth int
+
+	// maxLines bounds the in-memory scrollback per source, dropping each
+	// source's own oldest lines once exceeded — a noisy container can't
+	// evict a quiet one's history. Set once at construction from
+	// config.Preferences.MaxLogLines.
+	maxLines int
 }
 
-func NewLogPage() *LogPage {
+// NewLogPage builds a log pane whose per-source scrollback is capped at
+// maxLines; values below 100 (config.Validate's floor) fall back to
+// defaultMaxLogLines.
+func NewLogPage(maxLines int) *LogPage {
+	if maxLines < 100 {
+		maxLines = defaultMaxLogLines
+	}
 	return &LogPage{
 		viewport:    viewport.New(),
 		sources:     make(map[string]*logSource),
 		isolatedIdx: -1,
+		maxLines:    maxLines,
 	}
 }
 
@@ -364,8 +377,8 @@ func (l *LogPage) appendTo(src *logSource, text string) {
 	l.nextSeq++
 	rendered := highlightJSONLine(text, styles.CatppuccinMocha())
 	src.lines = append(src.lines, logLine{seq: l.nextSeq, text: text, rendered: rendered})
-	if len(src.lines) > maxLogLines {
-		src.lines = src.lines[len(src.lines)-maxLogLines:]
+	if len(src.lines) > l.maxLines {
+		src.lines = src.lines[len(src.lines)-l.maxLines:]
 	}
 
 	l.refreshContent()

@@ -67,7 +67,7 @@ func watchResource[L any](ctx context.Context, c *Client, kubeContext, subject, 
 // what subject is and why it's a caller-supplied string rather than
 // assembled here.
 func listResource[T any, L metav1.ListInterface](ctx context.Context, c *Client, kubeContext, subject string, getLW func(kubernetes.Interface) listerWatcher[L], toItems func(L) []T) ([]T, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	clientset, err := c.GetClientForContext(kubeContext)

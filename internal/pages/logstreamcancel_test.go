@@ -45,7 +45,7 @@ func TestCloseLogSource_CancelsContextAndClosesStream(t *testing.T) {
 
 	m := &MainPage{
 		logStreams: map[string]*logStreamState{"key": st},
-		podLogs:    models.NewLogPage(),
+		podLogs:    models.NewLogPage(500),
 	}
 	m.closeLogSource("key")
 
@@ -78,7 +78,7 @@ func TestCloseLogSource_CancelsHungOpen(t *testing.T) {
 
 	m := &MainPage{
 		logStreams: map[string]*logStreamState{"key": st},
-		podLogs:    models.NewLogPage(),
+		podLogs:    models.NewLogPage(500),
 	}
 	m.closeLogSource("key")
 

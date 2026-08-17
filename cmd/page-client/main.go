@@ -102,7 +102,7 @@ func main() {
 		}
 	}
 
-	mp := pages.NewMainPageModel(client, cfg.Preferences.RefreshInterval)
+	mp := pages.NewMainPageModel(client, cfg.Preferences.RefreshInterval, cfg.Preferences.MaxLogLines)
 
 	p := tea.NewProgram(mp)
 	if _, err := p.Run(); err != nil {

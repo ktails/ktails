@@ -37,7 +37,7 @@ func (c *Client) ListPodMetrics(kubeContext, namespace string) ([]PodMetricsInfo
 		return nil, fmt.Errorf("failed to get metrics client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	list, err := metricsClient.MetricsV1beta1().PodMetricses(namespace).List(ctx, v1.ListOptions{})
@@ -75,7 +75,7 @@ func (c *Client) ListNodeMetrics(kubeContext string) ([]NodeMetricsInfo, error) 
 		return nil, fmt.Errorf("failed to get metrics client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	list, err := metricsClient.MetricsV1beta1().NodeMetricses().List(ctx, v1.ListOptions{})

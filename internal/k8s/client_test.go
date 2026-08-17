@@ -35,6 +35,7 @@ func newTestClient(kubeContext string, objects ...runtime.Object) (*Client, *fak
 		clientsByContext: map[string]kubernetes.Interface{
 			kubeContext: clientset,
 		},
+		requestTimeout: defaultRequestTimeout,
 	}
 	return c, clientset
 }
@@ -282,16 +283,13 @@ func TestGetClientForContext_SameContextDedupsInFlightDials(t *testing.T) {
 // TestListPods_TimesOutAgainstHungServer guards the regression this fix
 // targets: every one-shot call used context.Background() with
 // rest.Config.Timeout == 0, so a hung-but-connected apiserver blocked a
-// List/Get call forever with no error path. requestTimeout is temporarily
-// shrunk (it's a package var for exactly this) so the test doesn't actually
-// wait 15 real seconds — the server sleeps well past that shrunk timeout
-// before responding, so the request is guaranteed to still be outstanding
-// when the client-side deadline fires.
+// List/Get call forever with no error path. This Client's requestTimeout is
+// set to a small value (a field, not a shared package var, so parallel
+// tests can't race on it) so the test doesn't actually wait 15 real seconds
+// — the server sleeps well past that shrunk timeout before responding, so
+// the request is guaranteed to still be outstanding when the client-side
+// deadline fires.
 func TestListPods_TimesOutAgainstHungServer(t *testing.T) {
-	origTimeout := requestTimeout
-	requestTimeout = 30 * time.Millisecond
-	defer func() { requestTimeout = origTimeout }()
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -302,7 +300,10 @@ func TestListPods_TimesOutAgainstHungServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to build clientset against test server: %v", err)
 	}
-	c := &Client{clientsByContext: map[string]kubernetes.Interface{"ctx1": clientset}}
+	c := &Client{
+		clientsByContext: map[string]kubernetes.Interface{"ctx1": clientset},
+		requestTimeout:   30 * time.Millisecond,
+	}
 
 	_, _, err = c.ListPods(context.Background(), "ctx1", "default")
 	if err == nil {
@@ -379,10 +380,7 @@ func TestNewClient_MergesMultiPathKUBECONFIG(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	contexts, err := c.ListContexts()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	contexts := c.ListContexts()
 	names := make(map[string]bool, len(contexts))
 	for _, ctx := range contexts {
 		names[ctx.Name] = true

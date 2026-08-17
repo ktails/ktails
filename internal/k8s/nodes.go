@@ -118,7 +118,7 @@ func (c *Client) GetNodeDetail(kubeContextName, _, name string) (ResourceDetail,
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	node, err := clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})

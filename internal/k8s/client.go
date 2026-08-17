@@ -21,15 +21,17 @@ import (
 	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
-// requestTimeout bounds every one-shot (non-watch, non-log-stream) API call
-// — a hung-but-connected apiserver otherwise blocks a List/Get/metrics call
-// forever, since rest.Config.Timeout is 0 (unset) and none of these calls
-// used to carry a deadline of their own. Watches and log streams must stay
-// un-deadlined — a deadline would kill them mid-stream — so they're
-// deliberately excluded; see WatchPods and StreamLogs. A var, not a const,
-// so tests can shrink it to exercise the timeout path without a real
-// 15-second wait.
-var requestTimeout = 15 * time.Second
+// defaultRequestTimeout bounds every one-shot (non-watch, non-log-stream)
+// API call — a hung-but-connected apiserver otherwise blocks a
+// List/Get/metrics call forever, since rest.Config.Timeout is 0 (unset) and
+// none of these calls used to carry a deadline of their own. Watches and log
+// streams must stay un-deadlined — a deadline would kill them mid-stream —
+// so they're deliberately excluded; see WatchPods and StreamLogs. NewClient
+// seeds Client.requestTimeout with this; tests construct a Client directly
+// and set the field to shrink it, exercising the timeout path without a
+// real 15-second wait — a mutable shared package var let concurrent tests
+// race on the same value.
+const defaultRequestTimeout = 15 * time.Second
 
 // Client wraps Kubernetes client operations with support for multiple contexts
 type Client struct {
@@ -42,7 +44,10 @@ type Client struct {
 	rawConfig               *api.Config
 	kubeconfigPath          string
 	currentContext          string
-	mu                      sync.RWMutex // Protect concurrent access
+	// requestTimeout bounds every one-shot API call on this Client — see
+	// defaultRequestTimeout.
+	requestTimeout time.Duration
+	mu             sync.RWMutex // Protect concurrent access
 
 	// building/metricsBuilding track in-flight dials, per context, so a
 	// second caller for the same context waits on the first's result instead
@@ -179,6 +184,7 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 		rawConfig:               &rawConfig,
 		kubeconfigPath:          kubeconfigPath,
 		currentContext:          currentContext,
+		requestTimeout:          defaultRequestTimeout,
 	}
 	client.buildClient = client.createClientForContext
 	client.buildMetricsClient = client.createMetricsClientForContext
@@ -349,8 +355,10 @@ func (c *Client) DefaultNamespace(kubeContext string) string {
 	return "default"
 }
 
-// ListContexts returns available contexts from kubeconfig
-func (c *Client) ListContexts() ([]ContextsInfo, error) {
+// ListContexts returns every context from kubeconfig, sorted by name for a
+// stable pane order (c.rawConfig.Contexts is a map, so iteration order is
+// otherwise nondeterministic run to run).
+func (c *Client) ListContexts() []ContextsInfo {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -363,7 +371,8 @@ func (c *Client) ListContexts() ([]ContextsInfo, error) {
 		}
 		contexts = append(contexts, ctx)
 	}
-	return contexts, nil
+	sort.Slice(contexts, func(i, j int) bool { return contexts[i].Name < contexts[j].Name })
+	return contexts
 }
 
 // CanWatchNodes reports whether the current credentials can watch Nodes in
@@ -379,7 +388,7 @@ func (c *Client) CanWatchNodes(kubeContext string) (bool, error) {
 		return false, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	review := &authorizationv1.SelfSubjectAccessReview{
@@ -408,7 +417,7 @@ func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	list, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -506,7 +515,7 @@ func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceD
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})

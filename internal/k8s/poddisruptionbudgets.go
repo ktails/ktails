@@ -75,7 +75,7 @@ func (c *Client) GetPodDisruptionBudgetDetail(kubeContextName, namespace, name s
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	pdb, err := clientset.PolicyV1().PodDisruptionBudgets(namespace).Get(ctx, name, v1.GetOptions{})

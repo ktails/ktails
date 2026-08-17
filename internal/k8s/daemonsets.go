@@ -64,7 +64,7 @@ func (c *Client) GetDaemonSetDetail(kubeContextName, namespace, name string) (Re
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
 	defer cancel()
 
 	ds, err := clientset.AppsV1().DaemonSets(namespace).Get(ctx, name, v1.GetOptions{})

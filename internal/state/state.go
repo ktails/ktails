@@ -20,7 +20,7 @@ type AppState struct {
 	// cluster-wide regardless — see watch.Supervisor's stateKey doc
 	// comment): it narrows which of a context's rows the resource tables
 	// show, it never starts or stops anything.
-	SelectedContexts map[string][]string // context -> checked namespaces
+	selectedContexts map[string][]string // context -> checked namespaces
 
 	// allNamespaces marks a context as showing every namespace unfiltered,
 	// distinct from SelectedContexts holding zero checked namespaces — see
@@ -42,10 +42,10 @@ type AppState struct {
 	loading map[msgs.ResourceKind]map[string]bool // kind -> context -> isLoading
 
 	// Errors
-	Errors map[string]string // context -> error message
+	errors map[string]string // context -> error message
 
 	// Contexts that have completed at least one successful load cycle
-	LoadedContexts map[string]bool
+	loadedContexts map[string]bool
 
 	// loadedKinds tracks, per context, which of requiredForLoaded's kinds
 	// have each delivered a first successful load — LoadedContexts only
@@ -90,12 +90,12 @@ func NewAppState() *AppState {
 		kindLoaded[kind] = make(map[string]bool)
 	}
 	return &AppState{
-		SelectedContexts: make(map[string][]string),
+		selectedContexts: make(map[string][]string),
 		allNamespaces:    make(map[string]bool),
 		defaultNamespace: make(map[string]string),
 		loading:          loading,
-		Errors:           make(map[string]string),
-		LoadedContexts:   make(map[string]bool),
+		errors:           make(map[string]string),
+		loadedContexts:   make(map[string]bool),
 		loadedKinds:      make(map[string]map[msgs.ResourceKind]bool),
 		kindLoaded:       kindLoaded,
 		contextColors:    make(map[string]color.Color),
@@ -129,10 +129,10 @@ func (a *AppState) AddContext(context, namespace string) {
 
 	a.defaultNamespace[context] = namespace
 	if namespace == "" {
-		a.SelectedContexts[context] = nil
+		a.selectedContexts[context] = nil
 		a.allNamespaces[context] = true
 	} else {
-		a.SelectedContexts[context] = []string{namespace}
+		a.selectedContexts[context] = []string{namespace}
 		delete(a.allNamespaces, context)
 	}
 	if _, ok := a.contextColors[context]; !ok {
@@ -147,7 +147,7 @@ func (a *AppState) AddNamespace(context, namespace string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	namespaces, ok := a.SelectedContexts[context]
+	namespaces, ok := a.selectedContexts[context]
 	if !ok {
 		return
 	}
@@ -156,7 +156,7 @@ func (a *AppState) AddNamespace(context, namespace string) {
 			return
 		}
 	}
-	a.SelectedContexts[context] = append(namespaces, namespace)
+	a.selectedContexts[context] = append(namespaces, namespace)
 }
 
 // RemoveNamespace unchecks one namespace for a context, including the last
@@ -173,7 +173,7 @@ func (a *AppState) RemoveNamespace(context, namespace string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	namespaces, ok := a.SelectedContexts[context]
+	namespaces, ok := a.selectedContexts[context]
 	if !ok {
 		return
 	}
@@ -183,7 +183,7 @@ func (a *AppState) RemoveNamespace(context, namespace string) {
 			kept = append(kept, ns)
 		}
 	}
-	a.SelectedContexts[context] = kept
+	a.selectedContexts[context] = kept
 }
 
 // DefaultNamespace returns the namespace a context was originally added
@@ -235,8 +235,8 @@ func (a *AppState) MarkLoaded(kind msgs.ResourceKind, context string) {
 	}
 	a.loadedKinds[context][kind] = true
 	if len(a.loadedKinds[context]) == len(requiredForLoaded) {
-		a.LoadedContexts[context] = true
-		delete(a.Errors, context)
+		a.loadedContexts[context] = true
+		delete(a.errors, context)
 	}
 }
 
@@ -245,7 +245,7 @@ func (a *AppState) SetError(context string, err string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.Errors[context] = err
+	a.errors[context] = err
 	for _, byContext := range a.loading {
 		byContext[context] = false
 	}
@@ -256,7 +256,7 @@ func (a *AppState) RemoveContext(context string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	delete(a.SelectedContexts, context)
+	delete(a.selectedContexts, context)
 	delete(a.allNamespaces, context)
 	delete(a.defaultNamespace, context)
 	for _, byContext := range a.loading {
@@ -265,8 +265,8 @@ func (a *AppState) RemoveContext(context string) {
 	for _, byContext := range a.kindLoaded {
 		delete(byContext, context)
 	}
-	delete(a.Errors, context)
-	delete(a.LoadedContexts, context)
+	delete(a.errors, context)
+	delete(a.loadedContexts, context)
 	delete(a.loadedKinds, context)
 }
 
@@ -275,7 +275,7 @@ func (a *AppState) ClearErrors() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.Errors = make(map[string]string)
+	a.errors = make(map[string]string)
 }
 
 // Snapshot returns a read-only copy of the current state.
@@ -289,12 +289,12 @@ func (a *AppState) Snapshot() Snapshot {
 	}
 
 	return Snapshot{
-		SelectedContexts: copyStringSliceMap(a.SelectedContexts),
+		SelectedContexts: copyStringSliceMap(a.selectedContexts),
 		AllNamespaces:    copyBoolMap(a.allNamespaces),
 		LoadingStates:    a.combinedLoadingStates(),
-		LoadedContexts:   copyBoolMap(a.LoadedContexts),
+		LoadedContexts:   copyBoolMap(a.loadedContexts),
 		LoadedKinds:      loadedKinds,
-		Errors:           copyStringMap(a.Errors),
+		Errors:           copyStringMap(a.errors),
 		ContextColors:    copyColorMap(a.contextColors),
 	}
 }
@@ -303,7 +303,7 @@ func (a *AppState) Snapshot() Snapshot {
 // for each context. Must be called with lock held.
 func (a *AppState) combinedLoadingStates() map[string]bool {
 	combined := make(map[string]bool)
-	for ctx := range a.SelectedContexts {
+	for ctx := range a.selectedContexts {
 		anyLoading := false
 		for _, byContext := range a.loading {
 			if byContext[ctx] {

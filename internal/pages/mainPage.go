@@ -1,4 +1,5 @@
-// Package pages, it implements main routing to different pages.
+// Package pages implements MainPage, the single top-level bubbletea model:
+// key routing, focus, layout, and watch orchestration.
 package pages
 
 import (
@@ -78,9 +79,9 @@ type MainPage struct {
 	activeLeftSection leftSection
 	// tables holds the one resource table per tab; all three share the
 	// models.ResourceTable implementation and differ only by spec.
-	tables           map[msgs.ResourceKind]*models.ResourceTable
-	deploymentDetail *models.ResourceDetailPage
-	focus            focusTarget
+	tables         map[msgs.ResourceKind]*models.ResourceTable
+	resourceDetail *models.ResourceDetailPage
+	focus          focusTarget
 
 	// k8s client
 	Client *k8s.Client
@@ -183,7 +184,9 @@ type logStreamState struct {
 // NewMainPageModel builds the top-level page model. refreshIntervalSeconds is
 // config.Preferences.RefreshInterval — the auto-refresh tick period; values
 // below 1 fall back to 5s (the same default as config.DefaultConfig).
-func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
+// maxLogLines is config.Preferences.MaxLogLines, capping each log source's
+// in-memory scrollback — see models.NewLogPage.
+func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds, maxLogLines int) *MainPage {
 	if refreshIntervalSeconds < 1 {
 		refreshIntervalSeconds = 5
 	}
@@ -196,23 +199,23 @@ func NewMainPageModel(c *k8s.Client, refreshIntervalSeconds int) *MainPage {
 	contextList := models.NewContextInfo(c)
 
 	m := &MainPage{
-		Client:           c,
-		appState:         state.NewAppState(),
-		tabs:             msgs.Kinds(),
-		contextList:      contextList,
-		clusterList:      models.NewClustersInfo(contextList),
-		namespacesPane:   models.NewNamespacesInfo(),
-		tables:           tables,
-		deploymentDetail: models.NewResourceDetailPage(),
-		podLogs:          models.NewLogPage(),
-		logStreams:       make(map[string]*logStreamState),
-		watchSup:         watch.NewSupervisor(c),
-		appStateLoaded:   false,
-		focus:            focusLeftPane,
-		errorMessage:     "",
-		showHelp:         false,
-		autoRefresh:      true,
-		refreshInterval:  time.Duration(refreshIntervalSeconds) * time.Second,
+		Client:          c,
+		appState:        state.NewAppState(),
+		tabs:            msgs.Kinds(),
+		contextList:     contextList,
+		clusterList:     models.NewClustersInfo(contextList),
+		namespacesPane:  models.NewNamespacesInfo(),
+		tables:          tables,
+		resourceDetail:  models.NewResourceDetailPage(),
+		podLogs:         models.NewLogPage(maxLogLines),
+		logStreams:      make(map[string]*logStreamState),
+		watchSup:        watch.NewSupervisor(c),
+		appStateLoaded:  false,
+		focus:           focusLeftPane,
+		errorMessage:    "",
+		showHelp:        false,
+		autoRefresh:     true,
+		refreshInterval: time.Duration(refreshIntervalSeconds) * time.Second,
 	}
 
 	m.updateFocusStates()
@@ -440,7 +443,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// While the detail pane has keyboard focus, it captures everything
 		// (arrows/j-k/pgup/pgdn/g/G) until Esc hands focus back to the list.
 		if m.detailFocused {
-			cmd := m.deploymentDetail.Update(msg)
+			cmd := m.resourceDetail.Update(msg)
 			return m, cmd
 		}
 
@@ -628,10 +631,10 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.ResourceDetailMsg:
 		if msg.Err != nil {
-			m.deploymentDetail.SetError(msg.Err.Error())
+			m.resourceDetail.SetError(msg.Err.Error())
 			return m, nil
 		}
-		m.deploymentDetail.SetDetail(msg.Detail)
+		m.resourceDetail.SetDetail(msg.Detail)
 		return m, nil
 
 	case msgs.LogStreamOpenedMsg:
@@ -754,7 +757,7 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.focus == focusTabs && m.appStateLoaded {
 		forwardCmds := []tea.Cmd{m.activeTable().Update(msg)}
 		if m.showDetail {
-			forwardCmds = append(forwardCmds, m.deploymentDetail.Update(msg))
+			forwardCmds = append(forwardCmds, m.resourceDetail.Update(msg))
 		}
 		if m.showLogs {
 			forwardCmds = append(forwardCmds, m.podLogs.Update(msg))
@@ -1085,7 +1088,7 @@ func (m *MainPage) updateFocusStates() {
 	for _, kind := range m.tabs {
 		m.tables[kind].SetFocused(listActive && kind == m.activeKind())
 	}
-	m.deploymentDetail.SetFocused(m.focus == focusTabs && m.detailFocused)
+	m.resourceDetail.SetFocused(m.focus == focusTabs && m.detailFocused)
 	m.podLogs.SetFocused(m.focus == focusTabs && m.logsFocused)
 }
 
@@ -1140,7 +1143,7 @@ func (m *MainPage) applyContentSizes() {
 	for _, kind := range m.tabs {
 		m.tables[kind].SetSize(m.tableW, listH)
 	}
-	m.deploymentDetail.SetSize(m.tableW, detailH)
+	m.resourceDetail.SetSize(m.tableW, detailH)
 	m.podLogs.SetSize(m.tableW, detailH)
 }
 
@@ -1159,14 +1162,14 @@ func (m *MainPage) openResourceDetail(kind msgs.ResourceKind) tea.Cmd {
 	// Re-entering the row already shown in the pane just refocuses it instead
 	// of re-fetching — e.g. after Esc dropped back to the list to scroll/pick
 	// a row, Enter on that same row jumps straight back in.
-	if m.showDetail && m.deploymentDetail.Matches(kind.Kind(), name, ctxName) {
+	if m.showDetail && m.resourceDetail.Matches(kind.Kind(), name, ctxName) {
 		m.detailFocused = true
 		m.applyContentSizes()
 		m.updateFocusStates()
 		return nil
 	}
 
-	m.deploymentDetail.StartLoading(kind.Kind(), name, ctxName)
+	m.resourceDetail.StartLoading(kind.Kind(), name, ctxName)
 	m.showDetail = true
 	m.detailFocused = true
 	m.applyContentSizes()
@@ -1533,8 +1536,8 @@ func (m *MainPage) renderView() string {
 		if m.showDetail || m.showLogs {
 			var header, body string
 			if m.showDetail {
-				header = m.deploymentDetail.Header(r.RightContentW, snapshot.ContextColors[m.deploymentDetail.Context()])
-				body = m.deploymentDetail.View()
+				header = m.resourceDetail.Header(r.RightContentW, snapshot.ContextColors[m.resourceDetail.Context()])
+				body = m.resourceDetail.View()
 			} else {
 				header = m.podLogs.Header(r.RightContentW)
 				body = m.podLogs.View()
@@ -1619,7 +1622,7 @@ func (m *MainPage) renderStatusBar(snapshot state.Snapshot) string {
 		}
 	}
 	if m.showDetail {
-		if percent, ok := m.deploymentDetail.HScrollStatus(); ok {
+		if percent, ok := m.resourceDetail.HScrollStatus(); ok {
 			statusBits = append(statusBits, fmt.Sprintf("◂ %d%% ▸", percent))
 		}
 	}

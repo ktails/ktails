@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"image/color"
 	"io"
-	"log"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
@@ -419,10 +418,7 @@ func (c *ContextsInfo) View() string {
 }
 
 func (c *ContextsInfo) initContextPane() {
-	rawContextsList, err := c.Client.ListContexts()
-	if err != nil {
-		log.Printf("unable to fetch contexts from client: %v", err)
-	}
+	rawContextsList := c.Client.ListContexts()
 
 	currentCtx := c.Client.GetCurrentContext()
 	itemList := make([]list.Item, 0, len(rawContextsList))
