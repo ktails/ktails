@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestGetSecretDetail_RedactsValues(t *testing.T) {
 	}
 	c, _ := newTestClient("ctx1", secret)
 
-	detail, err := c.GetSecretDetail("ctx1", "default", "sec-a")
+	detail, err := c.GetSecretDetail(context.Background(), "ctx1", "default", "sec-a")
 	if err != nil {
 		t.Fatalf("GetSecretDetail returned error: %v", err)
 	}

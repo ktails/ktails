@@ -31,13 +31,13 @@ type NodeMetricsInfo struct {
 // error from the aggregated API) — callers treat that the same way a
 // permission denial is treated elsewhere in this codebase: a quiet,
 // recognizable failure, not a crash.
-func (c *Client) ListPodMetrics(kubeContext, namespace string) ([]PodMetricsInfo, error) {
+func (c *Client) ListPodMetrics(ctx context.Context, kubeContext, namespace string) ([]PodMetricsInfo, error) {
 	metricsClient, err := c.GetMetricsClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metrics client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	list, err := metricsClient.MetricsV1beta1().PodMetricses(namespace).List(ctx, v1.ListOptions{})
@@ -69,13 +69,13 @@ func (c *Client) ListPodMetrics(kubeContext, namespace string) ([]PodMetricsInfo
 // ListNodeMetrics fetches current CPU/Memory usage for every node from the
 // Metrics Server. Cluster-scoped, like Nodes themselves — namespace doesn't
 // apply.
-func (c *Client) ListNodeMetrics(kubeContext string) ([]NodeMetricsInfo, error) {
+func (c *Client) ListNodeMetrics(ctx context.Context, kubeContext string) ([]NodeMetricsInfo, error) {
 	metricsClient, err := c.GetMetricsClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metrics client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	list, err := metricsClient.MetricsV1beta1().NodeMetricses().List(ctx, v1.ListOptions{})

@@ -948,11 +948,11 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 			m.appState.SetLoading(kind, added.ContextName, true)
 		}
 		cmdSequence = append(cmdSequence, m.watchSup.StartContext(added.ContextName, added.DefaultNamespace)...)
-		cmdSequence = append(cmdSequence, cmds.LoadNamespacesCmd(m.Client, added.ContextName))
+		cmdSequence = append(cmdSequence, cmds.LoadNamespacesCmd(context.Background(), m.Client, added.ContextName))
 		// Nodes is cluster-scoped and commonly restricted — check access
 		// before opening its watch (see applyNodesAccess) instead of
 		// starting it unconditionally like every other kind above.
-		cmdSequence = append(cmdSequence, cmds.CheckNodesAccessCmd(m.Client, added.ContextName))
+		cmdSequence = append(cmdSequence, cmds.CheckNodesAccessCmd(context.Background(), m.Client, added.ContextName))
 	}
 
 	ctxSnapshot := m.appState.Snapshot()
@@ -1177,31 +1177,31 @@ func (m *MainPage) openResourceDetail(kind msgs.ResourceKind) tea.Cmd {
 
 	switch kind {
 	case msgs.KindDeployments:
-		return cmds.LoadDeploymentDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadDeploymentDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindPods:
-		return cmds.LoadPodDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadPodDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindServices:
-		return cmds.LoadServiceDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadServiceDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindConfigMaps:
-		return cmds.LoadConfigMapDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadConfigMapDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindSecrets:
-		return cmds.LoadSecretDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadSecretDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindJobs:
-		return cmds.LoadJobDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadJobDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindCronJobs:
-		return cmds.LoadCronJobDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadCronJobDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindStatefulSets:
-		return cmds.LoadStatefulSetDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadStatefulSetDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindDaemonSets:
-		return cmds.LoadDaemonSetDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadDaemonSetDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindIngresses:
-		return cmds.LoadIngressDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadIngressDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindPodDisruptionBudgets:
-		return cmds.LoadPodDisruptionBudgetDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadPodDisruptionBudgetDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindHorizontalPodAutoscalers:
-		return cmds.LoadHorizontalPodAutoscalerDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadHorizontalPodAutoscalerDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	case msgs.KindNodes:
-		return cmds.LoadNodeDetailCmd(m.Client, ctxName, namespace, name)
+		return cmds.LoadNodeDetailCmd(context.Background(), m.Client, ctxName, namespace, name)
 	}
 	return nil
 }
@@ -1266,13 +1266,14 @@ func (m *MainPage) fetchServiceEndpointsIfNeeded() tea.Cmd {
 		return nil
 	}
 
+	ctx := context.Background()
 	var cmdSequence []tea.Cmd
-	for context := range snapshot.SelectedContexts {
-		if !m.watchSup.NeedsEndpoints(context) {
+	for kubeContext := range snapshot.SelectedContexts {
+		if !m.watchSup.NeedsEndpoints(kubeContext) {
 			continue
 		}
-		m.watchSup.MarkEndpointsRequested(context)
-		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(m.Client, context, m.watchSup.Namespace(context)))
+		m.watchSup.MarkEndpointsRequested(kubeContext)
+		cmdSequence = append(cmdSequence, cmds.LoadServiceEndpointsCmd(ctx, m.Client, kubeContext, m.watchSup.Namespace(kubeContext)))
 	}
 
 	if len(cmdSequence) == 0 {
@@ -1304,16 +1305,17 @@ func (m *MainPage) fetchMetricsIfNeeded() tea.Cmd {
 	m.lastMetricsFetch = time.Now()
 
 	snapshot := m.appState.Snapshot()
+	ctx := context.Background()
 	var cmdSequence []tea.Cmd
-	for context := range snapshot.SelectedContexts {
+	for kubeContext := range snapshot.SelectedContexts {
 		switch kind {
 		case msgs.KindPods:
-			if !m.watchSup.PodMetricsUnavailable(context) {
-				cmdSequence = append(cmdSequence, cmds.LoadPodMetricsCmd(m.Client, context, m.watchSup.Namespace(context)))
+			if !m.watchSup.PodMetricsUnavailable(kubeContext) {
+				cmdSequence = append(cmdSequence, cmds.LoadPodMetricsCmd(ctx, m.Client, kubeContext, m.watchSup.Namespace(kubeContext)))
 			}
 		case msgs.KindNodes:
-			if !m.watchSup.NodeMetricsUnavailable(context) {
-				cmdSequence = append(cmdSequence, cmds.LoadNodeMetricsCmd(m.Client, context))
+			if !m.watchSup.NodeMetricsUnavailable(kubeContext) {
+				cmdSequence = append(cmdSequence, cmds.LoadNodeMetricsCmd(ctx, m.Client, kubeContext))
 			}
 		}
 	}

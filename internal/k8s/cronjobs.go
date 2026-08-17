@@ -67,14 +67,14 @@ func (c *Client) ListCronJobs(ctx context.Context, kubeContext, namespace string
 
 // GetCronJobDetail fetches a single CronJob's status, rendered YAML, and
 // recent events.
-func (c *Client) GetCronJobDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
+func (c *Client) GetCronJobDetail(ctx context.Context, kubeContextName, namespace, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "CronJob"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	cj, err := clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -89,7 +89,7 @@ func (c *Client) GetCronJobDetail(kubeContextName, namespace, name string) (Reso
 	d.Summary = fmt.Sprintf("Schedule: %s, Last scheduled: %s", info.Schedule, info.LastScheduled)
 	d.YAML = renderDetailYAML(cj, "batch/v1", "CronJob")
 
-	c.attachEvents(&d, kubeContextName, namespace, "CronJob", name)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "CronJob", name)
 
 	return d, nil
 }

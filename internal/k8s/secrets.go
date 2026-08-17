@@ -75,14 +75,14 @@ func (c *Client) ListSecrets(ctx context.Context, kubeContext, namespace string)
 // GetSecretDetail fetches a single Secret's key names, redacted YAML, and
 // recent events. Data/StringData values are replaced with redactedValue
 // before rendering — never the real (even if base64-encoded) contents.
-func (c *Client) GetSecretDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
+func (c *Client) GetSecretDetail(ctx context.Context, kubeContextName, namespace, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Secret"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -104,7 +104,7 @@ func (c *Client) GetSecretDetail(kubeContextName, namespace, name string) (Resou
 	}
 	d.YAML = renderDetailYAML(secret, "v1", "Secret")
 
-	c.attachEvents(&d, kubeContextName, namespace, "Secret", name)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "Secret", name)
 
 	return d, nil
 }

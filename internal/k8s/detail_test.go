@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestAttachEvents_ForbiddenIsHumanized(t *testing.T) {
 	})
 
 	var d ResourceDetail
-	c.attachEvents(&d, "ctx1", "default", "Pod", "pod-a")
+	c.attachEvents(context.Background(), &d, "ctx1", "default", "Pod", "pod-a")
 
 	if d.EventsError == "" {
 		t.Fatal("expected EventsError to be set on a Forbidden failure")
@@ -45,7 +46,7 @@ func TestAttachEvents_SuccessLeavesEventsErrorEmpty(t *testing.T) {
 	c, _ := newTestClient("ctx1")
 
 	var d ResourceDetail
-	c.attachEvents(&d, "ctx1", "default", "Pod", "pod-a")
+	c.attachEvents(context.Background(), &d, "ctx1", "default", "Pod", "pod-a")
 
 	if d.EventsError != "" {
 		t.Fatalf("expected no EventsError on success, got %q", d.EventsError)

@@ -84,8 +84,8 @@ func renderDetailYAML(obj detailObject, apiVersion, kind string) string {
 // silent swallow every Get*Detail function used to do
 // (`if events, err := c.getEvents(...); err == nil { d.Events = events }`,
 // doing nothing at all when err != nil).
-func (c *Client) attachEvents(d *ResourceDetail, kubeContextName, namespace, kind, name string) {
-	events, err := c.getEvents(kubeContextName, namespace, kind, name)
+func (c *Client) attachEvents(ctx context.Context, d *ResourceDetail, kubeContextName, namespace, kind, name string) {
+	events, err := c.getEvents(ctx, kubeContextName, namespace, kind, name)
 	if err != nil {
 		d.EventsError = humanizeEventsError(err)
 		return
@@ -106,13 +106,13 @@ func humanizeEventsError(err error) string {
 }
 
 // getEvents fetches events for a specific object, newest first.
-func (c *Client) getEvents(kubeContextName, namespace, kind, name string) ([]EventInfo, error) {
+func (c *Client) getEvents(ctx context.Context, kubeContextName, namespace, kind, name string) ([]EventInfo, error) {
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.namespace=%s,involvedObject.kind=%s",

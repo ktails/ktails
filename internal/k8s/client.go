@@ -382,13 +382,13 @@ func (c *Client) ListContexts() []ContextsInfo {
 // this to skip opening a watch that would just fail, rather than reacting
 // to the failure after the fact (see watch.Supervisor's Forbidden handling
 // for kinds this check doesn't cover).
-func (c *Client) CanWatchNodes(kubeContext string) (bool, error) {
+func (c *Client) CanWatchNodes(ctx context.Context, kubeContext string) (bool, error) {
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return false, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	review := &authorizationv1.SelfSubjectAccessReview{
@@ -411,13 +411,13 @@ func (c *Client) CanWatchNodes(kubeContext string) (bool, error) {
 // (the ServiceAccount lacks cluster-scoped "list namespaces") is rendered as
 // a clear RBAC message rather than the raw client-go error, matching how
 // watch.Supervisor surfaces RBAC-denied watches.
-func (c *Client) ListNamespaces(kubeContext string) ([]string, error) {
+func (c *Client) ListNamespaces(ctx context.Context, kubeContext string) ([]string, error) {
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	list, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -508,14 +508,14 @@ func (c *Client) ListServices(ctx context.Context, kubeContext, namespace string
 }
 
 // GetPodDetail fetches a single pod's status, rendered YAML, and recent events.
-func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceDetail, error) {
+func (c *Client) GetPodDetail(ctx context.Context, kubeContext, namespace, podName string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Pod"}
 	clientset, err := c.GetClientForContext(kubeContext)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContext, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
@@ -546,7 +546,7 @@ func (c *Client) GetPodDetail(kubeContext, namespace, podName string) (ResourceD
 
 	d.YAML = renderDetailYAML(pod, "v1", "Pod")
 
-	c.attachEvents(&d, kubeContext, namespace, "Pod", podName)
+	c.attachEvents(ctx, &d, kubeContext, namespace, "Pod", podName)
 
 	return d, nil
 }

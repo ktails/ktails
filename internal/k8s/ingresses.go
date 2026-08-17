@@ -94,14 +94,14 @@ func (c *Client) ListIngresses(ctx context.Context, kubeContext, namespace strin
 
 // GetIngressDetail fetches a single Ingress's rules, rendered YAML, and
 // recent events.
-func (c *Client) GetIngressDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
+func (c *Client) GetIngressDetail(ctx context.Context, kubeContextName, namespace, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Ingress"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	ing, err := clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -116,7 +116,7 @@ func (c *Client) GetIngressDetail(kubeContextName, namespace, name string) (Reso
 	d.Summary = fmt.Sprintf("Hosts: %s", strings.Join(info.Hosts, ", "))
 	d.YAML = renderDetailYAML(ing, "networking.k8s.io/v1", "Ingress")
 
-	c.attachEvents(&d, kubeContextName, namespace, "Ingress", name)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "Ingress", name)
 
 	return d, nil
 }

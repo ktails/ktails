@@ -163,7 +163,7 @@ func TestCanWatchNodes_AllowedAndDenied(t *testing.T) {
 		return true, review, nil
 	})
 
-	allowed, err := c.CanWatchNodes("ctx1")
+	allowed, err := c.CanWatchNodes(context.Background(), "ctx1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestCanWatchNodes_AllowedAndDenied(t *testing.T) {
 	}
 
 	wantAllowed = true
-	allowed, err = c.CanWatchNodes("ctx1")
+	allowed, err = c.CanWatchNodes(context.Background(), "ctx1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestCanWatchNodes_UnknownContext(t *testing.T) {
 		clientsByContext: map[string]kubernetes.Interface{},
 		rawConfig:        &api.Config{Contexts: map[string]*api.Context{}},
 	}
-	if _, err := c.CanWatchNodes("missing"); err == nil {
+	if _, err := c.CanWatchNodes(context.Background(), "missing"); err == nil {
 		t.Fatal("expected error for unknown context, got nil")
 	}
 }

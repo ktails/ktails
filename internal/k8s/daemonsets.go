@@ -57,14 +57,14 @@ func (c *Client) ListDaemonSets(ctx context.Context, kubeContext, namespace stri
 
 // GetDaemonSetDetail fetches a single DaemonSet's status, rendered YAML,
 // and recent events.
-func (c *Client) GetDaemonSetDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
+func (c *Client) GetDaemonSetDetail(ctx context.Context, kubeContextName, namespace, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "DaemonSet"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	ds, err := clientset.AppsV1().DaemonSets(namespace).Get(ctx, name, v1.GetOptions{})
@@ -83,7 +83,7 @@ func (c *Client) GetDaemonSetDetail(kubeContextName, namespace, name string) (Re
 	}
 	d.YAML = renderDetailYAML(ds, "apps/v1", "DaemonSet")
 
-	c.attachEvents(&d, kubeContextName, namespace, "DaemonSet", name)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "DaemonSet", name)
 
 	return d, nil
 }

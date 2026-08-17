@@ -29,9 +29,9 @@ const maxLogLineBytes = 1024 * 1024
 // lazily (see mainPage.go's Ctrl+W handling for the svc tab), independent of
 // the Services watch, so it only ever runs once per context+namespace until
 // that namespace's selection changes.
-func LoadServiceEndpointsCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
+func LoadServiceEndpointsCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 	return func() tea.Msg {
-		endpoints, err := client.GetServiceEndpoints(kubeContext, namespace)
+		endpoints, err := client.GetServiceEndpoints(ctx, kubeContext, namespace)
 		if err != nil {
 			return msgs.ServiceEndpointsMsg{Context: kubeContext, Namespace: namespace, Err: err}
 		}
@@ -44,9 +44,9 @@ func LoadServiceEndpointsCmd(client *k8s.Client, kubeContext, namespace string) 
 // the Pods tab is active — see MainPage.fetchMetricsIfNeeded — independent
 // of the Pods watch, since metrics.k8s.io has no watch support and must be
 // polled.
-func LoadPodMetricsCmd(client *k8s.Client, kubeContext, namespace string) tea.Cmd {
+func LoadPodMetricsCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace string) tea.Cmd {
 	return func() tea.Msg {
-		infos, err := client.ListPodMetrics(kubeContext, namespace)
+		infos, err := client.ListPodMetrics(ctx, kubeContext, namespace)
 		if err != nil {
 			return msgs.PodMetricsMsg{Context: kubeContext, Err: err}
 		}
@@ -60,9 +60,9 @@ func LoadPodMetricsCmd(client *k8s.Client, kubeContext, namespace string) tea.Cm
 
 // LoadNodeMetricsCmd is LoadPodMetricsCmd's Nodes counterpart — Nodes are
 // cluster-scoped, so there's no namespace argument.
-func LoadNodeMetricsCmd(client *k8s.Client, kubeContext string) tea.Cmd {
+func LoadNodeMetricsCmd(ctx context.Context, client *k8s.Client, kubeContext string) tea.Cmd {
 	return func() tea.Msg {
-		infos, err := client.ListNodeMetrics(kubeContext)
+		infos, err := client.ListNodeMetrics(ctx, kubeContext)
 		if err != nil {
 			return msgs.NodeMetricsMsg{Context: kubeContext, Err: err}
 		}
@@ -78,18 +78,18 @@ func LoadNodeMetricsCmd(client *k8s.Client, kubeContext string) tea.Cmd {
 // in a context (see k8s.Client.CanWatchNodes), before MainPage decides
 // whether to open that context's Nodes watch at all. Dispatched once per
 // newly-selected context, alongside LoadNamespacesCmd.
-func CheckNodesAccessCmd(client *k8s.Client, kubeContext string) tea.Cmd {
+func CheckNodesAccessCmd(ctx context.Context, client *k8s.Client, kubeContext string) tea.Cmd {
 	return func() tea.Msg {
-		allowed, err := client.CanWatchNodes(kubeContext)
+		allowed, err := client.CanWatchNodes(ctx, kubeContext)
 		return msgs.NodesAccessMsg{Context: kubeContext, Allowed: allowed, Err: err}
 	}
 }
 
 // LoadNamespacesCmd fetches every namespace available in a context, for the
 // Namespaces pane. Dispatched once per newly-selected context.
-func LoadNamespacesCmd(client *k8s.Client, kubeContext string) tea.Cmd {
+func LoadNamespacesCmd(ctx context.Context, client *k8s.Client, kubeContext string) tea.Cmd {
 	return func() tea.Msg {
-		namespaces, err := client.ListNamespaces(kubeContext)
+		namespaces, err := client.ListNamespaces(ctx, kubeContext)
 		if err != nil {
 			return msgs.NamespacesMsg{Context: kubeContext, Err: err}
 		}
@@ -98,9 +98,9 @@ func LoadNamespacesCmd(client *k8s.Client, kubeContext string) tea.Cmd {
 }
 
 // LoadDeploymentDetailCmd fetches detailed information for a single deployment
-func LoadDeploymentDetailCmd(client *k8s.Client, kubeContext, namespace, deploymentName string) tea.Cmd {
+func LoadDeploymentDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, deploymentName string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetDeploymentDetail(kubeContext, namespace, deploymentName)
+		detail, err := client.GetDeploymentDetail(ctx, kubeContext, namespace, deploymentName)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -109,9 +109,9 @@ func LoadDeploymentDetailCmd(client *k8s.Client, kubeContext, namespace, deploym
 }
 
 // LoadPodDetailCmd fetches detailed information for a single pod
-func LoadPodDetailCmd(client *k8s.Client, kubeContext, namespace, podName string) tea.Cmd {
+func LoadPodDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, podName string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetPodDetail(kubeContext, namespace, podName)
+		detail, err := client.GetPodDetail(ctx, kubeContext, namespace, podName)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -120,9 +120,9 @@ func LoadPodDetailCmd(client *k8s.Client, kubeContext, namespace, podName string
 }
 
 // LoadServiceDetailCmd fetches detailed information for a single service
-func LoadServiceDetailCmd(client *k8s.Client, kubeContext, namespace, serviceName string) tea.Cmd {
+func LoadServiceDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, serviceName string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetServiceDetail(kubeContext, namespace, serviceName)
+		detail, err := client.GetServiceDetail(ctx, kubeContext, namespace, serviceName)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -131,9 +131,9 @@ func LoadServiceDetailCmd(client *k8s.Client, kubeContext, namespace, serviceNam
 }
 
 // LoadConfigMapDetailCmd fetches detailed information for a single ConfigMap
-func LoadConfigMapDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadConfigMapDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetConfigMapDetail(kubeContext, namespace, name)
+		detail, err := client.GetConfigMapDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -143,9 +143,9 @@ func LoadConfigMapDetailCmd(client *k8s.Client, kubeContext, namespace, name str
 
 // LoadSecretDetailCmd fetches detailed information for a single Secret. The
 // returned detail is already redacted — see k8s.GetSecretDetail.
-func LoadSecretDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadSecretDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetSecretDetail(kubeContext, namespace, name)
+		detail, err := client.GetSecretDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -154,9 +154,9 @@ func LoadSecretDetailCmd(client *k8s.Client, kubeContext, namespace, name string
 }
 
 // LoadJobDetailCmd fetches detailed information for a single Job
-func LoadJobDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadJobDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetJobDetail(kubeContext, namespace, name)
+		detail, err := client.GetJobDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -165,9 +165,9 @@ func LoadJobDetailCmd(client *k8s.Client, kubeContext, namespace, name string) t
 }
 
 // LoadCronJobDetailCmd fetches detailed information for a single CronJob
-func LoadCronJobDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadCronJobDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetCronJobDetail(kubeContext, namespace, name)
+		detail, err := client.GetCronJobDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -176,9 +176,9 @@ func LoadCronJobDetailCmd(client *k8s.Client, kubeContext, namespace, name strin
 }
 
 // LoadStatefulSetDetailCmd fetches detailed information for a single StatefulSet
-func LoadStatefulSetDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadStatefulSetDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetStatefulSetDetail(kubeContext, namespace, name)
+		detail, err := client.GetStatefulSetDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -187,9 +187,9 @@ func LoadStatefulSetDetailCmd(client *k8s.Client, kubeContext, namespace, name s
 }
 
 // LoadDaemonSetDetailCmd fetches detailed information for a single DaemonSet
-func LoadDaemonSetDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadDaemonSetDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetDaemonSetDetail(kubeContext, namespace, name)
+		detail, err := client.GetDaemonSetDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -198,9 +198,9 @@ func LoadDaemonSetDetailCmd(client *k8s.Client, kubeContext, namespace, name str
 }
 
 // LoadIngressDetailCmd fetches detailed information for a single Ingress
-func LoadIngressDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadIngressDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetIngressDetail(kubeContext, namespace, name)
+		detail, err := client.GetIngressDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -210,9 +210,9 @@ func LoadIngressDetailCmd(client *k8s.Client, kubeContext, namespace, name strin
 
 // LoadPodDisruptionBudgetDetailCmd fetches detailed information for a single
 // PodDisruptionBudget.
-func LoadPodDisruptionBudgetDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadPodDisruptionBudgetDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetPodDisruptionBudgetDetail(kubeContext, namespace, name)
+		detail, err := client.GetPodDisruptionBudgetDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -222,9 +222,9 @@ func LoadPodDisruptionBudgetDetailCmd(client *k8s.Client, kubeContext, namespace
 
 // LoadHorizontalPodAutoscalerDetailCmd fetches detailed information for a
 // single HorizontalPodAutoscaler.
-func LoadHorizontalPodAutoscalerDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadHorizontalPodAutoscalerDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetHorizontalPodAutoscalerDetail(kubeContext, namespace, name)
+		detail, err := client.GetHorizontalPodAutoscalerDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}
@@ -234,9 +234,9 @@ func LoadHorizontalPodAutoscalerDetailCmd(client *k8s.Client, kubeContext, names
 
 // LoadNodeDetailCmd fetches detailed information for a single Node.
 // namespace is ignored — Nodes are cluster-scoped.
-func LoadNodeDetailCmd(client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
+func LoadNodeDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, name string) tea.Cmd {
 	return func() tea.Msg {
-		detail, err := client.GetNodeDetail(kubeContext, namespace, name)
+		detail, err := client.GetNodeDetail(ctx, kubeContext, namespace, name)
 		if err != nil {
 			return msgs.ResourceDetailMsg{Context: kubeContext, Err: err}
 		}

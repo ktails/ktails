@@ -45,13 +45,13 @@ func ServiceToServiceInfo(svc *corev1.Service) ServiceInfo {
 // EndpointSlices carry) — namespace-qualified because namespace="" lists
 // cluster-wide, where the same service name can be reused across
 // namespaces, so callers don't need one API round trip per service.
-func (c *Client) GetServiceEndpoints(kubeContextName, namespace string) (map[string][]string, error) {
+func (c *Client) GetServiceEndpoints(ctx context.Context, kubeContextName, namespace string) (map[string][]string, error) {
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	sliceList, err := clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, v1.ListOptions{})
@@ -76,14 +76,14 @@ func (c *Client) GetServiceEndpoints(kubeContextName, namespace string) (map[str
 }
 
 // GetServiceDetail fetches a single service's status, rendered YAML, and recent events.
-func (c *Client) GetServiceDetail(kubeContextName, namespace, serviceName string) (ResourceDetail, error) {
+func (c *Client) GetServiceDetail(ctx context.Context, kubeContextName, namespace, serviceName string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Service"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	svc, err := clientset.CoreV1().Services(namespace).Get(ctx, serviceName, v1.GetOptions{})
@@ -106,7 +106,7 @@ func (c *Client) GetServiceDetail(kubeContextName, namespace, serviceName string
 
 	d.YAML = renderDetailYAML(svc, "v1", "Service")
 
-	c.attachEvents(&d, kubeContextName, namespace, "Service", serviceName)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "Service", serviceName)
 
 	return d, nil
 }

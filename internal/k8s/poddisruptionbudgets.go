@@ -68,14 +68,14 @@ func (c *Client) ListPodDisruptionBudgets(ctx context.Context, kubeContext, name
 
 // GetPodDisruptionBudgetDetail fetches a single PodDisruptionBudget's
 // status, rendered YAML, and recent events.
-func (c *Client) GetPodDisruptionBudgetDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
+func (c *Client) GetPodDisruptionBudgetDetail(ctx context.Context, kubeContextName, namespace, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "PodDisruptionBudget"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	pdb, err := clientset.PolicyV1().PodDisruptionBudgets(namespace).Get(ctx, name, v1.GetOptions{})
@@ -94,7 +94,7 @@ func (c *Client) GetPodDisruptionBudgetDetail(kubeContextName, namespace, name s
 	}
 	d.YAML = renderDetailYAML(pdb, "policy/v1", "PodDisruptionBudget")
 
-	c.attachEvents(&d, kubeContextName, namespace, "PodDisruptionBudget", name)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "PodDisruptionBudget", name)
 
 	return d, nil
 }

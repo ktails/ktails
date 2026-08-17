@@ -47,14 +47,14 @@ func DeploymentToDeploymentInfo(deployment *appsv1.Deployment) DeploymentInfo {
 }
 
 // GetDeploymentDetail fetches a single deployment's status, rendered YAML, and recent events.
-func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName string) (ResourceDetail, error) {
+func (c *Client) GetDeploymentDetail(ctx context.Context, kubeContextName, namespace, deploymentName string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Deployment"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	deployment, err := clientset.AppsV1().Deployments(namespace).Get(ctx, deploymentName, v1.GetOptions{})
@@ -73,7 +73,7 @@ func (c *Client) GetDeploymentDetail(kubeContextName, namespace, deploymentName 
 
 	d.YAML = renderDetailYAML(deployment, "apps/v1", "Deployment")
 
-	c.attachEvents(&d, kubeContextName, namespace, "Deployment", deploymentName)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "Deployment", deploymentName)
 
 	return d, nil
 }

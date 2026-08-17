@@ -82,14 +82,14 @@ func (c *Client) ListJobs(ctx context.Context, kubeContext, namespace string) ([
 }
 
 // GetJobDetail fetches a single Job's status, rendered YAML, and recent events.
-func (c *Client) GetJobDetail(kubeContextName, namespace, name string) (ResourceDetail, error) {
+func (c *Client) GetJobDetail(ctx context.Context, kubeContextName, namespace, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Job"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	job, err := clientset.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -107,7 +107,7 @@ func (c *Client) GetJobDetail(kubeContextName, namespace, name string) (Resource
 	}
 	d.YAML = renderDetailYAML(job, "batch/v1", "Job")
 
-	c.attachEvents(&d, kubeContextName, namespace, "Job", name)
+	c.attachEvents(ctx, &d, kubeContextName, namespace, "Job", name)
 
 	return d, nil
 }

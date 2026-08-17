@@ -111,14 +111,14 @@ func (c *Client) ListNodes(ctx context.Context, kubeContext, _ string) ([]*corev
 
 // GetNodeDetail fetches a single Node's status, rendered YAML, and recent
 // events. namespace is ignored — Nodes are cluster-scoped.
-func (c *Client) GetNodeDetail(kubeContextName, _, name string) (ResourceDetail, error) {
+func (c *Client) GetNodeDetail(ctx context.Context, kubeContextName, _, name string) (ResourceDetail, error) {
 	d := ResourceDetail{Kind: "Node"}
 	clientset, err := c.GetClientForContext(kubeContextName)
 	if err != nil {
 		return d, fmt.Errorf("failed to get client for context %s: %w", kubeContextName, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	node, err := clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
@@ -135,7 +135,7 @@ func (c *Client) GetNodeDetail(kubeContextName, _, name string) (ResourceDetail,
 	}
 	d.YAML = renderDetailYAML(node, "v1", "Node")
 
-	c.attachEvents(&d, kubeContextName, "", "Node", name)
+	c.attachEvents(ctx, &d, kubeContextName, "", "Node", name)
 
 	return d, nil
 }
