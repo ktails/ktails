@@ -353,7 +353,7 @@ func TestSupervisor_EventFlowProducesRows(t *testing.T) {
 	}
 
 	rows := s.Rows(msgs.KindPods)
-	if len(rows) != 1 || rows[0][msgs.PodKeyName] != "pod-a" {
+	if len(rows) != 1 || rows[0].Name != "pod-a" {
 		t.Fatalf("expected pod-a in supervisor rows, got %+v", rows)
 	}
 }
@@ -562,7 +562,7 @@ func TestSupervisor_EndpointsOverlayAndDedup(t *testing.T) {
 
 	s.SetEndpoints("ctx1", map[string][]string{"default/svc-a": {"10.0.0.2", "10.0.0.1"}})
 	rows := s.Rows(msgs.KindServices)
-	if len(rows) != 1 || rows[0][msgs.SvcKeyEndpointIPs] != "10.0.0.1,10.0.0.2" {
+	if len(rows) != 1 || rows[0].Cells[msgs.SvcKeyEndpointIPs] != "10.0.0.1,10.0.0.2" {
 		t.Fatalf("expected sorted endpoint IPs overlaid on svc rows, got %+v", rows)
 	}
 
@@ -599,7 +599,7 @@ func TestSupervisor_PodMetricsOverlayAndUnavailable(t *testing.T) {
 	s.Handle(runCmd(t, podWait))
 
 	rows := s.Rows(msgs.KindPods)
-	if len(rows) != 1 || rows[0][msgs.PodKeyCPU] != MetricsPlaceholder {
+	if len(rows) != 1 || rows[0].Cells[msgs.PodKeyCPU] != MetricsPlaceholder {
 		t.Fatalf("expected the CPU placeholder before any fetch, got %+v", rows)
 	}
 
@@ -616,7 +616,7 @@ func TestSupervisor_PodMetricsOverlayAndUnavailable(t *testing.T) {
 		t.Fatal("expected a successful SetPodMetrics to clear the unavailable flag")
 	}
 	rows = s.Rows(msgs.KindPods)
-	if len(rows) != 1 || rows[0][msgs.PodKeyCPU] != "120m" || rows[0][msgs.PodKeyMemory] != "256Mi" {
+	if len(rows) != 1 || rows[0].Cells[msgs.PodKeyCPU] != "120m" || rows[0].Cells[msgs.PodKeyMemory] != "256Mi" {
 		t.Fatalf("expected fetched CPU/Memory overlaid on pod rows, got %+v", rows)
 	}
 
@@ -823,7 +823,7 @@ func TestSupervisor_ReconnectRelistsAndDropsDeletedObjects(t *testing.T) {
 	}
 
 	rows = s.Rows(msgs.KindPods)
-	if len(rows) != 1 || rows[0][msgs.PodKeyName] != "pod-a" {
+	if len(rows) != 1 || rows[0].Name != "pod-a" {
 		t.Fatalf("expected only pod-a to survive the reconnect, got %+v", rows)
 	}
 

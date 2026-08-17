@@ -793,7 +793,7 @@ func (m *MainPage) applyLogUpdate(upd *logstream.Update) {
 // this is where "which namespaces are checked" actually takes effect.
 // KindNodes is cluster-scoped and carries no namespace column, so it's
 // exempt.
-func (m *MainPage) filteredRows(kind msgs.ResourceKind) []msgs.RowData {
+func (m *MainPage) filteredRows(kind msgs.ResourceKind) []msgs.Row {
 	return m.filteredRowsWithSnapshot(kind, m.appState.Snapshot())
 }
 
@@ -801,7 +801,7 @@ func (m *MainPage) filteredRows(kind msgs.ResourceKind) []msgs.RowData {
 // rather than freshly taken — for callers looping over every kind
 // (applyContextsState, applyNamespacesState, cycleSort), so they take one
 // snapshot and reuse it instead of one Snapshot() call per kind.
-func (m *MainPage) filteredRowsWithSnapshot(kind msgs.ResourceKind, snapshot state.Snapshot) []msgs.RowData {
+func (m *MainPage) filteredRowsWithSnapshot(kind msgs.ResourceKind, snapshot state.Snapshot) []msgs.Row {
 	rows := m.watchSup.Rows(kind)
 	if kind != msgs.KindNodes {
 		rows = filterRowsByNamespace(rows, snapshot.SelectedContexts, snapshot.AllNamespaces)
@@ -812,7 +812,7 @@ func (m *MainPage) filteredRowsWithSnapshot(kind msgs.ResourceKind, snapshot sta
 // filterRowsByNamespace keeps only rows whose (context, namespace) is
 // checked in selected, or whose context is in allNS — a pure function so
 // the filtering logic is testable independent of the Supervisor/AppState.
-func filterRowsByNamespace(rows []msgs.RowData, selected map[string][]string, allNS map[string]bool) []msgs.RowData {
+func filterRowsByNamespace(rows []msgs.Row, selected map[string][]string, allNS map[string]bool) []msgs.Row {
 	checkedSets := make(map[string]map[string]bool, len(selected))
 	for ctxName, namespaces := range selected {
 		set := make(map[string]bool, len(namespaces))
@@ -822,15 +822,13 @@ func filterRowsByNamespace(rows []msgs.RowData, selected map[string][]string, al
 		checkedSets[ctxName] = set
 	}
 
-	var filtered []msgs.RowData
+	var filtered []msgs.Row
 	for _, row := range rows {
-		ctxName, _ := row[msgs.KeyContext].(string)
-		if allNS[ctxName] {
+		if allNS[row.Context] {
 			filtered = append(filtered, row)
 			continue
 		}
-		namespace, _ := row[msgs.KeyNamespace].(string)
-		if checkedSets[ctxName][namespace] {
+		if checkedSets[row.Context][row.Namespace] {
 			filtered = append(filtered, row)
 		}
 	}
@@ -840,10 +838,9 @@ func filterRowsByNamespace(rows []msgs.RowData, selected map[string][]string, al
 // sortRows orders rows by field/dir, stably — sortNone is a true no-op,
 // preserving whatever order rows already arrived in (each cache's
 // namespace/name order — see resourceCache.rows). Rows missing a field
-// (e.g. KindNodes has no KeyNamespace) sort as the zero value for that
-// field, which is harmless: it just groups them together rather than
-// erroring.
-func sortRows(rows []msgs.RowData, field sortField, dir sortDir) []msgs.RowData {
+// (e.g. KindNodes has no Namespace) sort as the zero value for that field,
+// which is harmless: it just groups them together rather than erroring.
+func sortRows(rows []msgs.Row, field sortField, dir sortDir) []msgs.Row {
 	if field == sortNone {
 		return rows
 	}
@@ -851,11 +848,11 @@ func sortRows(rows []msgs.RowData, field sortField, dir sortDir) []msgs.RowData 
 		var less bool
 		switch field {
 		case sortByName:
-			less = strings.ToLower(rowString(rows[i], msgs.KeyName)) < strings.ToLower(rowString(rows[j], msgs.KeyName))
+			less = strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
 		case sortByNamespace:
-			less = strings.ToLower(rowString(rows[i], msgs.KeyNamespace)) < strings.ToLower(rowString(rows[j], msgs.KeyNamespace))
+			less = strings.ToLower(rows[i].Namespace) < strings.ToLower(rows[j].Namespace)
 		case sortByAge:
-			less = rowCreatedAt(rows[i]).Before(rowCreatedAt(rows[j]))
+			less = rows[i].CreatedAt.Before(rows[j].CreatedAt)
 		}
 		if dir == sortDesc {
 			return !less
@@ -863,16 +860,6 @@ func sortRows(rows []msgs.RowData, field sortField, dir sortDir) []msgs.RowData 
 		return less
 	})
 	return rows
-}
-
-func rowString(row msgs.RowData, key string) string {
-	s, _ := row[key].(string)
-	return s
-}
-
-func rowCreatedAt(row msgs.RowData) time.Time {
-	t, _ := row[msgs.KeyCreatedAt].(time.Time)
-	return t
 }
 
 // cycleSort advances the active sort for field: switching to a new field
@@ -937,7 +924,7 @@ func (m *MainPage) applyContextsState(msg msgs.ContextsStateMsg) tea.Cmd {
 	if len(ctxSnapshot.SelectedContexts) == 0 {
 		m.appStateLoaded = false
 		for _, kind := range m.tabs {
-			m.tables[kind].SetRows([]msgs.RowData{})
+			m.tables[kind].SetRows([]msgs.Row{})
 		}
 		m.contextList.SetContextStates(nil, nil, nil)
 		m.updateFocusStates()
@@ -1128,9 +1115,7 @@ func (m *MainPage) openResourceDetail(kind msgs.ResourceKind) tea.Cmd {
 	if row == nil {
 		return nil
 	}
-	name, _ := row[msgs.KeyName].(string)
-	namespace, _ := row[msgs.KeyNamespace].(string)
-	ctxName, _ := row[msgs.KeyContext].(string)
+	name, namespace, ctxName := row.Name, row.Namespace, row.Context
 
 	// Re-entering the row already shown in the pane just refocuses it instead
 	// of re-fetching — e.g. after Esc dropped back to the list to scroll/pick
@@ -1302,22 +1287,18 @@ func (m *MainPage) fetchMetricsIfNeeded() tea.Cmd {
 // podLogTargets expands the given raw Pods-table rows into one
 // logstream.Target per container (all containers of each pod are tailed —
 // decision #4).
-func podLogTargets(rows []msgs.RowData) []logstream.Target {
+func podLogTargets(rows []msgs.Row) []logstream.Target {
 	var targets []logstream.Target
 	for _, row := range rows {
-		containers, _ := row[msgs.PodKeyContainers].(string)
-		if containers == "" {
+		if len(row.Containers) == 0 {
 			continue
 		}
-		name, _ := row[msgs.PodKeyName].(string)
-		namespace, _ := row[msgs.PodKeyNamespace].(string)
-		ctxName, _ := row[msgs.PodKeyContext].(string)
-		for _, container := range strings.Split(containers, ",") {
+		for _, container := range row.Containers {
 			targets = append(targets, logstream.Target{
-				Key:       ctxName + "/" + namespace + "/" + name + "/" + container,
-				Context:   ctxName,
-				Namespace: namespace,
-				Pod:       name,
+				Key:       row.Context + "/" + row.Namespace + "/" + row.Name + "/" + container,
+				Context:   row.Context,
+				Namespace: row.Namespace,
+				Pod:       row.Name,
 				Container: container,
 			})
 		}
@@ -1332,15 +1313,15 @@ func podLogTargets(rows []msgs.RowData) []logstream.Target {
 // sources are left running untouched. An empty target set closes the pane.
 func (m *MainPage) openPodLogs() tea.Cmd {
 	pods := m.tables[msgs.KindPods]
-	var rows []msgs.RowData
+	var rows []msgs.Row
 	if keys := pods.CheckedKeys(); len(keys) > 0 {
 		for _, key := range keys {
 			if row := pods.CheckedRow(key); row != nil {
-				rows = append(rows, row)
+				rows = append(rows, *row)
 			}
 		}
 	} else if row := pods.SelectedRow(); row != nil {
-		rows = append(rows, row)
+		rows = append(rows, *row)
 	}
 
 	targets := podLogTargets(rows)

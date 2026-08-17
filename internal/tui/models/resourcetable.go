@@ -21,11 +21,11 @@ type tableSpec struct {
 	// priority fixed column (Age) per the column-priority order in §8.3,
 	// for TierCompact terminals.
 	narrowColumns func(compact bool) []btable.Column
-	wideColumns   func(rows []msgs.RowData) []btable.Column
+	wideColumns   func(rows []msgs.Row) []btable.Column
 	// displayRow converts one raw row into bubble-table's row format;
 	// colors is the context->identity-colour map for the Context column
 	// (see contextCell in table.go), refreshed via ResourceTable.SetContextColors.
-	displayRow func(row msgs.RowData, checked bool, colors map[string]color.Color) btable.RowData
+	displayRow func(row msgs.Row, checked bool, colors map[string]color.Color) btable.RowData
 	// freezeColumns pins the first N columns during horizontal scroll
 	// (the Pods checkbox column).
 	freezeColumns int
@@ -133,184 +133,175 @@ func specFor(kind msgs.ResourceKind) tableSpec {
 	return tableSpec{}
 }
 
-// rowContext reads a raw row's context name for the Context column's
-// colour lookup — every kind shares msgs.KeyContext under the hood (see
-// the *KeyContext aliases in msgs.go).
-func rowContext(row msgs.RowData) string {
-	name, _ := row[msgs.KeyContext].(string)
-	return name
-}
-
-func podDisplayRow(row msgs.RowData, checked bool, colors map[string]color.Color) btable.RowData {
+func podDisplayRow(row msgs.Row, checked bool, colors map[string]color.Color) btable.RowData {
 	glyph := "☐"
 	if checked {
 		glyph = "☑"
 	}
 	return btable.RowData{
-		msgs.PodKeyCheck:      glyph,
-		msgs.PodKeyContext:    contextCell(rowContext(row), colors),
-		msgs.PodKeyNamespace:  row[msgs.PodKeyNamespace],
-		msgs.PodKeyName:       row[msgs.PodKeyName],
-		msgs.PodKeyStatus:     btable.NewStyledCellWithStyleFunc(row[msgs.PodKeyStatus], statusCellStyle),
-		msgs.PodKeyRestarts:   row[msgs.PodKeyRestarts],
-		msgs.PodKeyAge:        row[msgs.PodKeyAge],
-		msgs.PodKeyContainers: row[msgs.PodKeyContainers],
-		msgs.PodKeyNode:       row[msgs.PodKeyNode],
-		msgs.PodKeyNodeIP:     row[msgs.PodKeyNodeIP],
-		msgs.PodKeyPodIP:      row[msgs.PodKeyPodIP],
-		msgs.PodKeyReady:      row[msgs.PodKeyReady],
-		msgs.PodKeyCPU:        row[msgs.PodKeyCPU],
-		msgs.PodKeyMemory:     row[msgs.PodKeyMemory],
+		msgs.PodKeyCheck:     glyph,
+		msgs.PodKeyContext:   contextCell(row.Context, colors),
+		msgs.PodKeyNamespace: row.Namespace,
+		msgs.PodKeyName:      row.Name,
+		msgs.PodKeyStatus:    btable.NewStyledCellWithStyleFunc(row.Cells[msgs.PodKeyStatus], statusCellStyle),
+		msgs.PodKeyRestarts:  row.Cells[msgs.PodKeyRestarts],
+		msgs.PodKeyAge:       row.Cells[msgs.PodKeyAge],
+		msgs.PodKeyNode:      row.Cells[msgs.PodKeyNode],
+		msgs.PodKeyNodeIP:    row.Cells[msgs.PodKeyNodeIP],
+		msgs.PodKeyPodIP:     row.Cells[msgs.PodKeyPodIP],
+		msgs.PodKeyReady:     row.Cells[msgs.PodKeyReady],
+		msgs.PodKeyCPU:       row.Cells[msgs.PodKeyCPU],
+		msgs.PodKeyMemory:    row.Cells[msgs.PodKeyMemory],
 	}
 }
 
-func deploymentDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func deploymentDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.DeployKeyContext:   contextCell(rowContext(row), colors),
-		msgs.DeployKeyNamespace: row[msgs.DeployKeyNamespace],
-		msgs.DeployKeyName:      row[msgs.DeployKeyName],
-		msgs.DeployKeyAge:       row[msgs.DeployKeyAge],
-		msgs.DeployKeyReplicas:  btable.NewStyledCellWithStyleFunc(row[msgs.DeployKeyReplicas], replicaCellStyle),
-		msgs.DeployKeyStrategy:  row[msgs.DeployKeyStrategy],
-		msgs.DeployKeyAvailable: row[msgs.DeployKeyAvailable],
-		msgs.DeployKeyUpdated:   row[msgs.DeployKeyUpdated],
-		msgs.DeployKeySelector:  row[msgs.DeployKeySelector],
+		msgs.DeployKeyContext:   contextCell(row.Context, colors),
+		msgs.DeployKeyNamespace: row.Namespace,
+		msgs.DeployKeyName:      row.Name,
+		msgs.DeployKeyAge:       row.Cells[msgs.DeployKeyAge],
+		msgs.DeployKeyReplicas:  btable.NewStyledCellWithStyleFunc(row.Cells[msgs.DeployKeyReplicas], replicaCellStyle),
+		msgs.DeployKeyStrategy:  row.Cells[msgs.DeployKeyStrategy],
+		msgs.DeployKeyAvailable: row.Cells[msgs.DeployKeyAvailable],
+		msgs.DeployKeyUpdated:   row.Cells[msgs.DeployKeyUpdated],
+		msgs.DeployKeySelector:  row.Cells[msgs.DeployKeySelector],
 	}
 }
 
-func svcDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func svcDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.SvcKeyContext:     contextCell(rowContext(row), colors),
-		msgs.SvcKeyNamespace:   row[msgs.SvcKeyNamespace],
-		msgs.SvcKeyName:        row[msgs.SvcKeyName],
-		msgs.SvcKeyType:        row[msgs.SvcKeyType],
-		msgs.SvcKeyClusterIP:   row[msgs.SvcKeyClusterIP],
-		msgs.SvcKeyPorts:       row[msgs.SvcKeyPorts],
-		msgs.SvcKeyAge:         row[msgs.SvcKeyAge],
-		msgs.SvcKeySelector:    row[msgs.SvcKeySelector],
-		msgs.SvcKeyExternalIP:  row[msgs.SvcKeyExternalIP],
-		msgs.SvcKeyEndpointIPs: row[msgs.SvcKeyEndpointIPs],
+		msgs.SvcKeyContext:     contextCell(row.Context, colors),
+		msgs.SvcKeyNamespace:   row.Namespace,
+		msgs.SvcKeyName:        row.Name,
+		msgs.SvcKeyType:        row.Cells[msgs.SvcKeyType],
+		msgs.SvcKeyClusterIP:   row.Cells[msgs.SvcKeyClusterIP],
+		msgs.SvcKeyPorts:       row.Cells[msgs.SvcKeyPorts],
+		msgs.SvcKeyAge:         row.Cells[msgs.SvcKeyAge],
+		msgs.SvcKeySelector:    row.Cells[msgs.SvcKeySelector],
+		msgs.SvcKeyExternalIP:  row.Cells[msgs.SvcKeyExternalIP],
+		msgs.SvcKeyEndpointIPs: row.Cells[msgs.SvcKeyEndpointIPs],
 	}
 }
 
-func configMapDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func configMapDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.ConfigMapKeyContext:   contextCell(rowContext(row), colors),
-		msgs.ConfigMapKeyNamespace: row[msgs.ConfigMapKeyNamespace],
-		msgs.ConfigMapKeyName:      row[msgs.ConfigMapKeyName],
-		msgs.ConfigMapKeyKeys:      row[msgs.ConfigMapKeyKeys],
-		msgs.ConfigMapKeyAge:       row[msgs.ConfigMapKeyAge],
-		msgs.ConfigMapKeyKeyNames:  row[msgs.ConfigMapKeyKeyNames],
+		msgs.ConfigMapKeyContext:   contextCell(row.Context, colors),
+		msgs.ConfigMapKeyNamespace: row.Namespace,
+		msgs.ConfigMapKeyName:      row.Name,
+		msgs.ConfigMapKeyKeys:      row.Cells[msgs.ConfigMapKeyKeys],
+		msgs.ConfigMapKeyAge:       row.Cells[msgs.ConfigMapKeyAge],
+		msgs.ConfigMapKeyKeyNames:  row.Cells[msgs.ConfigMapKeyKeyNames],
 	}
 }
 
-func secretDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func secretDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.SecretKeyContext:   contextCell(rowContext(row), colors),
-		msgs.SecretKeyNamespace: row[msgs.SecretKeyNamespace],
-		msgs.SecretKeyName:      row[msgs.SecretKeyName],
-		msgs.SecretKeyType:      row[msgs.SecretKeyType],
-		msgs.SecretKeyKeys:      row[msgs.SecretKeyKeys],
-		msgs.SecretKeyAge:       row[msgs.SecretKeyAge],
+		msgs.SecretKeyContext:   contextCell(row.Context, colors),
+		msgs.SecretKeyNamespace: row.Namespace,
+		msgs.SecretKeyName:      row.Name,
+		msgs.SecretKeyType:      row.Cells[msgs.SecretKeyType],
+		msgs.SecretKeyKeys:      row.Cells[msgs.SecretKeyKeys],
+		msgs.SecretKeyAge:       row.Cells[msgs.SecretKeyAge],
 	}
 }
 
-func jobDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func jobDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.JobKeyContext:     contextCell(rowContext(row), colors),
-		msgs.JobKeyNamespace:   row[msgs.JobKeyNamespace],
-		msgs.JobKeyName:        row[msgs.JobKeyName],
-		msgs.JobKeyCompletions: row[msgs.JobKeyCompletions],
-		msgs.JobKeyDuration:    row[msgs.JobKeyDuration],
-		msgs.JobKeyAge:         row[msgs.JobKeyAge],
-		msgs.JobKeyStatus:      row[msgs.JobKeyStatus],
+		msgs.JobKeyContext:     contextCell(row.Context, colors),
+		msgs.JobKeyNamespace:   row.Namespace,
+		msgs.JobKeyName:        row.Name,
+		msgs.JobKeyCompletions: row.Cells[msgs.JobKeyCompletions],
+		msgs.JobKeyDuration:    row.Cells[msgs.JobKeyDuration],
+		msgs.JobKeyAge:         row.Cells[msgs.JobKeyAge],
+		msgs.JobKeyStatus:      row.Cells[msgs.JobKeyStatus],
 	}
 }
 
-func cronJobDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func cronJobDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.CronJobKeyContext:       contextCell(rowContext(row), colors),
-		msgs.CronJobKeyNamespace:     row[msgs.CronJobKeyNamespace],
-		msgs.CronJobKeyName:          row[msgs.CronJobKeyName],
-		msgs.CronJobKeySchedule:      row[msgs.CronJobKeySchedule],
-		msgs.CronJobKeySuspend:       row[msgs.CronJobKeySuspend],
-		msgs.CronJobKeyAge:           row[msgs.CronJobKeyAge],
-		msgs.CronJobKeyLastScheduled: row[msgs.CronJobKeyLastScheduled],
+		msgs.CronJobKeyContext:       contextCell(row.Context, colors),
+		msgs.CronJobKeyNamespace:     row.Namespace,
+		msgs.CronJobKeyName:          row.Name,
+		msgs.CronJobKeySchedule:      row.Cells[msgs.CronJobKeySchedule],
+		msgs.CronJobKeySuspend:       row.Cells[msgs.CronJobKeySuspend],
+		msgs.CronJobKeyAge:           row.Cells[msgs.CronJobKeyAge],
+		msgs.CronJobKeyLastScheduled: row.Cells[msgs.CronJobKeyLastScheduled],
 	}
 }
 
-func statefulSetDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func statefulSetDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.StatefulSetKeyContext:   contextCell(rowContext(row), colors),
-		msgs.StatefulSetKeyNamespace: row[msgs.StatefulSetKeyNamespace],
-		msgs.StatefulSetKeyName:      row[msgs.StatefulSetKeyName],
-		msgs.StatefulSetKeyReady:     row[msgs.StatefulSetKeyReady],
-		msgs.StatefulSetKeyAge:       row[msgs.StatefulSetKeyAge],
-		msgs.StatefulSetKeySelector:  row[msgs.StatefulSetKeySelector],
+		msgs.StatefulSetKeyContext:   contextCell(row.Context, colors),
+		msgs.StatefulSetKeyNamespace: row.Namespace,
+		msgs.StatefulSetKeyName:      row.Name,
+		msgs.StatefulSetKeyReady:     row.Cells[msgs.StatefulSetKeyReady],
+		msgs.StatefulSetKeyAge:       row.Cells[msgs.StatefulSetKeyAge],
+		msgs.StatefulSetKeySelector:  row.Cells[msgs.StatefulSetKeySelector],
 	}
 }
 
-func daemonSetDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func daemonSetDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.DaemonSetKeyContext:   contextCell(rowContext(row), colors),
-		msgs.DaemonSetKeyNamespace: row[msgs.DaemonSetKeyNamespace],
-		msgs.DaemonSetKeyName:      row[msgs.DaemonSetKeyName],
-		msgs.DaemonSetKeyReady:     row[msgs.DaemonSetKeyReady],
-		msgs.DaemonSetKeyAge:       row[msgs.DaemonSetKeyAge],
-		msgs.DaemonSetKeySelector:  row[msgs.DaemonSetKeySelector],
+		msgs.DaemonSetKeyContext:   contextCell(row.Context, colors),
+		msgs.DaemonSetKeyNamespace: row.Namespace,
+		msgs.DaemonSetKeyName:      row.Name,
+		msgs.DaemonSetKeyReady:     row.Cells[msgs.DaemonSetKeyReady],
+		msgs.DaemonSetKeyAge:       row.Cells[msgs.DaemonSetKeyAge],
+		msgs.DaemonSetKeySelector:  row.Cells[msgs.DaemonSetKeySelector],
 	}
 }
 
-func ingressDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func ingressDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.IngressKeyContext:   contextCell(rowContext(row), colors),
-		msgs.IngressKeyNamespace: row[msgs.IngressKeyNamespace],
-		msgs.IngressKeyName:      row[msgs.IngressKeyName],
-		msgs.IngressKeyHosts:     row[msgs.IngressKeyHosts],
-		msgs.IngressKeyClass:     row[msgs.IngressKeyClass],
-		msgs.IngressKeyAge:       row[msgs.IngressKeyAge],
-		msgs.IngressKeyBackends:  row[msgs.IngressKeyBackends],
+		msgs.IngressKeyContext:   contextCell(row.Context, colors),
+		msgs.IngressKeyNamespace: row.Namespace,
+		msgs.IngressKeyName:      row.Name,
+		msgs.IngressKeyHosts:     row.Cells[msgs.IngressKeyHosts],
+		msgs.IngressKeyClass:     row.Cells[msgs.IngressKeyClass],
+		msgs.IngressKeyAge:       row.Cells[msgs.IngressKeyAge],
+		msgs.IngressKeyBackends:  row.Cells[msgs.IngressKeyBackends],
 	}
 }
 
-func pdbDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func pdbDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.PDBKeyContext:            contextCell(rowContext(row), colors),
-		msgs.PDBKeyNamespace:          row[msgs.PDBKeyNamespace],
-		msgs.PDBKeyName:               row[msgs.PDBKeyName],
-		msgs.PDBKeyMinMaxAvailable:    row[msgs.PDBKeyMinMaxAvailable],
-		msgs.PDBKeyAllowedDisruptions: row[msgs.PDBKeyAllowedDisruptions],
-		msgs.PDBKeyAge:                row[msgs.PDBKeyAge],
-		msgs.PDBKeyCurrentHealthy:     row[msgs.PDBKeyCurrentHealthy],
-		msgs.PDBKeyDesiredHealthy:     row[msgs.PDBKeyDesiredHealthy],
+		msgs.PDBKeyContext:            contextCell(row.Context, colors),
+		msgs.PDBKeyNamespace:          row.Namespace,
+		msgs.PDBKeyName:               row.Name,
+		msgs.PDBKeyMinMaxAvailable:    row.Cells[msgs.PDBKeyMinMaxAvailable],
+		msgs.PDBKeyAllowedDisruptions: row.Cells[msgs.PDBKeyAllowedDisruptions],
+		msgs.PDBKeyAge:                row.Cells[msgs.PDBKeyAge],
+		msgs.PDBKeyCurrentHealthy:     row.Cells[msgs.PDBKeyCurrentHealthy],
+		msgs.PDBKeyDesiredHealthy:     row.Cells[msgs.PDBKeyDesiredHealthy],
 	}
 }
 
-func hpaDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func hpaDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.HPAKeyContext:   contextCell(rowContext(row), colors),
-		msgs.HPAKeyNamespace: row[msgs.HPAKeyNamespace],
-		msgs.HPAKeyName:      row[msgs.HPAKeyName],
-		msgs.HPAKeyReference: row[msgs.HPAKeyReference],
-		msgs.HPAKeyMinMax:    row[msgs.HPAKeyMinMax],
-		msgs.HPAKeyReplicas:  row[msgs.HPAKeyReplicas],
-		msgs.HPAKeyTargets:   row[msgs.HPAKeyTargets],
-		msgs.HPAKeyAge:       row[msgs.HPAKeyAge],
+		msgs.HPAKeyContext:   contextCell(row.Context, colors),
+		msgs.HPAKeyNamespace: row.Namespace,
+		msgs.HPAKeyName:      row.Name,
+		msgs.HPAKeyReference: row.Cells[msgs.HPAKeyReference],
+		msgs.HPAKeyMinMax:    row.Cells[msgs.HPAKeyMinMax],
+		msgs.HPAKeyReplicas:  row.Cells[msgs.HPAKeyReplicas],
+		msgs.HPAKeyTargets:   row.Cells[msgs.HPAKeyTargets],
+		msgs.HPAKeyAge:       row.Cells[msgs.HPAKeyAge],
 	}
 }
 
-func nodeDisplayRow(row msgs.RowData, _ bool, colors map[string]color.Color) btable.RowData {
+func nodeDisplayRow(row msgs.Row, _ bool, colors map[string]color.Color) btable.RowData {
 	return btable.RowData{
-		msgs.NodeKeyContext:    contextCell(rowContext(row), colors),
-		msgs.NodeKeyName:       row[msgs.NodeKeyName],
-		msgs.NodeKeyStatus:     row[msgs.NodeKeyStatus],
-		msgs.NodeKeyRoles:      row[msgs.NodeKeyRoles],
-		msgs.NodeKeyAge:        row[msgs.NodeKeyAge],
-		msgs.NodeKeyVersion:    row[msgs.NodeKeyVersion],
-		msgs.NodeKeyInternalIP: row[msgs.NodeKeyInternalIP],
-		msgs.NodeKeyOS:         row[msgs.NodeKeyOS],
-		msgs.NodeKeyCPU:        row[msgs.NodeKeyCPU],
-		msgs.NodeKeyMemory:     row[msgs.NodeKeyMemory],
+		msgs.NodeKeyContext:    contextCell(row.Context, colors),
+		msgs.NodeKeyName:       row.Name,
+		msgs.NodeKeyStatus:     row.Cells[msgs.NodeKeyStatus],
+		msgs.NodeKeyRoles:      row.Cells[msgs.NodeKeyRoles],
+		msgs.NodeKeyAge:        row.Cells[msgs.NodeKeyAge],
+		msgs.NodeKeyVersion:    row.Cells[msgs.NodeKeyVersion],
+		msgs.NodeKeyInternalIP: row.Cells[msgs.NodeKeyInternalIP],
+		msgs.NodeKeyOS:         row.Cells[msgs.NodeKeyOS],
+		msgs.NodeKeyCPU:        row.Cells[msgs.NodeKeyCPU],
+		msgs.NodeKeyMemory:     row.Cells[msgs.NodeKeyMemory],
 	}
 }
 
@@ -323,7 +314,7 @@ type ResourceTable struct {
 	table btable.Model
 	spec  tableSpec
 
-	rows       []msgs.RowData
+	rows       []msgs.Row
 	rowsSet    bool
 	cachedView string
 	viewDirty  bool
@@ -396,18 +387,16 @@ func (t *ResourceTable) SetTier(tier views.Tier) {
 
 // PodRowKey identifies a raw (un-prefixed) Pods-table row for check-state
 // tracking, keyed by context/namespace/name — the same triple used to
-// pin the log pane to a specific pod.
-func PodRowKey(row msgs.RowData) string {
+// pin the log pane to a specific pod. row is nil-able so SelectedRow's "no
+// row" result can pass straight through without the caller checking first.
+func PodRowKey(row *msgs.Row) string {
 	if row == nil {
 		return ""
 	}
-	ctx, _ := row[msgs.KeyContext].(string)
-	ns, _ := row[msgs.KeyNamespace].(string)
-	name, _ := row[msgs.KeyName].(string)
-	if ctx == "" && ns == "" && name == "" {
+	if row.Context == "" && row.Namespace == "" && row.Name == "" {
 		return ""
 	}
-	return ctx + "/" + ns + "/" + name
+	return row.Context + "/" + row.Namespace + "/" + row.Name
 }
 
 func (t *ResourceTable) Update(msg tea.Msg) tea.Cmd {
@@ -453,8 +442,7 @@ func (t *ResourceTable) Update(msg tea.Msg) tea.Cmd {
 // filterMatch is the rowFilter matchFn: a case-insensitive substring match
 // against the Name column.
 func (t *ResourceTable) filterMatch(i int) bool {
-	name, _ := t.rows[i][msgs.KeyName].(string)
-	return strings.Contains(strings.ToLower(name), strings.ToLower(t.filter.query))
+	return strings.Contains(strings.ToLower(t.rows[i].Name), strings.ToLower(t.filter.query))
 }
 
 // afterFilterChange re-syncs the cursor/window to the (possibly just
@@ -475,7 +463,7 @@ func (t *ResourceTable) activeLen() int {
 }
 
 // activeRow returns the raw row at position pos in the active index space.
-func (t *ResourceTable) activeRow(pos int) msgs.RowData {
+func (t *ResourceTable) activeRow(pos int) msgs.Row {
 	return t.rows[t.filter.absolute(pos)]
 }
 
@@ -552,7 +540,7 @@ func (t *ResourceTable) jumpTo(idx int) {
 // SetRows replaces the full row set, preserving cursor/window/filter/scroll
 // state. Callers hand over ownership of rows — the watch caches build every
 // row map fresh, so no defensive clone is taken.
-func (t *ResourceTable) SetRows(rows []msgs.RowData) {
+func (t *ResourceTable) SetRows(rows []msgs.Row) {
 	if t.rowsSet && rowsEqual(rows, t.rows) {
 		return
 	}
@@ -607,7 +595,7 @@ func (t *ResourceTable) pushDisplayRows() {
 	display := make([]btable.Row, 0, end-start)
 	for i := start; i < end; i++ {
 		row := t.activeRow(i)
-		display = append(display, btable.NewRow(t.spec.displayRow(row, t.checked[PodRowKey(row)], t.contextColors)))
+		display = append(display, btable.NewRow(t.spec.displayRow(row, t.checked[PodRowKey(&row)], t.contextColors)))
 	}
 	t.table = t.table.WithRows(display).WithHighlightedRow(t.cursorIdx - start)
 }
@@ -711,10 +699,10 @@ func (t *ResourceTable) CheckedKeys() []string {
 
 // CheckedRow returns the raw (un-prefixed) row for a given check key, or
 // nil if no such row is currently loaded.
-func (t *ResourceTable) CheckedRow(key string) msgs.RowData {
-	for _, row := range t.rows {
-		if PodRowKey(row) == key {
-			return row
+func (t *ResourceTable) CheckedRow(key string) *msgs.Row {
+	for i := range t.rows {
+		if PodRowKey(&t.rows[i]) == key {
+			return &t.rows[i]
 		}
 	}
 	return nil
@@ -775,11 +763,12 @@ func (t *ResourceTable) SetSize(w, h int) {
 // SelectedRow returns the raw (un-prefixed) row currently under the cursor,
 // or nil if there are no rows. Raw rows are what callers should read
 // resource identity out of — the table itself renders a display copy.
-func (t *ResourceTable) SelectedRow() msgs.RowData {
+func (t *ResourceTable) SelectedRow() *msgs.Row {
 	if t.cursorIdx < 0 || t.cursorIdx >= t.activeLen() {
 		return nil
 	}
-	return t.activeRow(t.cursorIdx)
+	row := t.activeRow(t.cursorIdx)
+	return &row
 }
 
 func (t *ResourceTable) invalidateView() {

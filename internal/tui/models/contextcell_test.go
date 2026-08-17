@@ -38,9 +38,9 @@ func TestContextCellDotAlwaysCarriesIdentityColor(t *testing.T) {
 	p.SetFocused(true)
 	p.SetSize(80, 20)
 	p.SetContextColors(map[string]color.Color{"ctx-a": identity})
-	p.SetRows([]msgs.RowData{
-		{msgs.DeployKeyName: "aaa", msgs.DeployKeyNamespace: "ns", msgs.DeployKeyContext: "ctx-a", msgs.DeployKeyAge: "1d", msgs.DeployKeyReplicas: "1/1"},
-		{msgs.DeployKeyName: "bbb", msgs.DeployKeyNamespace: "ns", msgs.DeployKeyContext: "ctx-a", msgs.DeployKeyAge: "1d", msgs.DeployKeyReplicas: "1/1"},
+	p.SetRows([]msgs.Row{
+		{Name: "aaa", Namespace: "ns", Context: "ctx-a", Cells: map[string]string{msgs.DeployKeyAge: "1d", msgs.DeployKeyReplicas: "1/1"}},
+		{Name: "bbb", Namespace: "ns", Context: "ctx-a", Cells: map[string]string{msgs.DeployKeyAge: "1d", msgs.DeployKeyReplicas: "1/1"}},
 	})
 
 	identityCode := ansiFg(identity)

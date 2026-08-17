@@ -28,8 +28,8 @@ func TestPodCache_AddedModifiedDeleted(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.PodKeyStatus] != "Pending" {
-		t.Fatalf("expected Pending, got %v", rows[0][msgs.PodKeyStatus])
+	if rows[0].Cells[msgs.PodKeyStatus] != "Pending" {
+		t.Fatalf("expected Pending, got %v", rows[0].Cells[msgs.PodKeyStatus])
 	}
 
 	podAModified := podA.DeepCopy()
@@ -40,7 +40,7 @@ func TestPodCache_AddedModifiedDeleted(t *testing.T) {
 	}
 
 	rows = c.rows("ctx1")
-	if len(rows) != 1 || rows[0][msgs.PodKeyStatus] != "Running" {
+	if len(rows) != 1 || rows[0].Cells[msgs.PodKeyStatus] != "Running" {
 		t.Fatalf("expected 1 Running row after modify, got %+v", rows)
 	}
 
@@ -71,7 +71,7 @@ func TestPodCache_StaleModifiedIgnored(t *testing.T) {
 	}
 
 	rows := c.rows("ctx1")
-	if len(rows) != 1 || rows[0][msgs.PodKeyStatus] != "Running" {
+	if len(rows) != 1 || rows[0].Cells[msgs.PodKeyStatus] != "Running" {
 		t.Fatalf("expected stale redelivery to be ignored, got %+v", rows)
 	}
 }
@@ -115,8 +115,8 @@ func TestPodCache_SortedByNamespaceThenName(t *testing.T) {
 	}
 	wantOrder := []string{"a", "b", "z"}
 	for i, want := range wantOrder {
-		if rows[i][msgs.PodKeyName] != want {
-			t.Fatalf("row %d: expected name %s, got %v", i, want, rows[i][msgs.PodKeyName])
+		if rows[i].Name != want {
+			t.Fatalf("row %d: expected name %s, got %v", i, want, rows[i].Name)
 		}
 	}
 }
@@ -137,8 +137,8 @@ func TestDeploymentCache_AddedDeleted(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.DeployKeyReplicas] != "2/3" {
-		t.Fatalf("expected replicas 2/3, got %v", rows[0][msgs.DeployKeyReplicas])
+	if rows[0].Cells[msgs.DeployKeyReplicas] != "2/3" {
+		t.Fatalf("expected replicas 2/3, got %v", rows[0].Cells[msgs.DeployKeyReplicas])
 	}
 
 	if err := c.apply(kwatch.Event{Type: kwatch.Deleted, Object: dep}); err != nil {
@@ -162,8 +162,8 @@ func TestServiceCache_RowsIncludeEndpointPlaceholder(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.SvcKeyEndpointIPs] != EndpointIPsPlaceholder {
-		t.Fatalf("expected placeholder %q, got %v", EndpointIPsPlaceholder, rows[0][msgs.SvcKeyEndpointIPs])
+	if rows[0].Cells[msgs.SvcKeyEndpointIPs] != EndpointIPsPlaceholder {
+		t.Fatalf("expected placeholder %q, got %v", EndpointIPsPlaceholder, rows[0].Cells[msgs.SvcKeyEndpointIPs])
 	}
 }
 
@@ -181,11 +181,11 @@ func TestConfigMapCache_RowsCountKeys(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.ConfigMapKeyKeys] != "2" {
-		t.Fatalf("expected 2 keys, got %v", rows[0][msgs.ConfigMapKeyKeys])
+	if rows[0].Cells[msgs.ConfigMapKeyKeys] != "2" {
+		t.Fatalf("expected 2 keys, got %v", rows[0].Cells[msgs.ConfigMapKeyKeys])
 	}
-	if rows[0][msgs.ConfigMapKeyKeyNames] != "a.yaml,b.yaml" {
-		t.Fatalf("expected sorted key names, got %v", rows[0][msgs.ConfigMapKeyKeyNames])
+	if rows[0].Cells[msgs.ConfigMapKeyKeyNames] != "a.yaml,b.yaml" {
+		t.Fatalf("expected sorted key names, got %v", rows[0].Cells[msgs.ConfigMapKeyKeyNames])
 	}
 }
 
@@ -208,14 +208,14 @@ func TestSecretCache_NeverCarriesValues(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.SecretKeyKeys] != "1" {
-		t.Fatalf("expected 1 key, got %v", rows[0][msgs.SecretKeyKeys])
+	if rows[0].Cells[msgs.SecretKeyKeys] != "1" {
+		t.Fatalf("expected 1 key, got %v", rows[0].Cells[msgs.SecretKeyKeys])
 	}
-	if rows[0][msgs.SecretKeyType] != string(corev1.SecretTypeOpaque) {
-		t.Fatalf("expected type Opaque, got %v", rows[0][msgs.SecretKeyType])
+	if rows[0].Cells[msgs.SecretKeyType] != string(corev1.SecretTypeOpaque) {
+		t.Fatalf("expected type Opaque, got %v", rows[0].Cells[msgs.SecretKeyType])
 	}
-	for _, v := range rows[0] {
-		if s, ok := v.(string); ok && strings.Contains(s, "hunter2") {
+	for _, v := range rows[0].Cells {
+		if strings.Contains(v, "hunter2") {
 			t.Fatalf("secret row leaked a raw value: %+v", rows[0])
 		}
 	}
@@ -274,7 +274,7 @@ func TestSecretCache_StripsDataValuesOnStore(t *testing.T) {
 	}
 
 	rows := c.rows("ctx1")
-	if len(rows) != 1 || rows[0][msgs.SecretKeyKeys] != "1" {
+	if len(rows) != 1 || rows[0].Cells[msgs.SecretKeyKeys] != "1" {
 		t.Fatalf("expected row output unchanged (1 key), got %+v", rows)
 	}
 }
@@ -302,7 +302,7 @@ func TestConfigMapCache_StripsDataValuesOnStore(t *testing.T) {
 	}
 
 	rows := c.rows("ctx1")
-	if len(rows) != 1 || rows[0][msgs.ConfigMapKeyKeys] != "1" {
+	if len(rows) != 1 || rows[0].Cells[msgs.ConfigMapKeyKeys] != "1" {
 		t.Fatalf("expected row output unchanged (1 key), got %+v", rows)
 	}
 }
@@ -327,10 +327,10 @@ func TestNodeCache_StatusAndRoles(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.NodeKeyStatus] != "Ready" {
-		t.Fatalf("expected Ready, got %v", rows[0][msgs.NodeKeyStatus])
+	if rows[0].Cells[msgs.NodeKeyStatus] != "Ready" {
+		t.Fatalf("expected Ready, got %v", rows[0].Cells[msgs.NodeKeyStatus])
 	}
-	if rows[0][msgs.NodeKeyRoles] != "control-plane" {
-		t.Fatalf("expected control-plane role, got %v", rows[0][msgs.NodeKeyRoles])
+	if rows[0].Cells[msgs.NodeKeyRoles] != "control-plane" {
+		t.Fatalf("expected control-plane role, got %v", rows[0].Cells[msgs.NodeKeyRoles])
 	}
 }

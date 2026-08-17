@@ -1,20 +1,29 @@
 package models
 
-import "github.com/ktails/ktails/internal/tui/msgs"
+import (
+	"slices"
+
+	"github.com/ktails/ktails/internal/tui/msgs"
+)
 
 // Helper functions (shared with deployment.go - consider moving to shared utils)
-func rowsEqual(a, b []msgs.RowData) bool {
+func rowsEqual(a, b []msgs.Row) bool {
 	if len(a) != len(b) {
 		return false
 	}
 
 	for i := range a {
-		if len(a[i]) != len(b[i]) {
+		if a[i].Name != b[i].Name || a[i].Namespace != b[i].Namespace || a[i].Context != b[i].Context || a[i].CreatedAt != b[i].CreatedAt {
 			return false
 		}
-
-		for k, v := range a[i] {
-			if bv, ok := b[i][k]; !ok || bv != v {
+		if !slices.Equal(a[i].Containers, b[i].Containers) {
+			return false
+		}
+		if len(a[i].Cells) != len(b[i].Cells) {
+			return false
+		}
+		for k, v := range a[i].Cells {
+			if bv, ok := b[i].Cells[k]; !ok || bv != v {
 				return false
 			}
 		}

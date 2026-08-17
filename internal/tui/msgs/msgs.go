@@ -3,6 +3,7 @@ package msgs
 
 import (
 	"io"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -113,43 +114,54 @@ func (k ResourceKind) String() string {
 	return k.Title()
 }
 
-// RowData is a keyed row of field values for the Pods/Deployments/svc
-// tables. Keys matching a table.Column's key are displayed; others (e.g.
-// KeyContext/PodKeyContainers) ride along as hidden metadata for the
-// Detail pane / Log pane to read without a visible column of their own.
-type RowData = map[string]any
+// Row is one table row's field values, for the Pods/Deployments/.../Nodes
+// tables. Name/Namespace/Context/CreatedAt are promoted to typed fields
+// since every kind carries them identically (kind-agnostic callers — the
+// Detail Pane's row->identity extraction, sorting, namespace filtering —
+// read a row without switching on its kind); Containers is Pods-only, read
+// directly by the Log pane instead of splitting a comma-joined string.
+// Cells holds every remaining, per-kind-specific display column, keyed by
+// the same XxxKeyY constants a table.Column's key matches — a value here is
+// displayed only if some column for that kind actually uses its key; others
+// ride along as hidden metadata (e.g. wide-mode-only fields) for the Detail
+// pane to read without a visible column of their own.
+type Row struct {
+	Name, Namespace, Context string
+	CreatedAt                time.Time
+	Containers               []string
+	Cells                    map[string]string
+}
 
-// Shared row keys — deliberately identical across all three resource kinds,
-// so kind-agnostic callers (the Detail Pane's row→identity extraction) can
-// read a selected row without switching on its kind.
+// Shared row keys — deliberately identical across every resource kind, so
+// kind-agnostic callers (the Detail Pane's row→identity extraction) can
+// read a selected row without switching on its kind. Namespace/Name/Context
+// back Row's typed fields directly rather than a Cells entry — see Row's
+// doc comment — but stay defined here since every kind's own KeyX alias
+// (e.g. PodKeyNamespace) is still a real btable.Column key, just no longer
+// a RowData map key.
 const (
 	KeyName      = "name"
 	KeyNamespace = "namespace"
 	KeyContext   = "context"
-	// KeyCreatedAt carries each row's raw creation timestamp (time.Time),
-	// set once at row-build time by watch.cache's row converters. It backs
-	// nothing visible — Age's displayed string comes from the per-kind
-	// KeyAge field — it exists purely so Age can be sorted chronologically
-	// rather than as text (see MainPage.sortRows).
-	KeyCreatedAt = "createdAt"
 )
 
 // Column keys for Pods rows (see watch.Supervisor / models.ResourceTable).
+// Containers has no column key — it's Row.Containers, a typed field (see
+// Row's doc comment), read directly by the Log pane.
 const (
-	PodKeyCheck      = "check"
-	PodKeyName       = KeyName
-	PodKeyNamespace  = KeyNamespace
-	PodKeyStatus     = "status"
-	PodKeyRestarts   = "restarts"
-	PodKeyAge        = "age"
-	PodKeyContext    = KeyContext   // Context column; also used by the detail tab
-	PodKeyContainers = "containers" // hidden, comma-separated, used by the log pane
-	PodKeyNode       = "node"       // wide mode only
-	PodKeyNodeIP     = "nodeIP"     // wide mode only
-	PodKeyPodIP      = "podIP"      // wide mode only
-	PodKeyReady      = "ready"      // wide mode only, "ready/total" containers
-	PodKeyCPU        = "cpu"        // "-" until lazily fetched from metrics-server
-	PodKeyMemory     = "memory"     // "-" until lazily fetched from metrics-server
+	PodKeyCheck     = "check"
+	PodKeyName      = KeyName
+	PodKeyNamespace = KeyNamespace
+	PodKeyStatus    = "status"
+	PodKeyRestarts  = "restarts"
+	PodKeyAge       = "age"
+	PodKeyContext   = KeyContext // Context column; also used by the detail tab
+	PodKeyNode      = "node"     // wide mode only
+	PodKeyNodeIP    = "nodeIP"   // wide mode only
+	PodKeyPodIP     = "podIP"    // wide mode only
+	PodKeyReady     = "ready"    // wide mode only, "ready/total" containers
+	PodKeyCPU       = "cpu"      // "-" until lazily fetched from metrics-server
+	PodKeyMemory    = "memory"   // "-" until lazily fetched from metrics-server
 )
 
 // Column keys for Deployments rows.

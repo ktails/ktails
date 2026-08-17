@@ -8,18 +8,19 @@ import (
 	"github.com/ktails/ktails/internal/tui/msgs"
 )
 
-func samplePodRows(n int) []msgs.RowData {
-	rows := make([]msgs.RowData, n)
+func samplePodRows(n int) []msgs.Row {
+	rows := make([]msgs.Row, n)
 	statuses := []string{"Running", "Pending", "Failed", "Succeeded", "Unknown"}
 	for i := 0; i < n; i++ {
-		rows[i] = msgs.RowData{
-			msgs.PodKeyName:       "pod-with-a-fairly-long-name-" + strings.Repeat("x", i%5),
-			msgs.PodKeyNamespace:  "ns",
-			msgs.PodKeyStatus:     statuses[i%len(statuses)],
-			msgs.PodKeyRestarts:   "0",
-			msgs.PodKeyAge:        "1d",
-			msgs.PodKeyContext:    "ctx-a",
-			msgs.PodKeyContainers: "app,sidecar",
+		rows[i] = msgs.Row{
+			Name:      "pod-with-a-fairly-long-name-" + strings.Repeat("x", i%5),
+			Namespace: "ns",
+			Context:   "ctx-a",
+			Cells: map[string]string{
+				msgs.PodKeyStatus:   statuses[i%len(statuses)],
+				msgs.PodKeyRestarts: "0",
+				msgs.PodKeyAge:      "1d",
+			},
 		}
 	}
 	return rows
@@ -65,17 +66,17 @@ func TestPodPageCursorPreservedAcrossRefresh(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		p.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != p.rows[3][msgs.PodKeyName] {
+	if row := p.SelectedRow(); row == nil || row.Name != p.rows[3].Name {
 		t.Fatalf("expected cursor at row 3, got %v", row)
 	}
 
 	// A refresh with the same row count/content is a no-op per rowsEqual,
 	// but a refresh with genuinely new data must still preserve the cursor.
 	newRows := samplePodRows(10)
-	newRows[0][msgs.PodKeyRestarts] = "5" // force rowsEqual to see a change
+	newRows[0].Cells[msgs.PodKeyRestarts] = "5" // force rowsEqual to see a change
 	p.SetRows(newRows)
 
-	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != newRows[3][msgs.PodKeyName] {
+	if row := p.SelectedRow(); row == nil || row.Name != newRows[3].Name {
 		t.Fatalf("expected cursor preserved at row 3 after refresh, got %v", row)
 	}
 }
@@ -106,7 +107,7 @@ func TestPodPageLargeRowSetIsWindowed(t *testing.T) {
 	for i := 0; i < wantWindow; i++ {
 		p.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[wantWindow][msgs.PodKeyName] {
+	if row := p.SelectedRow(); row == nil || row.Name != rows[wantWindow].Name {
 		t.Fatalf("expected cursor at row %d after scrolling past window edge, got %v", wantWindow, row)
 	}
 	if got := len(p.table.GetVisibleRows()); got > wantWindow {
@@ -133,7 +134,7 @@ func TestPodPageJumpToEndOnLargeRowSet(t *testing.T) {
 
 	p.Update(tea.KeyPressMsg{Code: 'G'})
 
-	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[len(rows)-1][msgs.PodKeyName] {
+	if row := p.SelectedRow(); row == nil || row.Name != rows[len(rows)-1].Name {
 		t.Fatalf("expected cursor at last row after G, got %v", row)
 	}
 	wantWindow := rowWindowSizeFor(20)
@@ -147,7 +148,7 @@ func TestPodPageJumpToEndOnLargeRowSet(t *testing.T) {
 
 	// "g"/Home takes it straight back to the first row.
 	p.Update(tea.KeyPressMsg{Code: 'g'})
-	if row := p.SelectedRow(); row == nil || row[msgs.PodKeyName] != rows[0][msgs.PodKeyName] {
+	if row := p.SelectedRow(); row == nil || row.Name != rows[0].Name {
 		t.Fatalf("expected cursor at first row after g, got %v", row)
 	}
 	if p.windowStart != 0 {
@@ -175,7 +176,7 @@ func TestPodPageFilterSearchesFullRowSetNotJustWindow(t *testing.T) {
 	p.SetSize(60, 20)
 	p.SetFocused(true)
 	rows := samplePodRows(2000)
-	rows[1500][msgs.PodKeyName] = "special-unique-pod-xyz"
+	rows[1500].Name = "special-unique-pod-xyz"
 	p.SetRows(rows)
 
 	// Cursor/window start out at row 0 — nowhere near row 1500.
@@ -193,7 +194,7 @@ func TestPodPageFilterSearchesFullRowSetNotJustWindow(t *testing.T) {
 	}
 
 	row := p.SelectedRow()
-	if row == nil || row[msgs.PodKeyName] != "special-unique-pod-xyz" {
+	if row == nil || row.Name != "special-unique-pod-xyz" {
 		t.Fatalf("expected cursor on the matched row, got %v", row)
 	}
 
@@ -227,7 +228,7 @@ func TestPodPageScrollPersistsAcrossRefreshResetsOnResize(t *testing.T) {
 	}
 
 	newRows := samplePodRows(5)
-	newRows[0][msgs.PodKeyRestarts] = "9"
+	newRows[0].Cells[msgs.PodKeyRestarts] = "9"
 	p.SetRows(newRows)
 	offsetAfter, _, _ := p.ScrollStatus()
 	if offsetAfter != offsetBefore {
@@ -249,7 +250,7 @@ func TestPodRowKeyAndCheckToggle(t *testing.T) {
 	rows := samplePodRows(3)
 	p.SetRows(rows)
 
-	key := PodRowKey(rows[0])
+	key := PodRowKey(&rows[0])
 	if key == "" {
 		t.Fatalf("expected non-empty row key")
 	}
@@ -269,13 +270,15 @@ func TestPodRowKeyAndCheckToggle(t *testing.T) {
 func TestDeploymentReplicaColoringViaStyledCell(t *testing.T) {
 	d := NewResourceTable(msgs.KindDeployments)
 	d.SetSize(40, 20)
-	d.SetRows([]msgs.RowData{
+	d.SetRows([]msgs.Row{
 		{
-			msgs.DeployKeyName:      "dep-a",
-			msgs.DeployKeyAge:       "2d",
-			msgs.DeployKeyReplicas:  "1/3",
-			msgs.DeployKeyContext:   "ctx-a",
-			msgs.DeployKeyNamespace: "ns",
+			Name:      "dep-a",
+			Namespace: "ns",
+			Context:   "ctx-a",
+			Cells: map[string]string{
+				msgs.DeployKeyAge:      "2d",
+				msgs.DeployKeyReplicas: "1/3",
+			},
 		},
 	})
 	view := d.View()

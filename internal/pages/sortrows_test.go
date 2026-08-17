@@ -7,19 +7,15 @@ import (
 	"github.com/ktails/ktails/internal/tui/msgs"
 )
 
-func rowNamed(name, namespace string, createdAt time.Time) msgs.RowData {
-	return msgs.RowData{
-		msgs.KeyName:      name,
-		msgs.KeyNamespace: namespace,
-		msgs.KeyCreatedAt: createdAt,
-	}
+func rowNamed(name, namespace string, createdAt time.Time) msgs.Row {
+	return msgs.Row{Name: name, Namespace: namespace, CreatedAt: createdAt}
 }
 
 // TestSortRows_None is a true no-op, preserving input order.
 func TestSortRows_None(t *testing.T) {
-	rows := []msgs.RowData{rowNamed("zeta", "ns", time.Time{}), rowNamed("alpha", "ns", time.Time{})}
+	rows := []msgs.Row{rowNamed("zeta", "ns", time.Time{}), rowNamed("alpha", "ns", time.Time{})}
 	got := sortRows(rows, sortNone, sortAsc)
-	if got[0][msgs.KeyName] != "zeta" || got[1][msgs.KeyName] != "alpha" {
+	if got[0].Name != "zeta" || got[1].Name != "alpha" {
 		t.Fatalf("expected sortNone to preserve input order, got %+v", got)
 	}
 }
@@ -27,40 +23,40 @@ func TestSortRows_None(t *testing.T) {
 // TestSortRows_ByNameAscendingCaseInsensitive guards both the ordering and
 // the case-insensitive compare (mixed-case resource names are common).
 func TestSortRows_ByNameAscendingCaseInsensitive(t *testing.T) {
-	rows := []msgs.RowData{rowNamed("Zeta", "ns", time.Time{}), rowNamed("alpha", "ns", time.Time{})}
+	rows := []msgs.Row{rowNamed("Zeta", "ns", time.Time{}), rowNamed("alpha", "ns", time.Time{})}
 	got := sortRows(rows, sortByName, sortAsc)
-	if got[0][msgs.KeyName] != "alpha" || got[1][msgs.KeyName] != "Zeta" {
+	if got[0].Name != "alpha" || got[1].Name != "Zeta" {
 		t.Fatalf("expected alpha before Zeta, got %+v", got)
 	}
 }
 
 // TestSortRows_ByNameDescending guards direction reversal.
 func TestSortRows_ByNameDescending(t *testing.T) {
-	rows := []msgs.RowData{rowNamed("alpha", "ns", time.Time{}), rowNamed("zeta", "ns", time.Time{})}
+	rows := []msgs.Row{rowNamed("alpha", "ns", time.Time{}), rowNamed("zeta", "ns", time.Time{})}
 	got := sortRows(rows, sortByName, sortDesc)
-	if got[0][msgs.KeyName] != "zeta" || got[1][msgs.KeyName] != "alpha" {
+	if got[0].Name != "zeta" || got[1].Name != "alpha" {
 		t.Fatalf("expected zeta before alpha in descending order, got %+v", got)
 	}
 }
 
 // TestSortRows_ByNamespace guards sorting on a different column than Name.
 func TestSortRows_ByNamespace(t *testing.T) {
-	rows := []msgs.RowData{rowNamed("a", "zeta-ns", time.Time{}), rowNamed("b", "alpha-ns", time.Time{})}
+	rows := []msgs.Row{rowNamed("a", "zeta-ns", time.Time{}), rowNamed("b", "alpha-ns", time.Time{})}
 	got := sortRows(rows, sortByNamespace, sortAsc)
-	if got[0][msgs.KeyNamespace] != "alpha-ns" || got[1][msgs.KeyNamespace] != "zeta-ns" {
+	if got[0].Namespace != "alpha-ns" || got[1].Namespace != "zeta-ns" {
 		t.Fatalf("expected alpha-ns before zeta-ns, got %+v", got)
 	}
 }
 
 // TestSortRows_ByAgeUsesRawCreatedAtNotFormattedString guards that Age
-// sorts chronologically by the raw KeyCreatedAt timestamp — the displayed
+// sorts chronologically by the raw CreatedAt timestamp — the displayed
 // Age string ("3d", "2h") can't be ordered correctly as text.
 func TestSortRows_ByAgeUsesRawCreatedAtNotFormattedString(t *testing.T) {
 	older := time.Now().Add(-48 * time.Hour)
 	newer := time.Now().Add(-1 * time.Hour)
-	rows := []msgs.RowData{rowNamed("new", "ns", newer), rowNamed("old", "ns", older)}
+	rows := []msgs.Row{rowNamed("new", "ns", newer), rowNamed("old", "ns", older)}
 	got := sortRows(rows, sortByAge, sortAsc)
-	if got[0][msgs.KeyName] != "old" || got[1][msgs.KeyName] != "new" {
+	if got[0].Name != "old" || got[1].Name != "new" {
 		t.Fatalf("expected oldest first in ascending Age order, got %+v", got)
 	}
 }

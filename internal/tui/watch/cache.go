@@ -54,7 +54,7 @@ func resourceVersionLess(a, b string) bool {
 // hold Pod/Deployment/Service caches in one map.
 type rowCache interface {
 	apply(event watch.Event) error
-	rows(kubeContext string) []msgs.RowData
+	rows(kubeContext string) []msgs.Row
 	seed(objs []metav1.Object)
 }
 
@@ -66,7 +66,7 @@ type rowCache interface {
 type resourceCache[T metav1.Object] struct {
 	mu    sync.Mutex
 	byKey map[string]cacheEntry[T]
-	toRow func(obj T, kubeContext string) msgs.RowData
+	toRow func(obj T, kubeContext string) msgs.Row
 	trim  func(T) T // applied to every object before storing; nil = store as-is
 }
 
@@ -85,13 +85,13 @@ func trimManagedFields[T metav1.Object](obj T) T {
 }
 
 // newResourceCache builds a cache with only the default managedFields trim.
-func newResourceCache[T metav1.Object](toRow func(T, string) msgs.RowData) *resourceCache[T] {
+func newResourceCache[T metav1.Object](toRow func(T, string) msgs.Row) *resourceCache[T] {
 	return newTrimmedCache(toRow, trimManagedFields[T])
 }
 
 // newTrimmedCache builds a cache whose trim composes the default
 // managedFields strip with a kind-specific reduction (e.g. trimSecret).
-func newTrimmedCache[T metav1.Object](toRow func(T, string) msgs.RowData, trim func(T) T) *resourceCache[T] {
+func newTrimmedCache[T metav1.Object](toRow func(T, string) msgs.Row, trim func(T) T) *resourceCache[T] {
 	return &resourceCache[T]{
 		byKey: make(map[string]cacheEntry[T]),
 		toRow: toRow,
@@ -170,7 +170,7 @@ func (c *resourceCache[T]) seed(objs []metav1.Object) {
 
 // rows rebuilds every row fresh from the stored raw objects, sorted by
 // namespace/name for a stable table order.
-func (c *resourceCache[T]) rows(kubeContext string) []msgs.RowData {
+func (c *resourceCache[T]) rows(kubeContext string) []msgs.Row {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -180,7 +180,7 @@ func (c *resourceCache[T]) rows(kubeContext string) []msgs.RowData {
 	}
 	sort.Strings(keys)
 
-	rows := make([]msgs.RowData, 0, len(keys))
+	rows := make([]msgs.Row, 0, len(keys))
 	for _, key := range keys {
 		rows = append(rows, c.toRow(c.byKey[key].obj, kubeContext))
 	}
@@ -197,56 +197,62 @@ func newCacheFor(kind msgs.ResourceKind) rowCache {
 	return spec.newCache()
 }
 
-func podRow(pod *corev1.Pod, kubeContext string) msgs.RowData {
+func podRow(pod *corev1.Pod, kubeContext string) msgs.Row {
 	info := k8s.PodToPodInfo(pod, kubeContext)
-	return msgs.RowData{
-		msgs.PodKeyName:       info.Name,
-		msgs.PodKeyNamespace:  info.Namespace,
-		msgs.PodKeyStatus:     info.Status,
-		msgs.PodKeyRestarts:   strconv.FormatInt(int64(info.Restarts), 10),
-		msgs.PodKeyAge:        info.Age,
-		msgs.PodKeyContext:    info.Context,
-		msgs.PodKeyContainers: strings.Join(info.Containers, ","),
-		msgs.PodKeyNode:       info.Node,
-		msgs.PodKeyNodeIP:     info.NodeIP,
-		msgs.PodKeyPodIP:      info.PodIP,
-		msgs.PodKeyReady:      info.ReadyContainers,
-		msgs.PodKeyCPU:        MetricsPlaceholder,
-		msgs.PodKeyMemory:     MetricsPlaceholder,
-		msgs.KeyCreatedAt:     pod.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:       info.Name,
+		Namespace:  info.Namespace,
+		Context:    info.Context,
+		CreatedAt:  pod.GetCreationTimestamp().Time,
+		Containers: info.Containers,
+		Cells: map[string]string{
+			msgs.PodKeyStatus:   info.Status,
+			msgs.PodKeyRestarts: strconv.FormatInt(int64(info.Restarts), 10),
+			msgs.PodKeyAge:      info.Age,
+			msgs.PodKeyNode:     info.Node,
+			msgs.PodKeyNodeIP:   info.NodeIP,
+			msgs.PodKeyPodIP:    info.PodIP,
+			msgs.PodKeyReady:    info.ReadyContainers,
+			msgs.PodKeyCPU:      MetricsPlaceholder,
+			msgs.PodKeyMemory:   MetricsPlaceholder,
+		},
 	}
 }
 
-func deploymentRow(dep *appsv1.Deployment, kubeContext string) msgs.RowData {
+func deploymentRow(dep *appsv1.Deployment, kubeContext string) msgs.Row {
 	info := k8s.DeploymentToDeploymentInfo(dep)
-	return msgs.RowData{
-		msgs.DeployKeyName:      info.Name,
-		msgs.DeployKeyAge:       info.Age,
-		msgs.DeployKeyReplicas:  strconv.Itoa(int(info.ReadyReplicas)) + "/" + strconv.Itoa(int(info.DesiredReplicas)),
-		msgs.DeployKeyContext:   kubeContext,
-		msgs.DeployKeyNamespace: info.Namespace,
-		msgs.DeployKeyStrategy:  info.Strategy,
-		msgs.DeployKeyAvailable: strconv.FormatInt(int64(info.AvailableReplicas), 10),
-		msgs.DeployKeyUpdated:   strconv.FormatInt(int64(info.UpdatedReplicas), 10),
-		msgs.DeployKeySelector:  info.Selector,
-		msgs.KeyCreatedAt:       dep.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: dep.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.DeployKeyAge:       info.Age,
+			msgs.DeployKeyReplicas:  strconv.Itoa(int(info.ReadyReplicas)) + "/" + strconv.Itoa(int(info.DesiredReplicas)),
+			msgs.DeployKeyStrategy:  info.Strategy,
+			msgs.DeployKeyAvailable: strconv.FormatInt(int64(info.AvailableReplicas), 10),
+			msgs.DeployKeyUpdated:   strconv.FormatInt(int64(info.UpdatedReplicas), 10),
+			msgs.DeployKeySelector:  info.Selector,
+		},
 	}
 }
 
-func serviceRow(svc *corev1.Service, kubeContext string) msgs.RowData {
+func serviceRow(svc *corev1.Service, kubeContext string) msgs.Row {
 	info := k8s.ServiceToServiceInfo(svc)
-	return msgs.RowData{
-		msgs.SvcKeyName:        info.Name,
-		msgs.SvcKeyNamespace:   info.Namespace,
-		msgs.SvcKeyType:        info.Type,
-		msgs.SvcKeyClusterIP:   info.ClusterIP,
-		msgs.SvcKeyPorts:       info.Ports,
-		msgs.SvcKeyAge:         info.Age,
-		msgs.SvcKeyContext:     kubeContext,
-		msgs.SvcKeySelector:    info.Selector,
-		msgs.SvcKeyExternalIP:  info.ExternalIP,
-		msgs.SvcKeyEndpointIPs: EndpointIPsPlaceholder,
-		msgs.KeyCreatedAt:      svc.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: svc.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.SvcKeyType:        info.Type,
+			msgs.SvcKeyClusterIP:   info.ClusterIP,
+			msgs.SvcKeyPorts:       info.Ports,
+			msgs.SvcKeyAge:         info.Age,
+			msgs.SvcKeySelector:    info.Selector,
+			msgs.SvcKeyExternalIP:  info.ExternalIP,
+			msgs.SvcKeyEndpointIPs: EndpointIPsPlaceholder,
+		},
 	}
 }
 
@@ -262,16 +268,18 @@ func trimConfigMap(cm *corev1.ConfigMap) *corev1.ConfigMap {
 	return cm
 }
 
-func configMapRow(cm *corev1.ConfigMap, kubeContext string) msgs.RowData {
+func configMapRow(cm *corev1.ConfigMap, kubeContext string) msgs.Row {
 	info := k8s.ConfigMapToConfigMapInfo(cm)
-	return msgs.RowData{
-		msgs.ConfigMapKeyName:      info.Name,
-		msgs.ConfigMapKeyNamespace: info.Namespace,
-		msgs.ConfigMapKeyKeys:      strconv.Itoa(len(info.Keys)),
-		msgs.ConfigMapKeyAge:       info.Age,
-		msgs.ConfigMapKeyContext:   kubeContext,
-		msgs.ConfigMapKeyKeyNames:  strings.Join(info.Keys, ","),
-		msgs.KeyCreatedAt:          cm.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: cm.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.ConfigMapKeyKeys:     strconv.Itoa(len(info.Keys)),
+			msgs.ConfigMapKeyAge:      info.Age,
+			msgs.ConfigMapKeyKeyNames: strings.Join(info.Keys, ","),
+		},
 	}
 }
 
@@ -290,133 +298,151 @@ func trimSecret(s *corev1.Secret) *corev1.Secret {
 
 // secretRow never carries values — only key names and the count, matching
 // k8s.SecretToSecretInfo (see redactedValue).
-func secretRow(secret *corev1.Secret, kubeContext string) msgs.RowData {
+func secretRow(secret *corev1.Secret, kubeContext string) msgs.Row {
 	info := k8s.SecretToSecretInfo(secret)
-	return msgs.RowData{
-		msgs.SecretKeyName:      info.Name,
-		msgs.SecretKeyNamespace: info.Namespace,
-		msgs.SecretKeyType:      info.Type,
-		msgs.SecretKeyKeys:      strconv.Itoa(len(info.Keys)),
-		msgs.SecretKeyAge:       info.Age,
-		msgs.SecretKeyContext:   kubeContext,
-		msgs.KeyCreatedAt:       secret.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: secret.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.SecretKeyType: info.Type,
+			msgs.SecretKeyKeys: strconv.Itoa(len(info.Keys)),
+			msgs.SecretKeyAge:  info.Age,
+		},
 	}
 }
 
-func jobRow(job *batchv1.Job, kubeContext string) msgs.RowData {
+func jobRow(job *batchv1.Job, kubeContext string) msgs.Row {
 	info := k8s.JobToJobInfo(job)
-	return msgs.RowData{
-		msgs.JobKeyName:        info.Name,
-		msgs.JobKeyNamespace:   info.Namespace,
-		msgs.JobKeyCompletions: info.Completions,
-		msgs.JobKeyDuration:    info.Duration,
-		msgs.JobKeyAge:         info.Age,
-		msgs.JobKeyContext:     kubeContext,
-		msgs.JobKeyStatus:      info.Status,
-		msgs.KeyCreatedAt:      job.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: job.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.JobKeyCompletions: info.Completions,
+			msgs.JobKeyDuration:    info.Duration,
+			msgs.JobKeyAge:         info.Age,
+			msgs.JobKeyStatus:      info.Status,
+		},
 	}
 }
 
-func cronJobRow(cj *batchv1.CronJob, kubeContext string) msgs.RowData {
+func cronJobRow(cj *batchv1.CronJob, kubeContext string) msgs.Row {
 	info := k8s.CronJobToCronJobInfo(cj)
-	return msgs.RowData{
-		msgs.CronJobKeyName:          info.Name,
-		msgs.CronJobKeyNamespace:     info.Namespace,
-		msgs.CronJobKeySchedule:      info.Schedule,
-		msgs.CronJobKeySuspend:       strconv.FormatBool(info.Suspend),
-		msgs.CronJobKeyAge:           info.Age,
-		msgs.CronJobKeyContext:       kubeContext,
-		msgs.CronJobKeyLastScheduled: info.LastScheduled,
-		msgs.KeyCreatedAt:            cj.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: cj.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.CronJobKeySchedule:      info.Schedule,
+			msgs.CronJobKeySuspend:       strconv.FormatBool(info.Suspend),
+			msgs.CronJobKeyAge:           info.Age,
+			msgs.CronJobKeyLastScheduled: info.LastScheduled,
+		},
 	}
 }
 
-func statefulSetRow(sts *appsv1.StatefulSet, kubeContext string) msgs.RowData {
+func statefulSetRow(sts *appsv1.StatefulSet, kubeContext string) msgs.Row {
 	info := k8s.StatefulSetToStatefulSetInfo(sts)
-	return msgs.RowData{
-		msgs.StatefulSetKeyName:      info.Name,
-		msgs.StatefulSetKeyNamespace: info.Namespace,
-		msgs.StatefulSetKeyReady:     strconv.Itoa(int(info.ReadyReplicas)) + "/" + strconv.Itoa(int(info.DesiredReplicas)),
-		msgs.StatefulSetKeyAge:       info.Age,
-		msgs.StatefulSetKeyContext:   kubeContext,
-		msgs.StatefulSetKeySelector:  info.Selector,
-		msgs.KeyCreatedAt:            sts.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: sts.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.StatefulSetKeyReady:    strconv.Itoa(int(info.ReadyReplicas)) + "/" + strconv.Itoa(int(info.DesiredReplicas)),
+			msgs.StatefulSetKeyAge:      info.Age,
+			msgs.StatefulSetKeySelector: info.Selector,
+		},
 	}
 }
 
-func daemonSetRow(ds *appsv1.DaemonSet, kubeContext string) msgs.RowData {
+func daemonSetRow(ds *appsv1.DaemonSet, kubeContext string) msgs.Row {
 	info := k8s.DaemonSetToDaemonSetInfo(ds)
-	return msgs.RowData{
-		msgs.DaemonSetKeyName:      info.Name,
-		msgs.DaemonSetKeyNamespace: info.Namespace,
-		msgs.DaemonSetKeyReady:     strconv.Itoa(int(info.ReadyNodes)) + "/" + strconv.Itoa(int(info.DesiredNodes)),
-		msgs.DaemonSetKeyAge:       info.Age,
-		msgs.DaemonSetKeyContext:   kubeContext,
-		msgs.DaemonSetKeySelector:  info.Selector,
-		msgs.KeyCreatedAt:          ds.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: ds.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.DaemonSetKeyReady:    strconv.Itoa(int(info.ReadyNodes)) + "/" + strconv.Itoa(int(info.DesiredNodes)),
+			msgs.DaemonSetKeyAge:      info.Age,
+			msgs.DaemonSetKeySelector: info.Selector,
+		},
 	}
 }
 
-func ingressRow(ing *networkingv1.Ingress, kubeContext string) msgs.RowData {
+func ingressRow(ing *networkingv1.Ingress, kubeContext string) msgs.Row {
 	info := k8s.IngressToIngressInfo(ing)
-	return msgs.RowData{
-		msgs.IngressKeyName:      info.Name,
-		msgs.IngressKeyNamespace: info.Namespace,
-		msgs.IngressKeyHosts:     strings.Join(info.Hosts, ","),
-		msgs.IngressKeyClass:     info.Class,
-		msgs.IngressKeyAge:       info.Age,
-		msgs.IngressKeyContext:   kubeContext,
-		msgs.IngressKeyBackends:  strings.Join(info.Backends, ","),
-		msgs.KeyCreatedAt:        ing.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: ing.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.IngressKeyHosts:    strings.Join(info.Hosts, ","),
+			msgs.IngressKeyClass:    info.Class,
+			msgs.IngressKeyAge:      info.Age,
+			msgs.IngressKeyBackends: strings.Join(info.Backends, ","),
+		},
 	}
 }
 
-func pdbRow(pdb *policyv1.PodDisruptionBudget, kubeContext string) msgs.RowData {
+func pdbRow(pdb *policyv1.PodDisruptionBudget, kubeContext string) msgs.Row {
 	info := k8s.PodDisruptionBudgetToPodDisruptionBudgetInfo(pdb)
-	return msgs.RowData{
-		msgs.PDBKeyName:               info.Name,
-		msgs.PDBKeyNamespace:          info.Namespace,
-		msgs.PDBKeyMinMaxAvailable:    info.MinMaxAvailable,
-		msgs.PDBKeyAllowedDisruptions: strconv.FormatInt(int64(info.AllowedDisruptions), 10),
-		msgs.PDBKeyAge:                info.Age,
-		msgs.PDBKeyContext:            kubeContext,
-		msgs.PDBKeyCurrentHealthy:     strconv.FormatInt(int64(info.CurrentHealthy), 10),
-		msgs.PDBKeyDesiredHealthy:     strconv.FormatInt(int64(info.DesiredHealthy), 10),
-		msgs.KeyCreatedAt:             pdb.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: pdb.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.PDBKeyMinMaxAvailable:    info.MinMaxAvailable,
+			msgs.PDBKeyAllowedDisruptions: strconv.FormatInt(int64(info.AllowedDisruptions), 10),
+			msgs.PDBKeyAge:                info.Age,
+			msgs.PDBKeyCurrentHealthy:     strconv.FormatInt(int64(info.CurrentHealthy), 10),
+			msgs.PDBKeyDesiredHealthy:     strconv.FormatInt(int64(info.DesiredHealthy), 10),
+		},
 	}
 }
 
-func hpaRow(hpa *autoscalingv2.HorizontalPodAutoscaler, kubeContext string) msgs.RowData {
+func hpaRow(hpa *autoscalingv2.HorizontalPodAutoscaler, kubeContext string) msgs.Row {
 	info := k8s.HorizontalPodAutoscalerToHorizontalPodAutoscalerInfo(hpa)
-	return msgs.RowData{
-		msgs.HPAKeyName:      info.Name,
-		msgs.HPAKeyNamespace: info.Namespace,
-		msgs.HPAKeyReference: info.Reference,
-		msgs.HPAKeyMinMax:    strconv.Itoa(int(info.MinReplicas)) + "-" + strconv.Itoa(int(info.MaxReplicas)),
-		msgs.HPAKeyReplicas:  strconv.Itoa(int(info.CurrentReplicas)),
-		msgs.HPAKeyTargets:   info.Targets,
-		msgs.HPAKeyAge:       info.Age,
-		msgs.HPAKeyContext:   kubeContext,
-		msgs.KeyCreatedAt:    hpa.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Namespace: info.Namespace,
+		Context:   kubeContext,
+		CreatedAt: hpa.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.HPAKeyReference: info.Reference,
+			msgs.HPAKeyMinMax:    strconv.Itoa(int(info.MinReplicas)) + "-" + strconv.Itoa(int(info.MaxReplicas)),
+			msgs.HPAKeyReplicas:  strconv.Itoa(int(info.CurrentReplicas)),
+			msgs.HPAKeyTargets:   info.Targets,
+			msgs.HPAKeyAge:       info.Age,
+		},
 	}
 }
 
 // nodeRow is keyed only by kubeContext — Nodes are cluster-scoped, so there
 // is no per-namespace row, and kubeContext also stands in for the (unused)
 // Namespace column.
-func nodeRow(node *corev1.Node, kubeContext string) msgs.RowData {
+func nodeRow(node *corev1.Node, kubeContext string) msgs.Row {
 	info := k8s.NodeToNodeInfo(node)
-	return msgs.RowData{
-		msgs.NodeKeyName:       info.Name,
-		msgs.NodeKeyStatus:     info.Status,
-		msgs.NodeKeyRoles:      info.Roles,
-		msgs.NodeKeyAge:        info.Age,
-		msgs.NodeKeyVersion:    info.Version,
-		msgs.NodeKeyContext:    kubeContext,
-		msgs.NodeKeyInternalIP: info.InternalIP,
-		msgs.NodeKeyOS:         info.OS,
-		msgs.NodeKeyCPU:        MetricsPlaceholder,
-		msgs.NodeKeyMemory:     MetricsPlaceholder,
-		msgs.KeyCreatedAt:      node.GetCreationTimestamp().Time,
+	return msgs.Row{
+		Name:      info.Name,
+		Context:   kubeContext,
+		CreatedAt: node.GetCreationTimestamp().Time,
+		Cells: map[string]string{
+			msgs.NodeKeyStatus:     info.Status,
+			msgs.NodeKeyRoles:      info.Roles,
+			msgs.NodeKeyAge:        info.Age,
+			msgs.NodeKeyVersion:    info.Version,
+			msgs.NodeKeyInternalIP: info.InternalIP,
+			msgs.NodeKeyOS:         info.OS,
+			msgs.NodeKeyCPU:        MetricsPlaceholder,
+			msgs.NodeKeyMemory:     MetricsPlaceholder,
+		},
 	}
 }

@@ -29,11 +29,11 @@ func TestPodDisruptionBudgetCache_AddedDeleted(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.PDBKeyMinMaxAvailable] != "minAvailable=2" {
-		t.Fatalf("expected minAvailable=2, got %v", rows[0][msgs.PDBKeyMinMaxAvailable])
+	if rows[0].Cells[msgs.PDBKeyMinMaxAvailable] != "minAvailable=2" {
+		t.Fatalf("expected minAvailable=2, got %v", rows[0].Cells[msgs.PDBKeyMinMaxAvailable])
 	}
-	if rows[0][msgs.PDBKeyAllowedDisruptions] != "1" {
-		t.Fatalf("expected allowedDisruptions=1, got %v", rows[0][msgs.PDBKeyAllowedDisruptions])
+	if rows[0].Cells[msgs.PDBKeyAllowedDisruptions] != "1" {
+		t.Fatalf("expected allowedDisruptions=1, got %v", rows[0].Cells[msgs.PDBKeyAllowedDisruptions])
 	}
 
 	if err := c.apply(kwatch.Event{Type: kwatch.Deleted, Object: pdb}); err != nil {
@@ -75,14 +75,14 @@ func TestHorizontalPodAutoscalerCache_AddedDeleted(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if rows[0][msgs.HPAKeyReference] != "Deployment/web" {
-		t.Fatalf("expected reference Deployment/web, got %v", rows[0][msgs.HPAKeyReference])
+	if rows[0].Cells[msgs.HPAKeyReference] != "Deployment/web" {
+		t.Fatalf("expected reference Deployment/web, got %v", rows[0].Cells[msgs.HPAKeyReference])
 	}
-	if rows[0][msgs.HPAKeyMinMax] != "2-10" {
-		t.Fatalf("expected minMax 2-10, got %v", rows[0][msgs.HPAKeyMinMax])
+	if rows[0].Cells[msgs.HPAKeyMinMax] != "2-10" {
+		t.Fatalf("expected minMax 2-10, got %v", rows[0].Cells[msgs.HPAKeyMinMax])
 	}
-	if rows[0][msgs.HPAKeyTargets] != "cpu: 45%" {
-		t.Fatalf("expected targets 'cpu: 45%%', got %v", rows[0][msgs.HPAKeyTargets])
+	if rows[0].Cells[msgs.HPAKeyTargets] != "cpu: 45%" {
+		t.Fatalf("expected targets 'cpu: 45%%', got %v", rows[0].Cells[msgs.HPAKeyTargets])
 	}
 
 	if err := c.apply(kwatch.Event{Type: kwatch.Deleted, Object: hpa}); err != nil {

@@ -340,7 +340,7 @@ func (s *Supervisor) Watching() bool {
 // — every namespace this context can see comes back; narrowing to the
 // namespaces checked in the Namespaces pane is a display-only concern
 // handled by the caller (MainPage), not the Supervisor.
-func (s *Supervisor) Rows(kind msgs.ResourceKind) []msgs.RowData {
+func (s *Supervisor) Rows(kind msgs.ResourceKind) []msgs.Row {
 	var contexts []string
 	for key := range s.states {
 		if key.kind == kind {
@@ -349,7 +349,7 @@ func (s *Supervisor) Rows(kind msgs.ResourceKind) []msgs.RowData {
 	}
 	sort.Strings(contexts)
 
-	var all []msgs.RowData
+	var all []msgs.Row
 	for _, ctx := range contexts {
 		rows := s.states[stateKey{kind: kind, context: ctx}].cache.rows(ctx)
 		switch kind {
@@ -661,15 +661,13 @@ func (s *Supervisor) SetEndpoints(kubeContext string, endpoints map[string][]str
 // overlayEndpoints replaces the Endpoint IPs placeholder on freshly built
 // service rows with the context's fetched IPs, if any, matched by
 // "namespace/service name".
-func (s *Supervisor) overlayEndpoints(kubeContext string, rows []msgs.RowData) {
+func (s *Supervisor) overlayEndpoints(kubeContext string, rows []msgs.Row) {
 	endpoints, ok := s.endpoints[kubeContext]
 	if !ok {
 		return
 	}
 	for _, row := range rows {
-		name, _ := row[msgs.SvcKeyName].(string)
-		namespace, _ := row[msgs.SvcKeyNamespace].(string)
-		row[msgs.SvcKeyEndpointIPs] = formatEndpointIPs(endpoints[namespace+"/"+name])
+		row.Cells[msgs.SvcKeyEndpointIPs] = formatEndpointIPs(endpoints[row.Namespace+"/"+row.Name])
 	}
 }
 
@@ -715,20 +713,18 @@ func (s *Supervisor) SetPodMetrics(kubeContext string, usage map[string]msgs.Res
 // "namespace/name". Pods with no matching entry (e.g. metrics-server hasn't
 // reported for a just-started pod yet) keep the "-" placeholder set by
 // podRow.
-func (s *Supervisor) overlayPodMetrics(kubeContext string, rows []msgs.RowData) {
+func (s *Supervisor) overlayPodMetrics(kubeContext string, rows []msgs.Row) {
 	usage, ok := s.podMetrics[kubeContext]
 	if !ok {
 		return
 	}
 	for _, row := range rows {
-		name, _ := row[msgs.PodKeyName].(string)
-		namespace, _ := row[msgs.PodKeyNamespace].(string)
-		u, found := usage[namespace+"/"+name]
+		u, found := usage[row.Namespace+"/"+row.Name]
 		if !found {
 			continue
 		}
-		row[msgs.PodKeyCPU] = u.CPU
-		row[msgs.PodKeyMemory] = u.Memory
+		row.Cells[msgs.PodKeyCPU] = u.CPU
+		row.Cells[msgs.PodKeyMemory] = u.Memory
 	}
 }
 
@@ -749,18 +745,17 @@ func (s *Supervisor) SetNodeMetrics(kubeContext string, usage map[string]msgs.Re
 	delete(s.nodeMetricsUnavailable, kubeContext)
 }
 
-func (s *Supervisor) overlayNodeMetrics(kubeContext string, rows []msgs.RowData) {
+func (s *Supervisor) overlayNodeMetrics(kubeContext string, rows []msgs.Row) {
 	usage, ok := s.nodeMetrics[kubeContext]
 	if !ok {
 		return
 	}
 	for _, row := range rows {
-		name, _ := row[msgs.NodeKeyName].(string)
-		u, found := usage[name]
+		u, found := usage[row.Name]
 		if !found {
 			continue
 		}
-		row[msgs.NodeKeyCPU] = u.CPU
-		row[msgs.NodeKeyMemory] = u.Memory
+		row.Cells[msgs.NodeKeyCPU] = u.CPU
+		row.Cells[msgs.NodeKeyMemory] = u.Memory
 	}
 }

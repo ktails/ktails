@@ -189,18 +189,31 @@ func paddedFlexColumn(key, title string, flexFactor int) btable.Column {
 	return btable.NewFlexColumn(key, title, flexFactor).WithStyle(columnPadStyle())
 }
 
+// rowFieldString reads a Row's display string for a column key: the
+// special-cased typed fields (Name/Namespace/Context — every kind's own
+// KeyX alias shares msgs.KeyName/KeyNamespace/KeyContext under the hood, see
+// msgs.go) or, for every other key, its Cells entry.
+func rowFieldString(row msgs.Row, key string) string {
+	switch key {
+	case msgs.KeyName:
+		return row.Name
+	case msgs.KeyNamespace:
+		return row.Namespace
+	case msgs.KeyContext:
+		return row.Context
+	default:
+		return row.Cells[key]
+	}
+}
+
 // widestValue returns the widest string found under key across rows,
 // falling back to the header's own width — used to auto-fit wide-mode
 // column widths to whatever data is currently loaded (recomputed on every
 // SetRows, per the wide-mode spec).
-func widestValue(rows []msgs.RowData, key, header string) int {
+func widestValue(rows []msgs.Row, key, header string) int {
 	widest := lipgloss.Width(header)
 	for _, row := range rows {
-		s, ok := row[key].(string)
-		if !ok {
-			continue
-		}
-		if w := lipgloss.Width(s); w > widest {
+		if w := lipgloss.Width(rowFieldString(row, key)); w > widest {
 			widest = w
 		}
 	}
@@ -429,7 +442,7 @@ func buildNarrowColumns(entries []colEntry, compact bool) []btable.Column {
 // colData entry auto-fits to whatever's currently loaded (widestValue)
 // instead of flexing, and nothing is ever dropped (there's no compact
 // concept in wide mode).
-func buildWideColumns(entries []colEntry, rows []msgs.RowData) []btable.Column {
+func buildWideColumns(entries []colEntry, rows []msgs.Row) []btable.Column {
 	cols := make([]btable.Column, 0, len(entries))
 	for _, e := range entries {
 		switch e.kind {
@@ -475,7 +488,7 @@ var podWideSpec = []colEntry{
 func podNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(podNarrowSpec, compact)
 }
-func podWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(podWideSpec, rows) }
+func podWideColumns(rows []msgs.Row) []btable.Column { return buildWideColumns(podWideSpec, rows) }
 
 var deploymentNarrowSpec = []colEntry{
 	{kind: colContext, key: msgs.DeployKeyContext},
@@ -500,7 +513,7 @@ var deploymentWideSpec = []colEntry{
 func deploymentNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(deploymentNarrowSpec, compact)
 }
-func deploymentWideColumns(rows []msgs.RowData) []btable.Column {
+func deploymentWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(deploymentWideSpec, rows)
 }
 
@@ -530,7 +543,7 @@ var svcWideSpec = []colEntry{
 func svcNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(svcNarrowSpec, compact)
 }
-func svcWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(svcWideSpec, rows) }
+func svcWideColumns(rows []msgs.Row) []btable.Column { return buildWideColumns(svcWideSpec, rows) }
 
 var configMapNarrowSpec = []colEntry{
 	{kind: colContext, key: msgs.ConfigMapKeyContext},
@@ -552,7 +565,7 @@ var configMapWideSpec = []colEntry{
 func configMapNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(configMapNarrowSpec, compact)
 }
-func configMapWideColumns(rows []msgs.RowData) []btable.Column {
+func configMapWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(configMapWideSpec, rows)
 }
 
@@ -577,7 +590,7 @@ var secretWideSpec = []colEntry{
 func secretNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(secretNarrowSpec, compact)
 }
-func secretWideColumns(rows []msgs.RowData) []btable.Column {
+func secretWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(secretWideSpec, rows)
 }
 
@@ -603,7 +616,7 @@ var jobWideSpec = []colEntry{
 func jobNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(jobNarrowSpec, compact)
 }
-func jobWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(jobWideSpec, rows) }
+func jobWideColumns(rows []msgs.Row) []btable.Column { return buildWideColumns(jobWideSpec, rows) }
 
 var cronJobNarrowSpec = []colEntry{
 	{kind: colContext, key: msgs.CronJobKeyContext},
@@ -627,7 +640,7 @@ var cronJobWideSpec = []colEntry{
 func cronJobNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(cronJobNarrowSpec, compact)
 }
-func cronJobWideColumns(rows []msgs.RowData) []btable.Column {
+func cronJobWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(cronJobWideSpec, rows)
 }
 
@@ -651,7 +664,7 @@ var statefulSetWideSpec = []colEntry{
 func statefulSetNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(statefulSetNarrowSpec, compact)
 }
-func statefulSetWideColumns(rows []msgs.RowData) []btable.Column {
+func statefulSetWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(statefulSetWideSpec, rows)
 }
 
@@ -675,7 +688,7 @@ var daemonSetWideSpec = []colEntry{
 func daemonSetNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(daemonSetNarrowSpec, compact)
 }
-func daemonSetWideColumns(rows []msgs.RowData) []btable.Column {
+func daemonSetWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(daemonSetWideSpec, rows)
 }
 
@@ -701,7 +714,7 @@ var ingressWideSpec = []colEntry{
 func ingressNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(ingressNarrowSpec, compact)
 }
-func ingressWideColumns(rows []msgs.RowData) []btable.Column {
+func ingressWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(ingressWideSpec, rows)
 }
 
@@ -728,7 +741,7 @@ var pdbWideSpec = []colEntry{
 func pdbNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(pdbNarrowSpec, compact)
 }
-func pdbWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(pdbWideSpec, rows) }
+func pdbWideColumns(rows []msgs.Row) []btable.Column { return buildWideColumns(pdbWideSpec, rows) }
 
 var hpaNarrowSpec = []colEntry{
 	{kind: colContext, key: msgs.HPAKeyContext},
@@ -755,7 +768,7 @@ var hpaWideSpec = []colEntry{
 func hpaNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(hpaNarrowSpec, compact)
 }
-func hpaWideColumns(rows []msgs.RowData) []btable.Column { return buildWideColumns(hpaWideSpec, rows) }
+func hpaWideColumns(rows []msgs.Row) []btable.Column { return buildWideColumns(hpaWideSpec, rows) }
 
 // nodeNarrowSpec/nodeWideSpec omit Namespace: Nodes are cluster-scoped (see
 // msgs.NodeKeyName's doc comment), so Context is followed directly by Name
@@ -787,6 +800,6 @@ var nodeWideSpec = []colEntry{
 func nodeNarrowColumns(compact bool) []btable.Column {
 	return buildNarrowColumns(nodeNarrowSpec, compact)
 }
-func nodeWideColumns(rows []msgs.RowData) []btable.Column {
+func nodeWideColumns(rows []msgs.Row) []btable.Column {
 	return buildWideColumns(nodeWideSpec, rows)
 }
