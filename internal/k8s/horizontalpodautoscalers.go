@@ -114,7 +114,7 @@ func (c *Client) GetHorizontalPodAutoscalerDetail(ctx context.Context, kubeConte
 	d.Summary = fmt.Sprintf("Replicas: %d (min=%s max=%s)  Reference: %s",
 		info.CurrentReplicas, strconv.Itoa(int(info.MinReplicas)), strconv.Itoa(int(info.MaxReplicas)), info.Reference)
 	for _, cond := range hpa.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(string(cond.Type), string(cond.Status), cond.Reason, cond.Message))
+		appendCondition(&d, string(cond.Type), string(cond.Status), cond.Reason, cond.Message, cond.LastTransitionTime)
 	}
 	d.YAML = renderDetailYAML(hpa, "autoscaling/v2", "HorizontalPodAutoscaler")
 

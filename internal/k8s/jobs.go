@@ -103,7 +103,7 @@ func (c *Client) GetJobDetail(ctx context.Context, kubeContextName, namespace, n
 	d.Age = info.Age
 	d.Summary = fmt.Sprintf("Completions: %s, Status: %s", info.Completions, info.Status)
 	for _, cond := range job.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(string(cond.Type), string(cond.Status), cond.Reason, cond.Message))
+		appendCondition(&d, string(cond.Type), string(cond.Status), cond.Reason, cond.Message, cond.LastTransitionTime)
 	}
 	d.YAML = renderDetailYAML(job, "batch/v1", "Job")
 

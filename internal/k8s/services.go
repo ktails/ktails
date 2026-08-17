@@ -98,7 +98,7 @@ func (c *Client) GetServiceDetail(ctx context.Context, kubeContextName, namespac
 	d.Summary = fmt.Sprintf("Type: %s  ClusterIP: %s  Ports: %s", svc.Spec.Type, svc.Spec.ClusterIP, formatServicePorts(svc.Spec.Ports))
 
 	for _, condition := range svc.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(condition.Type, string(condition.Status), condition.Reason, condition.Message))
+		appendCondition(&d, condition.Type, string(condition.Status), condition.Reason, condition.Message, condition.LastTransitionTime)
 	}
 	if externalIP := formatLoadBalancerIngress(svc.Status.LoadBalancer.Ingress); externalIP != "" {
 		d.Status = append(d.Status, fmt.Sprintf("LoadBalancer Ingress: %s", externalIP))

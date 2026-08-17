@@ -95,6 +95,20 @@ func LoadDeploymentDetailCmd(ctx context.Context, client *k8s.Client, kubeContex
 	}
 }
 
+// LoadWorkloadPodsCmd resolves the Pods owned by a workload row (Deployment/
+// StatefulSet/DaemonSet/Job/CronJob — see kinds.ResourceKind.HasPods and
+// k8s.Client.ResolveWorkloadPods), for MainPage's aggregate-log "l" key on a
+// non-Pods tab.
+func LoadWorkloadPodsCmd(ctx context.Context, client *k8s.Client, kind msgs.ResourceKind, kubeContext, namespace, name string) tea.Cmd {
+	return func() tea.Msg {
+		names, err := client.ResolveWorkloadPods(ctx, kubeContext, namespace, kind, name)
+		if err != nil {
+			return msgs.WorkloadPodsMsg{Context: kubeContext, Namespace: namespace, Name: name, Kind: kind, Err: err}
+		}
+		return msgs.WorkloadPodsMsg{Context: kubeContext, Namespace: namespace, Name: name, Kind: kind, PodNames: names}
+	}
+}
+
 // LoadPodDetailCmd fetches detailed information for a single pod
 func LoadPodDetailCmd(ctx context.Context, client *k8s.Client, kubeContext, namespace, podName string) tea.Cmd {
 	return func() tea.Msg {

@@ -90,7 +90,7 @@ func (c *Client) GetPodDisruptionBudgetDetail(ctx context.Context, kubeContextNa
 	d.Age = info.Age
 	d.Summary = fmt.Sprintf("Healthy: %d/%d  Allowed Disruptions: %d", info.CurrentHealthy, info.DesiredHealthy, info.AllowedDisruptions)
 	for _, cond := range pdb.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(cond.Type, string(cond.Status), cond.Reason, cond.Message))
+		appendCondition(&d, cond.Type, string(cond.Status), cond.Reason, cond.Message, cond.LastTransitionTime)
 	}
 	d.YAML = renderDetailYAML(pdb, "policy/v1", "PodDisruptionBudget")
 

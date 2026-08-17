@@ -109,3 +109,17 @@ func (k ResourceKind) Kind() string {
 func (k ResourceKind) String() string {
 	return k.Title()
 }
+
+// HasPods reports whether this kind owns a set of Pods that can be resolved
+// and tailed together as one aggregate log stream (see
+// internal/k8s.ResolveWorkloadPods and MainPage's "l" key) — the workload
+// kinds, as opposed to e.g. Services/ConfigMaps/Nodes which don't own Pods
+// at all, or Pods itself which is its own resolution (no aggregation
+// needed).
+func (k ResourceKind) HasPods() bool {
+	switch k {
+	case KindDeployments, KindStatefulSets, KindDaemonSets, KindJobs, KindCronJobs:
+		return true
+	}
+	return false
+}

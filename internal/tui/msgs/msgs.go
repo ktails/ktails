@@ -331,6 +331,19 @@ type ResourceDetailMsg struct {
 	Err     error
 }
 
+// WorkloadPodsMsg carries the result of resolving one workload row's owned
+// Pods (see k8s.Client.ResolveWorkloadPods), for MainPage's "l" key on a
+// HasPods() kind — the aggregate-log counterpart to opening logs from the
+// Pods tab directly. PodNames are looked up against the already-loaded
+// Pods-tab cache (for their containers) rather than fetched as full Pod
+// objects here.
+type WorkloadPodsMsg struct {
+	Context, Namespace, Name string
+	Kind                     ResourceKind
+	PodNames                 []string
+	Err                      error
+}
+
 // LogStreamOpenedMsg carries a freshly opened pod log stream for one source
 // in the merged Log pane. SourceKey identifies which pod/container/context
 // this belongs to; Generation must match that source's current generation

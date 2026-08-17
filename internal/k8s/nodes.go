@@ -131,7 +131,7 @@ func (c *Client) GetNodeDetail(ctx context.Context, kubeContextName, _, name str
 	d.Age = info.Age
 	d.Summary = fmt.Sprintf("Status: %s  Roles: %s  Version: %s  IP: %s", info.Status, info.Roles, info.Version, info.InternalIP)
 	for _, condition := range node.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(string(condition.Type), string(condition.Status), condition.Reason, condition.Message))
+		appendCondition(&d, string(condition.Type), string(condition.Status), condition.Reason, condition.Message, condition.LastTransitionTime)
 	}
 	d.YAML = renderDetailYAML(node, "v1", "Node")
 

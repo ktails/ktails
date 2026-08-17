@@ -68,7 +68,7 @@ func (c *Client) GetDeploymentDetail(ctx context.Context, kubeContextName, names
 	d.Age = formatDuration(time.Since(deployment.CreationTimestamp.Time))
 	d.Summary = fmt.Sprintf("Ready Replicas: %d", deployment.Status.ReadyReplicas)
 	for _, condition := range deployment.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(string(condition.Type), string(condition.Status), condition.Reason, condition.Message))
+		appendCondition(&d, string(condition.Type), string(condition.Status), condition.Reason, condition.Message, condition.LastTransitionTime)
 	}
 
 	d.YAML = renderDetailYAML(deployment, "apps/v1", "Deployment")

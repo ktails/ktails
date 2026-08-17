@@ -79,7 +79,7 @@ func (c *Client) GetDaemonSetDetail(ctx context.Context, kubeContextName, namesp
 	d.Age = info.Age
 	d.Summary = fmt.Sprintf("Ready Nodes: %d/%d", info.ReadyNodes, info.DesiredNodes)
 	for _, cond := range ds.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(string(cond.Type), string(cond.Status), cond.Reason, cond.Message))
+		appendCondition(&d, string(cond.Type), string(cond.Status), cond.Reason, cond.Message, cond.LastTransitionTime)
 	}
 	d.YAML = renderDetailYAML(ds, "apps/v1", "DaemonSet")
 

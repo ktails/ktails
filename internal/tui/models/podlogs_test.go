@@ -227,3 +227,34 @@ func TestLogPage_HorizontalScrollPreservesColorOfPrefixAndJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestLogPage_FollowingGlyphTracksScrollPosition guards the live/paused
+// header indicator: it must read live while the viewport is following the
+// tail, flip to paused on scroll-up, and flip back on End (see Following
+// and appendTo's wasAtBottom/GotoBottom auto-follow).
+func TestLogPage_FollowingGlyphTracksScrollPosition(t *testing.T) {
+	l := newTestLogPage(40, 3)
+	for i := 0; i < 20; i++ {
+		l.AppendLine("k", fmt.Sprintf("line %d", i))
+	}
+
+	if !l.Following() {
+		t.Fatal("expected Following to be true after appends with the viewport left at the bottom")
+	}
+	if !strings.Contains(l.Header(0), "▶") {
+		t.Fatalf("expected the live glyph in Header() while following, got %q", l.Header(0))
+	}
+
+	l.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if l.Following() {
+		t.Fatal("expected Following to be false after scrolling up")
+	}
+	if !strings.Contains(l.Header(0), "⏸") {
+		t.Fatalf("expected the paused glyph in Header() after scrolling up, got %q", l.Header(0))
+	}
+
+	l.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if !l.Following() {
+		t.Fatal("expected End to resume following")
+	}
+}

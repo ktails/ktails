@@ -533,7 +533,7 @@ func (c *Client) GetPodDetail(ctx context.Context, kubeContext, namespace, podNa
 	d.Age = formatDuration(time.Since(pod.CreationTimestamp.Time))
 	d.Summary = fmt.Sprintf("Phase: %s  Restarts: %d  Node: %s", pod.Status.Phase, restarts, pod.Spec.NodeName)
 	for _, condition := range pod.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(string(condition.Type), string(condition.Status), condition.Reason, condition.Message))
+		appendCondition(&d, string(condition.Type), string(condition.Status), condition.Reason, condition.Message, condition.LastTransitionTime)
 	}
 
 	if len(pod.Status.ContainerStatuses) > 0 {
@@ -622,6 +622,23 @@ func formatCondition(condType, status, reason, message string) string {
 		return fmt.Sprintf("%s=%s", condType, status)
 	}
 	return fmt.Sprintf("%s=%s (%s: %s)", condType, status, reason, message)
+}
+
+// appendCondition appends one `.status.conditions` entry to both d.Status
+// (the pre-formatted line every Get*Detail already rendered, via
+// formatCondition) and d.Conditions (the structured form the Detail Pane's
+// Conditions tab renders) — collapses the two-line "for range
+// Status.Conditions { d.Status = append(...) }" loop duplicated across every
+// kind with a .status.conditions field down to one call per condition.
+func appendCondition(d *ResourceDetail, condType, status, reason, message string, lastTransition metav1.Time) {
+	d.Status = append(d.Status, formatCondition(condType, status, reason, message))
+	d.Conditions = append(d.Conditions, ConditionInfo{
+		Type:    condType,
+		Status:  status,
+		Reason:  reason,
+		Message: message,
+		Age:     formatDuration(time.Since(lastTransition.Time)),
+	})
 }
 
 // containerStateString summarizes a container's current state for display.

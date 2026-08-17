@@ -84,7 +84,7 @@ func (c *Client) GetStatefulSetDetail(ctx context.Context, kubeContextName, name
 	d.Age = info.Age
 	d.Summary = fmt.Sprintf("Ready Replicas: %d/%d", info.ReadyReplicas, info.DesiredReplicas)
 	for _, cond := range sts.Status.Conditions {
-		d.Status = append(d.Status, formatCondition(string(cond.Type), string(cond.Status), cond.Reason, cond.Message))
+		appendCondition(&d, string(cond.Type), string(cond.Status), cond.Reason, cond.Message, cond.LastTransitionTime)
 	}
 	d.YAML = renderDetailYAML(sts, "apps/v1", "StatefulSet")
 

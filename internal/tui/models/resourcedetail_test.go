@@ -113,12 +113,11 @@ func TestResourceDetailScrollResetsOnResize(t *testing.T) {
 	}
 }
 
-// TestResourceDetailYJumpsToYAMLSection guards the "y" key: it must scroll
-// the viewport to the YAML section's own line, not just anywhere past the
-// Status/Events content above it.
-func TestResourceDetailYJumpsToYAMLSection(t *testing.T) {
+// TestResourceDetailYSwitchesToYAMLTab guards the "y" key: it must switch
+// straight to the YAML tab, regardless of which tab is currently active.
+func TestResourceDetailYSwitchesToYAMLTab(t *testing.T) {
 	d := NewResourceDetailPage()
-	d.SetSize(80, 5) // short viewport so the YAML section starts off-screen
+	d.SetSize(80, 5)
 	d.StartLoading("Deployment", "foo", "ctx")
 	d.SetDetail(k8s.ResourceDetail{
 		Kind: "Deployment", Name: "foo", Namespace: "ns", Age: "1d",
@@ -130,13 +129,71 @@ func TestResourceDetailYJumpsToYAMLSection(t *testing.T) {
 		YAML: "kind: Deployment\nmetadata:\n  name: foo",
 	})
 
-	if d.yamlLine == 0 {
-		t.Fatal("expected yamlLine to be past the Summary/Status/Events content, got 0")
+	if got := d.tabLabels()[d.activeTab]; got != "Status" {
+		t.Fatalf("expected to open on the Status tab, got %s", got)
 	}
 
 	d.Update(tea.KeyPressMsg{Code: 'y'})
-	if got := d.viewport.YOffset(); got != d.yamlLine {
-		t.Fatalf("expected y to set viewport offset to yamlLine (%d), got %d", d.yamlLine, got)
+	if got := d.tabLabels()[d.activeTab]; got != "YAML" {
+		t.Fatalf("expected y to switch to the YAML tab, got %s", got)
+	}
+	// YAML content is syntax-highlighted (see highlightYAML), so check for
+	// an unbroken token rather than the literal "kind: Deployment" line.
+	if !strings.Contains(d.rawContent, "Deployment") {
+		t.Fatalf("expected the YAML tab's content to be loaded after switching, got %q", d.rawContent)
+	}
+}
+
+// TestResourceDetailTabCycling guards "["/"]": they must cycle activeTab
+// through tabLabels(), wrapping at both ends, and leave the viewport
+// re-rendered with the newly active tab's content.
+func TestResourceDetailTabCycling(t *testing.T) {
+	d := NewResourceDetailPage()
+	d.SetSize(80, 10)
+	d.StartLoading("Deployment", "foo", "ctx")
+	d.SetDetail(k8s.ResourceDetail{
+		Kind: "Deployment", Name: "foo", Namespace: "ns", Age: "1d",
+		Summary:    "Ready Replicas: 2",
+		Status:     []string{"Available=True"},
+		Conditions: []k8s.ConditionInfo{{Type: "Available", Status: "True", Age: "1d"}},
+		YAML:       "kind: Deployment",
+	})
+
+	labels := d.tabLabels()
+	if len(labels) != 4 {
+		t.Fatalf("expected 4 tabs (Status/Conditions/Events/YAML) when Conditions is populated, got %v", labels)
+	}
+
+	d.Update(tea.KeyPressMsg{Code: ']'})
+	if got := labels[d.activeTab]; got != "Conditions" {
+		t.Fatalf("expected ] to advance to Conditions, got %s", got)
+	}
+
+	d.Update(tea.KeyPressMsg{Code: '['})
+	if got := labels[d.activeTab]; got != "Status" {
+		t.Fatalf("expected [ to move back to Status, got %s", got)
+	}
+
+	// Wrap backward from the first tab to the last.
+	d.Update(tea.KeyPressMsg{Code: '['})
+	if got := labels[d.activeTab]; got != "YAML" {
+		t.Fatalf("expected [ to wrap from Status back to YAML, got %s", got)
+	}
+}
+
+// TestResourceDetailConditionsTabHiddenWithoutConditions guards that kinds
+// without `.status.conditions` (ConfigMaps, Secrets, Ingresses, CronJobs,
+// ...) don't show an always-empty Conditions tab.
+func TestResourceDetailConditionsTabHiddenWithoutConditions(t *testing.T) {
+	d := NewResourceDetailPage()
+	d.SetSize(80, 10)
+	d.StartLoading("ConfigMap", "foo", "ctx")
+	d.SetDetail(k8s.ResourceDetail{Kind: "ConfigMap", Name: "foo", Namespace: "ns", Age: "1d", YAML: "kind: ConfigMap"})
+
+	for _, label := range d.tabLabels() {
+		if label == "Conditions" {
+			t.Fatal("expected no Conditions tab for a resource with zero Conditions")
+		}
 	}
 }
 

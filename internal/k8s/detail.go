@@ -22,6 +22,14 @@ type EventInfo struct {
 	Count   int32
 }
 
+// ConditionInfo is one entry of a resource's `.status.conditions`, structured
+// rather than pre-formatted into a single string — see appendCondition,
+// which populates both this and ResourceDetail.Status's existing formatted
+// line from the same condition value.
+type ConditionInfo struct {
+	Type, Status, Reason, Message, Age string
+}
+
 // ResourceDetail is a kind-agnostic bundle of everything the Detail tab
 // renders for a single resource: a one-line summary, status conditions,
 // recent events, and the resource's YAML.
@@ -32,7 +40,13 @@ type ResourceDetail struct {
 	Age       string
 	Summary   string // e.g. "Ready Replicas: 2" or "Phase: Running  Restarts: 3"
 	Status    []string
-	Events    []EventInfo
+	// Conditions is Status's structured counterpart — populated alongside it
+	// by appendCondition, one entry per `.status.conditions` entry. Empty for
+	// kinds without that field (ConfigMaps, Secrets, Ingresses, CronJobs,
+	// ...), which is how the Detail Pane's Conditions tab knows to hide
+	// itself for those kinds.
+	Conditions []ConditionInfo
+	Events     []EventInfo
 	// EventsError is set instead of Events when fetching events failed —
 	// previously that failure was silently swallowed (see attachEvents),
 	// so a genuine "no events" and "couldn't check" looked identical to

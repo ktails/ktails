@@ -523,8 +523,17 @@ func (l *LogPage) ScrollStatus() (percent int, ok bool) {
 	return int(l.viewport.HorizontalScrollPercent() * 100), true
 }
 
+// Following reports whether the pane is currently tailing live output —
+// i.e. the viewport is scrolled to the bottom, so the next appended line
+// will auto-follow (see appendTo). Scrolling up (or isolating a source
+// that isn't at its own bottom) reports false until End/G/GotoBottom
+// catches back up.
+func (l *LogPage) Following() bool {
+	return l.viewport.AtBottom()
+}
+
 // Header renders a one-line banner summarizing the merged sources (or the
-// isolated one) and the pane's key hints.
+// isolated one), a live/paused glyph, and the pane's key hints.
 func (l *LogPage) Header(width int) string {
 	p := styles.CatppuccinMocha()
 	titleColor := styles.BlurColor
@@ -545,7 +554,12 @@ func (l *LogPage) Header(width int) string {
 		label += "  [wrap]"
 	}
 
-	full := title.Render(fmt.Sprintf("▾ %s", label)) + "  " +
+	glyph := lipgloss.NewStyle().Foreground(p.Yellow).Render("⏸")
+	if l.Following() {
+		glyph = lipgloss.NewStyle().Foreground(p.Green).Render("▶")
+	}
+
+	full := title.Render(fmt.Sprintf("▾ %s", label)) + " " + glyph + "  " +
 		hint.Render("(c: isolate/merge, w: wrap, ↑/↓ pgup/pgdn scroll, ⇧←/⇧→: pan, End: jump+follow, Esc back)")
 	if width <= 0 {
 		return full

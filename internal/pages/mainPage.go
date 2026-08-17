@@ -4,6 +4,7 @@ package pages
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"sort"
@@ -216,28 +217,6 @@ func (m *MainPage) activeTable() *models.ResourceTable {
 	return m.tables[m.activeKind()]
 }
 
-// renderTabStrip renders a row of tab titles with the active one accented
-// (or merely brightened, when the surrounding pane isn't focused) — the
-// "Deployments · Pods · svc" look. Shared by the Tab Area (resource kinds)
-// and the Context List (Contexts/Namespaces/Clusters), both of which embed
-// their tab strip directly in their box's border.
-func (m *MainPage) renderTabStrip(titles []string, active int, focused bool) string {
-	p := styles.CatppuccinMocha()
-	sep := lipgloss.NewStyle().Foreground(p.Overlay0).Render(" · ")
-	parts := make([]string, 0, len(titles))
-	for i, title := range titles {
-		st := lipgloss.NewStyle().Foreground(p.Overlay1)
-		if i == active {
-			st = st.Bold(true).Foreground(p.Subtext1)
-			if focused {
-				st = st.Foreground(styles.FocusColor)
-			}
-		}
-		parts = append(parts, st.Render(title))
-	}
-	return strings.Join(parts, sep)
-}
-
 // tabTitles returns the Tab Area's tab labels in tab order.
 func (m *MainPage) tabTitles() []string {
 	titles := make([]string, len(m.tabs))
@@ -258,7 +237,7 @@ func (m *MainPage) tabTitles() []string {
 // [ / ] (already bound to tab switching, see the Update handler) moves
 // through the same set one at a time regardless of which mode is showing.
 func (m *MainPage) renderTabTitle(focused bool, boxW int) string {
-	full := m.renderTabStrip(m.tabTitles(), m.activeTab, focused)
+	full := models.RenderTabStrip(m.tabTitles(), m.activeTab, focused)
 	if views.FitsTitle(full, boxW) {
 		return full
 	}
@@ -531,12 +510,24 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// l reconciles the merged log pane to whatever's currently checked in
-		// the Pods tab (or the row under the cursor, if nothing's checked).
-		if m.appStateLoaded && keypress == "l" && m.activeKind() == msgs.KindPods {
-			if cmd := m.openPodLogs(); cmd != nil {
-				return m, cmd
+		// the Pods tab (or the row under the cursor, if nothing's checked). On
+		// a workload kind (HasPods()) it instead aggregates every Pod the
+		// cursor row owns — the kbu-style "select a Deployment and get every
+		// pod's logs merged" gesture — via an async resolve (openWorkloadLogs)
+		// rather than the synchronous Pods-tab-cache path openPodLogs uses.
+		if m.appStateLoaded && keypress == "l" {
+			switch {
+			case m.activeKind() == msgs.KindPods:
+				if cmd := m.openPodLogs(); cmd != nil {
+					return m, cmd
+				}
+				return m, nil
+			case m.activeKind().HasPods():
+				if cmd := m.openWorkloadLogs(); cmd != nil {
+					return m, cmd
+				}
+				return m, nil
 			}
-			return m, nil
 		}
 
 		// r force-restarts the watch(es) for only the active tab's resource
@@ -628,6 +619,9 @@ func (m *MainPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.resourceDetail.SetDetail(msg.Detail)
 		return m, nil
+
+	case msgs.WorkloadPodsMsg:
+		return m, m.applyWorkloadPods(msg)
 
 	case msgs.ContextsStateMsg:
 		return m, m.applyContextsState(msg)
@@ -1308,9 +1302,7 @@ func podLogTargets(rows []msgs.Row) []logstream.Target {
 
 // openPodLogs reconciles the merged log pane to whatever's currently checked
 // in the Pods tab — or, if nothing's checked, the single row under the
-// cursor (preserving the original single-pod behavior). Sources newly
-// present are opened, sources no longer targeted are closed, and unchanged
-// sources are left running untouched. An empty target set closes the pane.
+// cursor (preserving the original single-pod behavior).
 func (m *MainPage) openPodLogs() tea.Cmd {
 	pods := m.tables[msgs.KindPods]
 	var rows []msgs.Row
@@ -1323,7 +1315,52 @@ func (m *MainPage) openPodLogs() tea.Cmd {
 	} else if row := pods.SelectedRow(); row != nil {
 		rows = append(rows, *row)
 	}
+	return m.openLogsForRows(rows)
+}
 
+// openWorkloadLogs dispatches an async resolve of the cursor row's owned
+// Pods (Deployment/StatefulSet/DaemonSet/Job/CronJob — see
+// kinds.ResourceKind.HasPods and k8s.Client.ResolveWorkloadPods), the
+// aggregate-log counterpart to l on the Pods tab itself. The pane doesn't
+// open until the result comes back — see applyWorkloadPods.
+func (m *MainPage) openWorkloadLogs() tea.Cmd {
+	row := m.activeTable().SelectedRow()
+	if row == nil {
+		return nil
+	}
+	return cmds.LoadWorkloadPodsCmd(context.Background(), m.Client, m.activeKind(), row.Context, row.Namespace, row.Name)
+}
+
+// applyWorkloadPods reconciles the merged log pane to a resolved workload's
+// owned Pods (see openWorkloadLogs), looking each one up in the already-
+// loaded Pods-tab cache for its containers — the resolve call only returns
+// names, not full Pod objects (see k8s.Client.ResolveWorkloadPods's doc
+// comment). A Pod not yet present in that cache (rare — it would have to
+// have been created after the Pods tab's last watch tick) is silently
+// skipped rather than failing the whole aggregate.
+func (m *MainPage) applyWorkloadPods(msg msgs.WorkloadPodsMsg) tea.Cmd {
+	if msg.Err != nil {
+		m.errorMessage = fmt.Sprintf("failed to resolve pods for %s %s: %v", msg.Kind.Kind(), msg.Name, msg.Err)
+		return nil
+	}
+	pods := m.tables[msgs.KindPods]
+	var rows []msgs.Row
+	for _, podName := range msg.PodNames {
+		key := models.PodRowKey(&msgs.Row{Context: msg.Context, Namespace: msg.Namespace, Name: podName})
+		if row := pods.CheckedRow(key); row != nil {
+			rows = append(rows, *row)
+		}
+	}
+	return m.openLogsForRows(rows)
+}
+
+// openLogsForRows reconciles the merged log pane to exactly rows' containers
+// — the shared core behind both openPodLogs (Pods-tab checked/cursor rows)
+// and applyWorkloadPods (a resolved workload's owned Pods). Sources newly
+// present are opened, sources no longer targeted are closed, and unchanged
+// sources are left running untouched. An empty rows/target set closes the
+// pane.
+func (m *MainPage) openLogsForRows(rows []msgs.Row) tea.Cmd {
 	targets := podLogTargets(rows)
 	if len(targets) == 0 {
 		m.closeLogs()
