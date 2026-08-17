@@ -265,6 +265,44 @@ func TestNamespaces_SpaceThenToggleAllThenRestore(t *testing.T) {
 	}
 }
 
+// TestNamespaces_ToggleAllSurvivesConfirmRoundTrip guards the real bug this
+// came from: MainPage always follows a confirm with SyncConfirmed (see
+// applyNamespacesState), including the confirm that *enters* all-namespaces
+// mode. That resync must not discard the "a" toggle's restore checkpoint —
+// otherwise the very next "a" press to leave all-namespaces mode finds
+// nothing to restore, and (via MainPage's own zero-selected fallback) can
+// snap straight back into all-namespaces mode, making the toggle look
+// broken.
+func TestNamespaces_ToggleAllSurvivesConfirmRoundTrip(t *testing.T) {
+	n := NewNamespacesInfo()
+	n.SetContextNamespaces("ctx1", []string{"default", "kube-system", "other-ns"})
+	n.SyncConfirmed("ctx1", []string{"default"}, false)
+
+	n.list.Select(0)
+	n.toggleAllNamespaces() // enter all-namespaces mode
+
+	if cmd := n.confirmChanges(); cmd == nil {
+		t.Fatal("expected a confirm command reporting AllNamespaces=true")
+	}
+
+	// Mimic MainPage.applyNamespacesState's post-confirm resync, which calls
+	// SyncConfirmed with whatever AppState now reports (zero checked, in
+	// all-namespaces mode) right after the confirm above.
+	n.SyncConfirmed("ctx1", []string{}, true)
+
+	n.toggleAllNamespaces() // leave all-namespaces mode again
+
+	if n.allNamespaces["ctx1"] {
+		t.Fatal("expected ctx1 out of all-namespaces mode")
+	}
+	if !namespaceRowSelected(t, n, "ctx1", "default") {
+		t.Fatal("expected default restored after the confirm round trip")
+	}
+	if namespaceRowSelected(t, n, "ctx1", "kube-system") || namespaceRowSelected(t, n, "ctx1", "other-ns") {
+		t.Fatal("expected only default checked after restoring")
+	}
+}
+
 // TestNamespaces_FilterHidesNonMatchingRowsWithoutLosingState guards the "/"
 // filter: a namespace checked before filtering must still count as checked
 // (and get included in a confirm) even while hidden from view by the

@@ -216,9 +216,16 @@ func (n *NamespacesInfo) RemoveContext(context string) {
 // AppState may have refused part of the checked-set diff (e.g. it never
 // lets the last checked namespace be removed) — without this, the pane
 // could keep showing an unchecked box for a namespace still actually
-// shown. Also drops any in-flight "a" toggle checkpoint for the context,
-// since it no longer corresponds to a real prior state once reality has
-// been resynced from outside.
+// shown. Also drops any in-flight "a" toggle checkpoint for the context once
+// resyncing lands it *out* of all-namespaces mode, since it no longer
+// corresponds to a real prior state once reality has been resynced from
+// outside. When resyncing *into* all-namespaces mode, the checkpoint is left
+// alone: this is exactly the call MainPage makes right after confirming the
+// "a" press that entered all-namespaces mode (applyNamespacesState always
+// follows a confirm with a resync), so clearing it unconditionally would
+// erase the very checkpoint toggleAllNamespaces needs to restore the prior
+// selection on the next "a" press — leaving the toggle looking like it does
+// nothing.
 func (n *NamespacesInfo) SyncConfirmed(context string, selected []string, allNS bool) {
 	set := make(map[string]bool, len(selected))
 	for _, ns := range selected {
@@ -231,8 +238,8 @@ func (n *NamespacesInfo) SyncConfirmed(context string, selected []string, allNS 
 		n.allNamespaces[context] = true
 	} else {
 		delete(n.allNamespaces, context)
+		delete(n.preSelectAll, context)
 	}
-	delete(n.preSelectAll, context)
 	n.rebuild()
 }
 
