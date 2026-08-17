@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
@@ -22,12 +26,23 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Only publish Homebrew formula from the highest-semver tag
+        id: brew-guard
+        run: |
+          latest_tag=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ "$latest_tag" = "${{ github.ref_name }}" ]; then
+            echo "skip=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag ${{ github.ref_name }} is not the highest semver tag ($latest_tag); skipping homebrew publish" >&2
+            echo "skip=--skip=homebrew" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean ${{ steps.brew-guard.outputs.skip }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
