@@ -8,12 +8,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -22,40 +16,18 @@ import (
 )
 
 // Cluster is the seam to the Kubernetes client: everything the Supervisor
-// needs from a cluster connection. *k8s.Client is the production adapter; a
-// fake serving pre-canned watch.Interface streams (and List results) is the
-// test adapter. Each Watch<Kind> has a matching List<Kind>, used for the
-// fast initial paint before the watch opens — see start. Every call is made
-// with the context's kubeconfig default namespace, or "" (cluster-wide) for
-// a context with none pinned — see stateKey and StartContext.
+// needs from a cluster connection. *k8s.Client is the production adapter
+// (see internal/k8s/registry.go's Watch/List, which fan out to each kind's
+// own Watch<Kind>/List<Kind> internally); a fake serving pre-canned
+// watch.Interface streams (and List results) is the test adapter. Every
+// call is made with the context's kubeconfig default namespace, or ""
+// (cluster-wide) for a context with none pinned — see stateKey and
+// StartContext. resourceVersion, when non-empty, is normally the
+// collection RV a prior List() call returned — see ListLoadedMsg's doc
+// comment.
 type Cluster interface {
-	WatchPods(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListPods(ctx context.Context, kubeContext, namespace string) ([]*corev1.Pod, string, error)
-	WatchDeployments(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListDeployments(ctx context.Context, kubeContext, namespace string) ([]*appsv1.Deployment, string, error)
-	WatchServices(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListServices(ctx context.Context, kubeContext, namespace string) ([]*corev1.Service, string, error)
-	WatchConfigMaps(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListConfigMaps(ctx context.Context, kubeContext, namespace string) ([]*corev1.ConfigMap, string, error)
-	WatchSecrets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListSecrets(ctx context.Context, kubeContext, namespace string) ([]*corev1.Secret, string, error)
-	WatchJobs(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.Job, string, error)
-	WatchCronJobs(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListCronJobs(ctx context.Context, kubeContext, namespace string) ([]*batchv1.CronJob, string, error)
-	WatchStatefulSets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListStatefulSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.StatefulSet, string, error)
-	WatchDaemonSets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListDaemonSets(ctx context.Context, kubeContext, namespace string) ([]*appsv1.DaemonSet, string, error)
-	WatchIngresses(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListIngresses(ctx context.Context, kubeContext, namespace string) ([]*networkingv1.Ingress, string, error)
-	WatchPodDisruptionBudgets(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListPodDisruptionBudgets(ctx context.Context, kubeContext, namespace string) ([]*policyv1.PodDisruptionBudget, string, error)
-	WatchHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListHorizontalPodAutoscalers(ctx context.Context, kubeContext, namespace string) ([]*autoscalingv2.HorizontalPodAutoscaler, string, error)
-	// WatchNodes/ListNodes ignore namespace — Nodes are cluster-scoped.
-	WatchNodes(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
-	ListNodes(ctx context.Context, kubeContext, namespace string) ([]*corev1.Node, string, error)
+	Watch(ctx context.Context, kind msgs.ResourceKind, kubeContext, namespace, resourceVersion string) (watch.Interface, error)
+	List(ctx context.Context, kind msgs.ResourceKind, kubeContext, namespace string) ([]metav1.Object, string, error)
 }
 
 // maxReconnectFailures is how many consecutive reconnect failures a
@@ -506,37 +478,6 @@ func (s *Supervisor) current(kind msgs.ResourceKind, kubeContext string, generat
 	return st, true
 }
 
-// watchFn returns the Cluster method that opens a watch for kind, via
-// kindSpecs (kindspec.go) — see its doc comment.
-func (s *Supervisor) watchFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace, resourceVersion string) (watch.Interface, error) {
-	spec, ok := kindSpecs[kind]
-	if !ok {
-		return nil
-	}
-	return spec.watch(s.cluster)
-}
-
-// toObjects converts a concrete List() result (e.g. []*corev1.Pod) to the
-// kind-erased []metav1.Object carried by ListLoadedMsg.
-func toObjects[T metav1.Object](items []T) []metav1.Object {
-	out := make([]metav1.Object, len(items))
-	for i, v := range items {
-		out[i] = v
-	}
-	return out
-}
-
-// listFn returns the Cluster method that lists kind, already adapted to the
-// kind-erased []metav1.Object shape listCmd needs, via kindSpecs
-// (kindspec.go) — see its doc comment.
-func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, kubeContext, namespace string) ([]metav1.Object, string, error) {
-	spec, ok := kindSpecs[kind]
-	if !ok {
-		return nil
-	}
-	return spec.list(s.cluster)
-}
-
 // listCmd issues the one-shot List() call for one (kind, context), scoped to
 // namespace ("" for cluster-wide), after an optional backoff delay (0 for the
 // initial start() call; backoffDelay(st.failures) when used as the reconnect
@@ -544,7 +485,6 @@ func (s *Supervisor) listFn(kind msgs.ResourceKind) func(ctx context.Context, ku
 // ListLoadedMsg carrying the generation it was issued under and the list's
 // resourceVersion for the subsequent watch open.
 func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace string, generation int, delay time.Duration) tea.Cmd {
-	list := s.listFn(kind)
 	return func() tea.Msg {
 		if delay > 0 {
 			select {
@@ -553,7 +493,7 @@ func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 				return nil // swallowed; generation guard makes any late msg harmless anyway
 			}
 		}
-		objs, rv, err := list(context.Background(), kubeContext, namespace)
+		objs, rv, err := s.cluster.List(context.Background(), kind, kubeContext, namespace)
 		return msgs.ListLoadedMsg{Kind: kind, Context: kubeContext, Generation: generation, Objects: objs, ResourceVersion: rv, Err: err}
 	}
 }
@@ -564,7 +504,6 @@ func (s *Supervisor) listCmd(kind msgs.ResourceKind, kubeContext, namespace stri
 // ListLoadedMsg's doc comment), reporting the outcome as a WatchOpenedMsg or
 // WatchClosedMsg carrying the generation it was issued under.
 func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace, resourceVersion string, generation int, delay time.Duration) tea.Cmd {
-	open := s.watchFn(kind)
 	return func() tea.Msg {
 		if delay > 0 {
 			select {
@@ -573,7 +512,7 @@ func (s *Supervisor) openCmd(kind msgs.ResourceKind, kubeContext, namespace, res
 				return nil // swallowed; generation guard makes any late msg harmless anyway
 			}
 		}
-		w, err := open(context.Background(), kubeContext, namespace, resourceVersion)
+		w, err := s.cluster.Watch(context.Background(), kind, kubeContext, namespace, resourceVersion)
 		if err != nil {
 			return msgs.WatchClosedMsg{Kind: kind, Context: kubeContext, Generation: generation, Err: err}
 		}

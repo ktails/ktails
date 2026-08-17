@@ -190,11 +190,11 @@ func (c *resourceCache[T]) rows(kubeContext string) []msgs.Row {
 // newCacheFor builds the cache for one resource kind, wiring in that kind's
 // object→row conversion, via kindSpecs (kindspec.go) — see its doc comment.
 func newCacheFor(kind msgs.ResourceKind) rowCache {
-	spec, ok := kindSpecs[kind]
+	newCache, ok := kindSpecs[kind]
 	if !ok {
 		return nil
 	}
-	return spec.newCache()
+	return newCache()
 }
 
 func podRow(pod *corev1.Pod, kubeContext string) msgs.Row {

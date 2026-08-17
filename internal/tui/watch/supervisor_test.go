@@ -7,12 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -57,120 +52,41 @@ func newFakeCluster() *fakeCluster {
 	return &fakeCluster{watchers: watchers}
 }
 
-func (f *fakeCluster) watch(kind msgs.ResourceKind) (kwatch.Interface, error) {
+// Watch implements the narrow Cluster seam's Watch method for every kind
+// uniformly: kind just selects which pre-made watcher to serve. namespace/
+// resourceVersion are recorded only for the two kinds tests actually assert
+// on (see gotWatchNamespace/gotWatchResourceVersion's doc comments) — every
+// other kind's call goes through the same path untracked.
+func (f *fakeCluster) Watch(_ context.Context, kind msgs.ResourceKind, _, namespace, resourceVersion string) (kwatch.Interface, error) {
+	if kind == msgs.KindDeployments {
+		f.gotWatchNamespace = namespace
+	}
+	if kind == msgs.KindPods {
+		f.gotWatchResourceVersion = resourceVersion
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.watchers[kind], nil
 }
 
-func (f *fakeCluster) WatchPods(_ context.Context, _, _, resourceVersion string) (kwatch.Interface, error) {
-	f.gotWatchResourceVersion = resourceVersion
-	return f.watch(msgs.KindPods)
-}
-
-func (f *fakeCluster) WatchDeployments(_ context.Context, _ string, namespace, _ string) (kwatch.Interface, error) {
-	f.gotWatchNamespace = namespace
-	return f.watch(msgs.KindDeployments)
-}
-
-func (f *fakeCluster) WatchServices(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindServices)
-}
-
-func (f *fakeCluster) WatchConfigMaps(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindConfigMaps)
-}
-
-func (f *fakeCluster) WatchSecrets(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindSecrets)
-}
-
-func (f *fakeCluster) WatchNodes(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindNodes)
-}
-
-func (f *fakeCluster) WatchJobs(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindJobs)
-}
-
-func (f *fakeCluster) WatchCronJobs(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindCronJobs)
-}
-
-func (f *fakeCluster) WatchStatefulSets(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindStatefulSets)
-}
-
-func (f *fakeCluster) WatchDaemonSets(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindDaemonSets)
-}
-
-func (f *fakeCluster) WatchPodDisruptionBudgets(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindPodDisruptionBudgets)
-}
-
-func (f *fakeCluster) WatchHorizontalPodAutoscalers(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindHorizontalPodAutoscalers)
-}
-
-func (f *fakeCluster) WatchIngresses(context.Context, string, string, string) (kwatch.Interface, error) {
-	return f.watch(msgs.KindIngresses)
-}
-
-// List<Kind> fakes: every kind lists as empty (no error) by default —
-// nothing in this test suite exercises the List-first paint's row content,
-// only its ordering ahead of the watch, so an empty list is sufficient.
-func (f *fakeCluster) ListPods(context.Context, string, string) ([]*corev1.Pod, string, error) {
-	return f.pods, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListDeployments(_ context.Context, _ string, namespace string) ([]*appsv1.Deployment, string, error) {
-	f.gotListNamespace = namespace
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListServices(context.Context, string, string) ([]*corev1.Service, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListConfigMaps(context.Context, string, string) ([]*corev1.ConfigMap, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListSecrets(context.Context, string, string) ([]*corev1.Secret, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListJobs(context.Context, string, string) ([]*batchv1.Job, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListCronJobs(context.Context, string, string) ([]*batchv1.CronJob, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListStatefulSets(context.Context, string, string) ([]*appsv1.StatefulSet, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListDaemonSets(context.Context, string, string) ([]*appsv1.DaemonSet, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListIngresses(context.Context, string, string) ([]*networkingv1.Ingress, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListPodDisruptionBudgets(context.Context, string, string) ([]*policyv1.PodDisruptionBudget, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListHorizontalPodAutoscalers(context.Context, string, string) ([]*autoscalingv2.HorizontalPodAutoscaler, string, error) {
-	return nil, f.listResourceVersion, nil
-}
-
-func (f *fakeCluster) ListNodes(context.Context, string, string) ([]*corev1.Node, string, error) {
+// List implements the narrow Cluster seam's List method. Every kind lists
+// as empty (no error) by default except KindPods (f.pods, mutable mid-test
+// — see TestSupervisor_ReconnectRelistsAndDropsDeletedObjects) — nothing in
+// this test suite exercises the List-first paint's row content for other
+// kinds, only its ordering ahead of the watch, so an empty list is
+// sufficient for them.
+func (f *fakeCluster) List(_ context.Context, kind msgs.ResourceKind, _, namespace string) ([]metav1.Object, string, error) {
+	if kind == msgs.KindDeployments {
+		f.gotListNamespace = namespace
+	}
+	if kind == msgs.KindPods {
+		objs := make([]metav1.Object, len(f.pods))
+		for i, p := range f.pods {
+			objs[i] = p
+		}
+		return objs, f.listResourceVersion, nil
+	}
 	return nil, f.listResourceVersion, nil
 }
 

@@ -32,6 +32,16 @@ func pointers[T any](items []T) []*T {
 	return out
 }
 
+// toObjects converts a concrete List() result (e.g. []*corev1.Pod) to the
+// kind-erased []metav1.Object the Cluster.List seam (registry.go) returns.
+func toObjects[T metav1.Object](items []T) []metav1.Object {
+	out := make([]metav1.Object, len(items))
+	for i, v := range items {
+		out[i] = v
+	}
+	return out
+}
+
 // watchResource is the shared body behind every Watch<Kind> function: get a
 // client for kubeContext, then open a watch via getLW(clientset) — already
 // bound to the right namespace (or cluster scope) by the caller. subject is

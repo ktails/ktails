@@ -9,109 +9,41 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/ktails/ktails/internal/k8s"
+	"github.com/ktails/ktails/internal/kinds"
 )
 
 // ResourceKind identifies one of the watched resource types. It is the
 // single tab/watch/cache identity used everywhere a "Deployments" | "Pods" |
-// "svc" string switch used to live.
-type ResourceKind int
+// "svc" string switch used to live. It's a type alias (not a new type) to
+// kinds.ResourceKind: k8s.Client's Watch/List methods (internal/k8s/
+// registry.go) key their kind registry by kinds.ResourceKind, and msgs
+// already imports k8s (for k8s.ResourceDetail in ResourceDetailMsg below),
+// so k8s can't import msgs back without a cycle — kinds is the shared leaf
+// package both depend on instead. The alias means every existing
+// msgs.ResourceKind/msgs.KindXxx/msgs.Kinds() reference is unaffected.
+type ResourceKind = kinds.ResourceKind
 
 const (
-	KindDeployments ResourceKind = iota
-	KindPods
-	KindServices
-	KindConfigMaps
-	KindSecrets
-	KindJobs
-	KindCronJobs
-	KindStatefulSets
-	KindDaemonSets
-	KindIngresses
-	KindPodDisruptionBudgets
-	KindHorizontalPodAutoscalers
+	KindDeployments              = kinds.KindDeployments
+	KindPods                     = kinds.KindPods
+	KindServices                 = kinds.KindServices
+	KindConfigMaps               = kinds.KindConfigMaps
+	KindSecrets                  = kinds.KindSecrets
+	KindJobs                     = kinds.KindJobs
+	KindCronJobs                 = kinds.KindCronJobs
+	KindStatefulSets             = kinds.KindStatefulSets
+	KindDaemonSets               = kinds.KindDaemonSets
+	KindIngresses                = kinds.KindIngresses
+	KindPodDisruptionBudgets     = kinds.KindPodDisruptionBudgets
+	KindHorizontalPodAutoscalers = kinds.KindHorizontalPodAutoscalers
 	// KindNodes is cluster-scoped, not namespaced — its rows carry no
-	// KeyNamespace, and its watch ignores the namespace argument.
-	KindNodes
+	// Namespace, and its watch ignores the namespace argument.
+	KindNodes = kinds.KindNodes
 )
 
 // Kinds returns every ResourceKind in tab order.
 func Kinds() []ResourceKind {
-	return []ResourceKind{
-		KindDeployments, KindPods, KindServices, KindConfigMaps, KindSecrets,
-		KindJobs, KindCronJobs, KindStatefulSets, KindDaemonSets, KindIngresses,
-		KindPodDisruptionBudgets, KindHorizontalPodAutoscalers,
-		KindNodes,
-	}
-}
-
-// Title is the tab label shown in the Tab Area header.
-func (k ResourceKind) Title() string {
-	switch k {
-	case KindDeployments:
-		return "Deployments"
-	case KindPods:
-		return "Pods"
-	case KindServices:
-		return "Services"
-	case KindConfigMaps:
-		return "ConfigMaps"
-	case KindSecrets:
-		return "Secrets"
-	case KindJobs:
-		return "Jobs"
-	case KindCronJobs:
-		return "CronJobs"
-	case KindStatefulSets:
-		return "StatefulSets"
-	case KindDaemonSets:
-		return "DaemonSets"
-	case KindIngresses:
-		return "Ingresses"
-	case KindPodDisruptionBudgets:
-		return "PDBs"
-	case KindHorizontalPodAutoscalers:
-		return "HPAs"
-	case KindNodes:
-		return "Nodes"
-	}
-	return ""
-}
-
-// Kind is the Kubernetes kind name, as shown in the Detail Pane.
-func (k ResourceKind) Kind() string {
-	switch k {
-	case KindDeployments:
-		return "Deployment"
-	case KindPods:
-		return "Pod"
-	case KindServices:
-		return "Service"
-	case KindConfigMaps:
-		return "ConfigMap"
-	case KindSecrets:
-		return "Secret"
-	case KindJobs:
-		return "Job"
-	case KindCronJobs:
-		return "CronJob"
-	case KindStatefulSets:
-		return "StatefulSet"
-	case KindDaemonSets:
-		return "DaemonSet"
-	case KindIngresses:
-		return "Ingress"
-	case KindPodDisruptionBudgets:
-		return "PodDisruptionBudget"
-	case KindHorizontalPodAutoscalers:
-		return "HorizontalPodAutoscaler"
-	case KindNodes:
-		return "Node"
-	}
-	return ""
-}
-
-func (k ResourceKind) String() string {
-	return k.Title()
+	return kinds.Kinds()
 }
 
 // Row is one table row's field values, for the Pods/Deployments/.../Nodes
